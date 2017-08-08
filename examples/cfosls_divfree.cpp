@@ -445,6 +445,12 @@ void curlE_exact(const Vector &x, Vector &curlE);
 void f_exact(const Vector &, Vector &);
 double freq = 1.0, kappa;
 
+// 4d test from Martin's example
+void E_exactMat_vec(const Vector &x, Vector &E);
+void E_exactMat(const Vector &, DenseMatrix &);
+void f_exactMat(const Vector &, DenseMatrix &);
+
+
 template <double (*S)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
     void sigmaTemplate(const Vector& xt, Vector& sigma);
 template <void (*bvecfunc)(const Vector&, Vector& )>
@@ -761,9 +767,9 @@ int main(int argc, char *argv[])
     int ser_ref_levels  = 0;
     int par_ref_levels  = 2;
 
-    int generate_frombase   = 1;
-    int Nsteps              = 4;
-    double tau              = 0.25;
+    int generate_frombase   = 0;
+    int Nsteps              = 8;
+    double tau              = 0.125;
     int generate_parallel   = generate_frombase * 1;
     int whichparallel       = generate_parallel * 2;
     int bnd_method          = 1;
@@ -784,8 +790,8 @@ int main(int argc, char *argv[])
     //const char *mesh_file = "../build3/meshes/square_2d_moderate.mesh";
 
     //const char *mesh_file = "../build3/meshes/cube4d_low.MFEM";
-    //const char *mesh_file = "../build3/meshes/cube4d.MFEM";
-    const char *mesh_file = "dsadsad";
+    const char *mesh_file = "../data/cube4d_96.MFEM";
+    //const char *mesh_file = "dsadsad";
     //const char *mesh_file = "../build3/meshes/orthotope3D_moderate.mesh";
     //const char * mesh_file = "../build3/meshes/orthotope3D_fine.mesh";
 
@@ -793,11 +799,12 @@ int main(int argc, char *argv[])
     //const char * meshbase_file = "../build3/meshes/sphere3D_0.05to0.1.mesh";
     //const char * meshbase_file = "../build3/meshes/sphere3D_veryfine.mesh";
     //const char * meshbase_file = "../build3/meshes/orthotope3D_moderate.mesh";
-    const char * meshbase_file = "../data/orthotope3D_fine.mesh";
+    //const char * meshbase_file = "../data/orthotope3D_fine.mesh";
+    //const char * meshbase_file = "../data/cube_3d_fine.mesh";
     //const char * meshbase_file = "../build3/meshes/square_2d_moderate.mesh";
     //const char * meshbase_file = "../data/square_2d_fine.mesh";
     //const char * meshbase_file = "../build3/meshes/square-disc.mesh";
-    //const char *meshbase_file = "dsadsad";
+    const char *meshbase_file = "dsadsad";
     //const char * meshbase_file = "../build3/meshes/circle_fine_0.1.mfem";
     //const char * meshbase_file = "../build3/meshes/circle_moderate_0.2.mfem";
 
@@ -806,7 +813,7 @@ int main(int argc, char *argv[])
     kappa = freq * M_PI;
 
     if (verbose)
-        cout << "Solving FOSLS Transport equation with MFEM & hypre" << endl;
+        cout << "Solving FOSLS Transport equation with MFEM & hypre, div-free approach \n";
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh",
@@ -839,8 +846,8 @@ int main(int argc, char *argv[])
     args.AddOption(&prec_option, "-precopt", "--prec-option",
                    "Preconditioner choice.");
 
-    MPI_Finalize();
-    return 0;
+    //MPI_Finalize();
+    //return 0;
 
     args.Parse();
     if (!args.Good())
@@ -1073,6 +1080,7 @@ int main(int argc, char *argv[])
     //    use the Raviart-Thomas finite elements of the specified order.
 
     int dim = nDimensions;
+    int sdim = nDimensions;
 
     shared_ptr<mfem::HypreParMatrix> A;
     HypreParMatrix Amat;
@@ -1098,17 +1106,20 @@ int main(int argc, char *argv[])
         hdivfree_coll = new DivSkew1_4DFECollection;
         C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
 
-        //testing ProjectCoefficient
-        VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
+        // testing ProjectCoefficient
+        VectorFunctionCoefficient * divfreepartcoeff = new
+                VectorFunctionCoefficient(6, E_exactMat_vec);
+        //VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
         ParGridFunction *u_exact = new ParGridFunction(C_space);
         u_exact->ProjectCoefficient(*divfreepartcoeff);//(*(Mytest.divfreepart));
 
+
         if (verbose)
-            std::cout << "ProjectCoefficient is ok with vectors \n";
+            std::cout << "ProjectCoefficient is ok with vectors from DivSkew \n";
         //u_exact->Print();
 
         // checking projection error computation
-        int order_quad = max(2, 2*feorder+1);
+        int order_quad = 2*feorder + 1;//max(2, 2*feorder+1);
         const IntegrationRule *irs[Geometry::NumGeom];
         for (int i=0; i < Geometry::NumGeom; ++i)
         {
@@ -1119,10 +1130,100 @@ int main(int argc, char *argv[])
         double projection_error_u = u_exact->ComputeL2Error(*divfreepartcoeff, irs);
 
         if(verbose)
+        {
+            std::cout << "|| u_ex - Pi_h u_ex || = " << projection_error_u << "\n";
             if ( norm_u > MYZEROTOL )
                 std::cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << "\n";
             else
                 std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
+        }
+
+        if (verbose)
+            std::cout << "Trying Martin's code to compute the error \n";
+        MatrixFunctionCoefficient solMat(sdim, E_exactMat);
+        // 14. Compute and print the L^2 norm of the error. (taken from ex4d_DivSkew.cpp)
+        {
+           double error = 0.0;
+           for (int i = 0; i < C_space->GetNE(); i++)
+           {
+              const FiniteElement* fe = C_space->GetFE(i);
+              int fdof = fe->GetDof();
+              ElementTransformation* transf = C_space->GetElementTransformation(i);
+              DenseMatrix shape(fdof,dim*dim);
+
+              int intorder = 2*fe->GetOrder() + 1; // <----------
+              const IntegrationRule *ir;
+              ir = &(IntRules.Get(fe->GetGeomType(), intorder));
+
+              Vector elSol(dim*dim);
+              DenseMatrix elSolMat(dim,dim);
+              DenseMatrix exactSol(dim,dim);
+              Vector exactSolVec(dim*dim);
+
+              Array<int> vdofs;
+              C_space->GetElementVDofs(i, vdofs);
+
+              for (int j = 0; j < ir->GetNPoints(); j++)
+              {
+                 const IntegrationPoint &ip = ir->IntPoint(j);
+                 transf->SetIntPoint(&ip);
+
+                 fe->CalcVShape(*transf, shape);
+
+                 elSol = 0.0;
+                 for (int k = 0; k < fdof; k++)
+                 {
+                    if (vdofs[k] >= 0)
+                    {
+                       for (int l=0; l<dim*dim; l++)
+                       {
+                           elSol(l) += shape(k,l)* (*u_exact)(vdofs[k]);
+                       }
+                    }
+                    else
+                    {
+                       for (int l=0; l<dim*dim; l++)
+                       {
+                           elSol(l) -= shape(k,l)*(*u_exact)(-1-vdofs[k]);
+                       }
+                    }
+                 }
+                 for (int k=0; k<dim; k++)
+                    for (int l=0; l<dim; l++)
+                    {
+                       elSolMat(k,l) = elSol(dim*k+l);
+                    }
+
+
+                 solMat.Eval(exactSol,*transf, ip);
+                 for (int k=0; k<dim; k++)
+                    for (int l=0; l<dim; l++)
+                    {
+                       exactSolVec(dim*k+l) = exactSol(k,l);
+                    }
+
+                 if (i == 0 && j == 0)
+                 {
+                     //std::cout << "shape \n";
+                     //shape.Print();
+                     //std::cout << "vdofs \n";
+                     //vdofs.Print();
+                     std::cout << "elSol \n";
+                     elSol.Print();
+                     //std::cout << "exactSol \n";
+                     //exactSol.Print();
+                     std::cout << "exactSolVec \n";
+                     exactSolVec.Print();
+                 }
+                 elSol.Add(-1.0, exactSolVec);
+
+                 error += ip.weight * fabs(transf->Weight()) * (elSol * elSol);
+              }
+           }
+           double globalError = 0.0;
+           MPI_Allreduce(&error, &globalError, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+           if (myid==0) { std::cout << "L2 error: " << sqrt(globalError) << std::endl;}
+        }
 
         MPI_Finalize();
         return -1;
@@ -2805,5 +2906,90 @@ void f_exact(const Vector &xt, Vector &f)
        */
 
 
+   }
+}
+
+
+void E_exactMat_vec(const Vector &x, Vector &E)
+{
+   int dim = x.Size();
+
+   if (dim==4)
+   {
+      E.SetSize(6);
+
+      double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+             s3 = sin(M_PI*x(3));
+      double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+             c3 = cos(M_PI*x(3));
+
+      E(0) =  c0*c1*s2*s3;
+      E(1) = -c0*s1*c2*s3;
+      E(2) =  c0*s1*s2*c3;
+      E(3) =  s0*c1*c2*s3;
+      E(4) = -s0*c1*s2*c3;
+      E(5) =  s0*s1*c2*c3;
+   }
+}
+
+void E_exactMat(const Vector &x, DenseMatrix &E)
+{
+   int dim = x.Size();
+
+   E.SetSize(dim*dim);
+
+   if (dim==4)
+   {
+      Vector vecE; E_exactMat_vec(x, vecE);
+
+      E = 0.0;
+
+      E(0,1) = vecE(0);
+      E(0,2) = vecE(1);
+      E(0,3) = vecE(2);
+      E(1,2) = vecE(3);
+      E(1,3) = vecE(4);
+      E(2,3) = vecE(5);
+
+      E(1,0) =  -E(0,1);
+      E(2,0) =  -E(0,2);
+      E(3,0) =  -E(0,3);
+      E(2,1) =  -E(1,2);
+      E(3,1) =  -E(1,3);
+      E(3,2) =  -E(2,3);
+   }
+}
+
+
+
+//f_exact = E + 0.5 * P( curl DivSkew E ), where P is the 4d permutation operator
+void f_exactMat(const Vector &x, DenseMatrix &f)
+{
+   int dim = x.Size();
+
+   f.SetSize(dim,dim);
+
+   if (dim==4)
+   {
+      f = 0.0;
+
+      double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+             s3 = sin(M_PI*x(3));
+      double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+             c3 = cos(M_PI*x(3));
+
+      f(0,1) =  (1.0 + 1.0  * M_PI*M_PI)*c0*c1*s2*s3;
+      f(0,2) = -(1.0 + 0.0  * M_PI*M_PI)*c0*s1*c2*s3;
+      f(0,3) =  (1.0 + 1.0  * M_PI*M_PI)*c0*s1*s2*c3;
+      f(1,2) =  (1.0 - 1.0  * M_PI*M_PI)*s0*c1*c2*s3;
+      f(1,3) = -(1.0 + 0.0  * M_PI*M_PI)*s0*c1*s2*c3;
+      f(2,3) =  (1.0 + 1.0  * M_PI*M_PI)*s0*s1*c2*c3;
+
+      f(1,0) =  -f(0,1);
+      f(2,0) =  -f(0,2);
+      f(3,0) =  -f(0,3);
+      f(2,1) =  -f(1,2);
+      f(3,1) =  -f(1,3);
+      f(3,2) =  -f(2,3);
    }
 }

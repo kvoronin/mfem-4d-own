@@ -472,7 +472,11 @@ public:
    { RangeType = VECTOR; MapType = M; SetDerivMembers(); }
 #else
       FiniteElement(D, G, Do, O, F), Jinv(D)
-   { RangeType = VECTOR; MapType = M; SetDerivMembers(); }
+   {
+       if (M == FiniteElement::H_DIV_SKEW && D == 4) // fix for DivSkew elements
+           vshape.SetSize(Do, Dim*Dim);
+       RangeType = VECTOR; MapType = M; SetDerivMembers();
+   }
 #endif
 };
 

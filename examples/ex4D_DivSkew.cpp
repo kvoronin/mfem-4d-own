@@ -305,12 +305,12 @@ int main(int argc, char *argv[])
    bool verbose = (myid==0);
 
    // 2. Parse command-line options.
-   const char *mesh_file = "../data/beam-tet.mesh";
+   const char *mesh_file = "../data/cube4d_96.MFEM";
    int order = 1;
    bool static_cond = false;
    bool visualization = 1;
    int sequ_ref_levels = 0;
-   int par_ref_levels = 0;
+   int par_ref_levels = 3;
    double tol = 1e-6;
 
    OptionsParser args(argc, argv);

@@ -559,7 +559,12 @@ void VectorFiniteElement::CalcVShape_DivSkew (
    Jinv.SetSize(J.Width(), J.Height());
 #endif
 
-   if (vshape.Width()!=Dim*Dim) { vshape.SetSize(Dof,Dim*Dim); }
+   if (vshape.Width()!=Dim*Dim) // seems not to work
+   {
+       std::cout << "vshape.Width = " << vshape.Width() << "\n";
+       std::cout << "Dim*Dim = " << Dim*Dim << "\n";
+       vshape.SetSize(Dof,Dim*Dim);
+   }
 
    CalcVShape(Trans.GetIntPoint(), vshape);
 
@@ -573,6 +578,7 @@ void VectorFiniteElement::CalcVShape_DivSkew (
 
    for (int dof=0; dof<Dof; dof++)
    {
+       //std::cout << "dof = " << dof << "\n";
       //    for(int ik=0; ik<Dim; ik++)
       //       for(int jk=0; jk<Dim; jk++)
       //       {
@@ -598,8 +604,21 @@ void VectorFiniteElement::CalcVShape_DivSkew (
       mat(3,0) =  vshape(dof,9);  mat(3,1) =  vshape(dof,2);
       mat(3,2) =  vshape(dof,4);  mat(3,3) =  0.0;
 
+      //std::cout << "mat before = \n";
+      //mat.Print();
+      //std::cout<< "\n";
+
       Mult(mat, Jinv, tempMat);
+
+      //std::cout << "tempMat = \n";
+      //tempMat.Print();
+      //std::cout << "\n";
+
       Mult(invJtr, tempMat, mat);
+
+      //std::cout << "mat after = \n";
+      //mat.Print();
+      //std::cout << "\n";
 
       shape(dof,0) =  0.0;      shape(dof,1) =  mat(2,3); shape(dof,2) =  mat(3,1);
       shape(dof,3) =  mat(1,2);
@@ -609,7 +628,12 @@ void VectorFiniteElement::CalcVShape_DivSkew (
       shape(dof,11) = mat(0,1);
       shape(dof,12) = mat(2,1); shape(dof,13) = mat(0,2); shape(dof,14) = mat(1,0);
       shape(dof,15) = 0.0;
+
+      //std::cout << "shape = \n";
+      //shape.Print();
+      //std::cout << "\n";
    }
+   //std::cout << "the end \n";
 }
 
 void VectorFiniteElement::CalcVShape_ND (

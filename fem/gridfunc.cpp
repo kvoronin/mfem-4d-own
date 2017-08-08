@@ -513,8 +513,14 @@ void GridFunction::GetVectorValues(ElementTransformation &T,
    else
    {
       int spaceDim = fes->GetMesh()->SpaceDimension();
-      DenseMatrix vshape(dof, spaceDim);
+      DenseMatrix vshape;
+      vshape.SetSize(dof, spaceDim);
       vals.SetSize(spaceDim, nip);
+      if (spaceDim == 4 && FElem->GetMapType() == FiniteElement::H_DIV_SKEW)
+      {
+          vshape.SetSize(dof, spaceDim*spaceDim);
+          vals.SetSize(spaceDim*spaceDim, nip);
+      }
       Vector val_j;
       for (int j = 0; j < nip; j++)
       {
@@ -1733,18 +1739,110 @@ double GridFunction::ComputeL2Error(
       fe = fes->GetFE(i);
       int intorder = 2*fe->GetOrder() + 1; // <----------
       const IntegrationRule *ir;
+      /*
+       * only for debugging
       if (irs)
       {
          ir = irs[fe->GetGeomType()];
       }
       else
+      */
       {
          ir = &(IntRules.Get(fe->GetGeomType(), intorder));
       }
       T = fes->GetElementTransformation(i);
       GetVectorValues(*T, *ir, vals);
       exsol.Eval(exact_vals, *T, *ir);
-      vals -= exact_vals;
+
+
+      // in case of H_DIV_SKEW space we need to transform
+      // exact_vals[6] into vals[16] ~ 4x4 skew matrix
+      if (fe->GetMapType() == FiniteElement::H_DIV_SKEW)
+      {
+          DenseMatrix exactmat(4,4); exactmat = 0.0;
+          //Vector exact_valsvec(16);
+          DenseMatrix exact_valsmat(16, ir->GetNPoints());
+          /*
+          double t1[4]; Vector t1i(t1, 4);
+          double t2[4]; Vector t2i(t2, 4);
+          Vector Mt(4);
+          Vector v(6);
+          Vector exact_dofvec(10);
+          */
+
+          for (int j = 0; j < ir->GetNPoints(); j++)
+          {
+              /*
+              exactmat(0,1) =  exact_vals(5,j); exactmat(0,2) = -exact_vals(4,j); exactmat(0,3) =  exact_vals(3,j);
+              exactmat(1,0) = -exact_vals(5,j); exactmat(1,2) =  exact_vals(2,j); exactmat(1,3) = -exact_vals(1,j);
+              exactmat(2,0) =  exact_vals(4,j); exactmat(2,1) = -exact_vals(2,j); exactmat(2,3) =  exact_vals(0,j);
+              exactmat(3,0) = -exact_vals(3,j); exactmat(3,1) =  exact_vals(1,j); exactmat(3,2) = -exact_vals(0,j);
+              */
+
+              exactmat(0,1) =  exact_vals(0,j); exactmat(0,2) =  exact_vals(1,j); exactmat(0,3) =  exact_vals(2,j);
+              exactmat(1,0) = -exact_vals(0,j); exactmat(1,2) =  exact_vals(3,j); exactmat(1,3) =  exact_vals(4,j);
+              exactmat(2,0) = -exact_vals(1,j); exactmat(2,1) = -exact_vals(3,j); exactmat(2,3) =  exact_vals(5,j);
+              exactmat(3,0) = -exact_vals(2,j); exactmat(3,1) = -exact_vals(4,j); exactmat(3,2) = -exact_vals(5,j);
+
+              int dim = 4;
+              for (int k=0; k<dim; k++)
+                 for (int l=0; l<dim; l++)
+                 {
+                    exact_valsmat(dim*k+l, j) = exactmat(k,l);
+                    //exact_valsvec(dim*k+l) = exactmat(k,l);
+                 }
+
+              int fdof = fe->GetDof();
+              DenseMatrix shape(fdof,dim*dim);
+
+              Array<int> vdofs;
+              fes->GetElementVDofs(i, vdofs);
+
+              const IntegrationPoint &ip = ir->IntPoint(j);
+              T->SetIntPoint(&ip);
+              //const DenseMatrix &J = T->Jacobian();
+
+              fe->CalcVShape(*T, shape);
+
+              Vector valsvec(dim*dim);
+              valsvec = 0.0;
+              for (int k = 0; k < fdof; k++)
+              {
+                 if (vdofs[k] >= 0)
+                 {
+                    for (int l=0; l<dim*dim; l++) { valsvec(l) += shape(k,l)* (*this)(vdofs[k]); }
+                 }
+                 else
+                 {
+                    for (int l=0; l<dim*dim; l++) { valsvec(l) -= shape(k,l)*(*this)(-1-vdofs[k]); }
+                 }
+              }
+
+              if (i == 0 && j == 0)
+              {
+                  //std::cout << "shape \n";
+                  //shape.Print();
+                  //std::cout << "vdofs \n";
+                  //vdofs.Print();
+                  std::cout << "valsvec ~ elsol \n";
+                  valsvec.Print();
+                  //std::cout << "exact_valsvec ~ exactSolVec \n";
+                  //exact_valsvec.Print();
+                  //std::cout << "exactmat \n";
+                  //exactmat.Print();
+                  std::cout << "exact_valsvec ~ exactSolVec \n";
+                  exact_valsvec.Print();
+              }
+
+
+
+          }
+          //exact_valsmat.Print();
+          vals -= exact_valsmat;
+      }
+      else
+        vals -= exact_vals;
+
       loc_errs.SetSize(vals.Width());
       vals.Norm2(loc_errs);
       for (int j = 0; j < ir->GetNPoints(); j++)
