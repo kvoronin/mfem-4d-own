@@ -723,7 +723,7 @@ class Transport_test
             {
                 //std::cout << "The domain is rectangular or cubic, velocity does not"
                              //" satisfy divergence condition" << std::endl << std::flush;
-                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_gradx, &bFun_ex, &bFundiv_ex>();
+                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex>();
                 //SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex>();
             }
             if (numsol == 1)
@@ -815,7 +815,7 @@ int main(int argc, char *argv[])
     bool verbose = (myid == 0);
 
     int nDimensions     = 3;
-    int numsol          = 5;
+    int numsol          = 0;
 
     int ser_ref_levels  = 1;
     int par_ref_levels  = 2;
@@ -1412,7 +1412,7 @@ int main(int argc, char *argv[])
    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
 
-   ParGridFunction *S_exact = new ParGridFunction(W_space);
+   ParGridFunction *S_exact = new ParGridFunction(H_space);
    S_exact->ProjectCoefficient(*(Mytest.scalaru));
    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
    Vector * S_exactv = S_exactpv->GlobalVector();
@@ -1547,6 +1547,8 @@ int main(int argc, char *argv[])
                        << projection_error_sigma / norm_sigma << endl;
 
    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalaru), irs);
+
+   std::cout << "norm_S = " << norm_S << "\n";
 
    if(verbose)
        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
