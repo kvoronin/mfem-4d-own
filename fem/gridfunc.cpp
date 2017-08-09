@@ -1733,20 +1733,25 @@ double GridFunction::ComputeL2Error(
    DenseMatrix vals, exact_vals;
    Vector loc_errs;
 
+   DenseMatrix exactmat;
+   DenseMatrix exact_valsmat;
+   DenseMatrix shape;
+   Array<int> vdofs;
+   Vector valsvec;
+
    for (int i = 0; i < fes->GetNE(); i++)
    {
       if (elems != NULL && (*elems)[i] == 0) { continue; }
       fe = fes->GetFE(i);
       int intorder = 2*fe->GetOrder() + 1; // <----------
       const IntegrationRule *ir;
-      /*
-       * only for debugging
+
+
       if (irs)
       {
          ir = irs[fe->GetGeomType()];
       }
       else
-      */
       {
          ir = &(IntRules.Get(fe->GetGeomType(), intorder));
       }
@@ -1759,52 +1764,39 @@ double GridFunction::ComputeL2Error(
       // exact_vals[6] into vals[16] ~ 4x4 skew matrix
       if (fe->GetMapType() == FiniteElement::H_DIV_SKEW)
       {
-          DenseMatrix exactmat(4,4); exactmat = 0.0;
-          //Vector exact_valsvec(16);
-          DenseMatrix exact_valsmat(16, ir->GetNPoints());
-          /*
-          double t1[4]; Vector t1i(t1, 4);
-          double t2[4]; Vector t2i(t2, 4);
-          Vector Mt(4);
-          Vector v(6);
-          Vector exact_dofvec(10);
-          */
+          MFEM_ASSERT(fe->GetDim() == 4, "");
+          int dim = fe->GetDim();
+
+          if (i == 0) // only for the first element
+          {
+              valsvec.SetSize(dim*dim);
+              exactmat.SetSize(dim,dim);
+              exact_valsmat.SetSize(dim*dim,ir->GetNPoints());
+          }
+          exactmat = 0.0;
 
           for (int j = 0; j < ir->GetNPoints(); j++)
           {
-              /*
-              exactmat(0,1) =  exact_vals(5,j); exactmat(0,2) = -exact_vals(4,j); exactmat(0,3) =  exact_vals(3,j);
-              exactmat(1,0) = -exact_vals(5,j); exactmat(1,2) =  exact_vals(2,j); exactmat(1,3) = -exact_vals(1,j);
-              exactmat(2,0) =  exact_vals(4,j); exactmat(2,1) = -exact_vals(2,j); exactmat(2,3) =  exact_vals(0,j);
-              exactmat(3,0) = -exact_vals(3,j); exactmat(3,1) =  exact_vals(1,j); exactmat(3,2) = -exact_vals(0,j);
-              */
-
+              // experimentally picked signs from comparison with working text example by Martin
               exactmat(0,1) =  exact_vals(0,j); exactmat(0,2) =  exact_vals(1,j); exactmat(0,3) =  exact_vals(2,j);
               exactmat(1,0) = -exact_vals(0,j); exactmat(1,2) =  exact_vals(3,j); exactmat(1,3) =  exact_vals(4,j);
               exactmat(2,0) = -exact_vals(1,j); exactmat(2,1) = -exact_vals(3,j); exactmat(2,3) =  exact_vals(5,j);
               exactmat(3,0) = -exact_vals(2,j); exactmat(3,1) = -exact_vals(4,j); exactmat(3,2) = -exact_vals(5,j);
 
-              int dim = 4;
               for (int k=0; k<dim; k++)
                  for (int l=0; l<dim; l++)
-                 {
                     exact_valsmat(dim*k+l, j) = exactmat(k,l);
-                    //exact_valsvec(dim*k+l) = exactmat(k,l);
-                 }
 
               int fdof = fe->GetDof();
-              DenseMatrix shape(fdof,dim*dim);
+              shape.SetSize(fdof,dim*dim);
 
-              Array<int> vdofs;
               fes->GetElementVDofs(i, vdofs);
 
               const IntegrationPoint &ip = ir->IntPoint(j);
               T->SetIntPoint(&ip);
-              //const DenseMatrix &J = T->Jacobian();
 
               fe->CalcVShape(*T, shape);
 
-              Vector valsvec(dim*dim);
               valsvec = 0.0;
               for (int k = 0; k < fdof; k++)
               {
@@ -1818,6 +1810,7 @@ double GridFunction::ComputeL2Error(
                  }
               }
 
+              /*
               if (i == 0 && j == 0)
               {
                   //std::cout << "shape \n";
@@ -1833,11 +1826,11 @@ double GridFunction::ComputeL2Error(
                   std::cout << "exact_valsvec ~ exactSolVec \n";
                   exact_valsvec.Print();
               }
+              */
 
 
 
           }
-          //exact_valsmat.Print();
           vals -= exact_valsmat;
       }
       else

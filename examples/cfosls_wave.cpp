@@ -1,24 +1,18 @@
-/*
- * Currently used for tests of solving heat equation in 4d without parelag combined
- * with parallel mesh generator
- *
-*/
-
-
-//                                MFEM CFOSLS Heat equation (+ mesh generator) solved by hypre
+//
+//                                MFEM CFOSLS Wave equation (+ mesh generator) solved by hypre
 //
 // Compile with: make
 //
-// Sample runs:  ./exHeatp4d -dim 3 or ./exHeatp4d -dim 4
-//
-// Description:  This example code solves a simple 4D  Heat problem over [0,1]^4
-//               corresponding to the saddle point system
+// Description:
+//               This example code solves a simple 4D Wave equation over [0,1]^d, d=3,4
+//               written in first-order formulation
 //                                  sigma_1 + grad u   = 0
-//                                  sigma_2 - u        = 0
+//                                  sigma_2 - u_t      = 0
 //                                  div_(x,t) sigma    = f
 //                       with boundary conditions:
-//                                   u(0,t)  = u(1,t)  = 0
-//                                   u(x,0)            = 0
+//                                   u(x,t)            = 0      on the spatial boundary
+//                                   u(x,0)            = u0     (initial condition on u)
+//                                   du/dt(x,0)        = ut0    (initial condition on du/dt)
 //               Here, we use a given exact solution
 //                                  u(xt) = uFun_ex(xt)
 //               and compute the corresponding r.h.s.
@@ -42,12 +36,10 @@ using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
 
-
-//********* NEW STUFF FOR 4D HEAT CFOSLS
+//********* NEW STUFF FOR 4D Wave CFOSLS
 //-----------------------
-/// Integrator for (Q u, v) for VectorFiniteElements
 
-class PAUVectorFEMassIntegrator: public BilinearFormIntegrator
+class WaveVectorFEIntegratorB: public BilinearFormIntegrator
 {
 private:
     Coefficient *Q;
@@ -70,13 +62,13 @@ private:
 #endif
 
 public:
-    PAUVectorFEMassIntegrator() { Init(NULL, NULL, NULL); }
-    PAUVectorFEMassIntegrator(Coefficient *_q) { Init(_q, NULL, NULL); }
-    PAUVectorFEMassIntegrator(Coefficient &q) { Init(&q, NULL, NULL); }
-    PAUVectorFEMassIntegrator(VectorCoefficient *_vq) { Init(NULL, _vq, NULL); }
-    PAUVectorFEMassIntegrator(VectorCoefficient &vq) { Init(NULL, &vq, NULL); }
-    PAUVectorFEMassIntegrator(MatrixCoefficient *_mq) { Init(NULL, NULL, _mq); }
-    PAUVectorFEMassIntegrator(MatrixCoefficient &mq) { Init(NULL, NULL, &mq); }
+    WaveVectorFEIntegratorB() { Init(NULL, NULL, NULL); }
+    WaveVectorFEIntegratorB(Coefficient *_q) { Init(_q, NULL, NULL); }
+    WaveVectorFEIntegratorB(Coefficient &q) { Init(&q, NULL, NULL); }
+    WaveVectorFEIntegratorB(VectorCoefficient *_vq) { Init(NULL, _vq, NULL); }
+    WaveVectorFEIntegratorB(VectorCoefficient &vq) { Init(NULL, &vq, NULL); }
+    WaveVectorFEIntegratorB(MatrixCoefficient *_mq) { Init(NULL, NULL, _mq); }
+    WaveVectorFEIntegratorB(MatrixCoefficient &mq) { Init(NULL, NULL, &mq); }
 
     virtual void AssembleElementMatrix(const FiniteElement &el,
                                        ElementTransformation &Trans,
@@ -89,7 +81,7 @@ public:
 
 //=-=-=-=--=-=-=-=-=-=-=-=-=
 /// Integrator for (Q u, v) for VectorFiniteElements
-class PAUVectorFEMassIntegrator2: public BilinearFormIntegrator
+class WaveVectorFEIntegrator: public BilinearFormIntegrator
 {
 private:
     Coefficient *Q;
@@ -115,13 +107,13 @@ private:
 #endif
 
 public:
-    PAUVectorFEMassIntegrator2() { Init(NULL, NULL, NULL); }
-    PAUVectorFEMassIntegrator2(Coefficient *_q) { Init(_q, NULL, NULL); }
-    PAUVectorFEMassIntegrator2(Coefficient &q) { Init(&q, NULL, NULL); }
-    PAUVectorFEMassIntegrator2(VectorCoefficient *_vq) { Init(NULL, _vq, NULL); }
-    PAUVectorFEMassIntegrator2(VectorCoefficient &vq) { Init(NULL, &vq, NULL); }
-    PAUVectorFEMassIntegrator2(MatrixCoefficient *_mq) { Init(NULL, NULL, _mq); }
-    PAUVectorFEMassIntegrator2(MatrixCoefficient &mq) { Init(NULL, NULL, &mq); }
+    WaveVectorFEIntegrator() { Init(NULL, NULL, NULL); }
+    WaveVectorFEIntegrator(Coefficient *_q) { Init(_q, NULL, NULL); }
+    WaveVectorFEIntegrator(Coefficient &q) { Init(&q, NULL, NULL); }
+    WaveVectorFEIntegrator(VectorCoefficient *_vq) { Init(NULL, _vq, NULL); }
+    WaveVectorFEIntegrator(VectorCoefficient &vq) { Init(NULL, &vq, NULL); }
+    WaveVectorFEIntegrator(MatrixCoefficient *_mq) { Init(NULL, NULL, _mq); }
+    WaveVectorFEIntegrator(MatrixCoefficient &mq) { Init(NULL, NULL, &mq); }
 
     virtual void AssembleElementMatrix(const FiniteElement &el,
                                        ElementTransformation &Trans,
@@ -133,13 +125,13 @@ public:
 };
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-
-void PAUVectorFEMassIntegrator::AssembleElementMatrix(
+void WaveVectorFEIntegratorB::AssembleElementMatrix(
         const FiniteElement &el,
         ElementTransformation &Trans,
         DenseMatrix &elmat)
 {}
 
-void PAUVectorFEMassIntegrator::AssembleElementMatrix2(
+void WaveVectorFEIntegratorB::AssembleElementMatrix2(
         const FiniteElement &trial_fe, const FiniteElement &test_fe,
         ElementTransformation &Trans, DenseMatrix &elmat)
 {
@@ -150,7 +142,7 @@ void PAUVectorFEMassIntegrator::AssembleElementMatrix2(
     double w;
 
     if (VQ || MQ) // || = or
-        mfem_error("VectorFEMassIntegrator::AssembleElementMatrix2(...)\n"
+        mfem_error("WaveVectorFEIntegratorB::AssembleElementMatrix2(...)\n"
                    "   is not implemented for vector/tensor permeability");
 
     DenseMatrix trial_dshapedxt(trial_dof,dim);
@@ -202,13 +194,13 @@ void PAUVectorFEMassIntegrator::AssembleElementMatrix2(
             {
                 for (int d = 0; d < dim - 1; d++ )
                     elmat(j, k) += 1.0 * w * test_vshape(j, d) * trial_dshapedxt(k, d);
-                elmat(j, k) -= w * test_vshape(j, dim - 1) * trial_shape(k);
+                elmat(j, k) -= w * test_vshape(j, dim - 1) * trial_dshapedxt(k, dim - 1);
             }
         }
     }
 }
 
-void PAUVectorFEMassIntegrator2::AssembleElementMatrix(
+void WaveVectorFEIntegrator::AssembleElementMatrix(
         const FiniteElement &el,
         ElementTransformation &Trans,
         DenseMatrix &elmat)
@@ -218,7 +210,7 @@ void PAUVectorFEMassIntegrator2::AssembleElementMatrix(
     double w;
 
     if (VQ || MQ) // || = or
-        mfem_error("VectorFEMassIntegrator::AssembleElementMatrix2(...)\n"
+        mfem_error("WaveVectorFEIntegrator::AssembleElementMatrix2(...)\n"
                    "   is not implemented for vector/tensor permeability");
 
 #ifdef MFEM_THREAD_SAFE
@@ -266,15 +258,14 @@ void PAUVectorFEMassIntegrator2::AssembleElementMatrix(
         for (int j = 0; j < dof; j++)
             for (int k = 0; k < dof; k++)
             {
-                for (int d = 0; d < dim - 1; d++ )
+                for (int d = 0; d < dim; d++ )
                     elmat(j, k) +=  w * dshapedxt(j, d) * dshapedxt(k, d);
-                elmat(j, k) +=  w * shape(j) * shape(k);
             }
 
     }
 }
 
-void PAUVectorFEMassIntegrator2::AssembleElementMatrix2(
+void WaveVectorFEIntegrator::AssembleElementMatrix2(
         const FiniteElement &trial_fe, const FiniteElement &test_fe,
         ElementTransformation &Trans, DenseMatrix &elmat)
 {}
@@ -345,121 +336,147 @@ void VectordivDomainLFIntegrator::AssembleRHSElementVect(
 //double u0_function(const Vector &x);
 double uFun_ex(const Vector & x); // Exact Solution
 double uFun_ex_dt(const Vector & xt);
+double uFun_ex_dt2(const Vector & xt);
 double uFun_ex_laplace(const Vector & xt);
+double uFun_ex_dtlaplace(const Vector & xt);
 void uFun_ex_gradx(const Vector& xt, Vector& gradx );
-
-//double fFun(const Vector & x); // Source f
-//void sigmaFun_ex (const Vector &x, Vector &u);
+void uFun_ex_dtgradx(const Vector& xt, Vector& gradx );
 
 double uFun1_ex(const Vector & x); // Exact Solution
 double uFun1_ex_dt(const Vector & xt);
+double uFun1_ex_dt2(const Vector & xt);
 double uFun1_ex_laplace(const Vector & xt);
+double uFun1_ex_dtlaplace(const Vector & xt);
 void uFun1_ex_gradx(const Vector& xt, Vector& gradx );
+void uFun1_ex_dtgradx(const Vector& xt, Vector& gradx );
 
 double uFun2_ex(const Vector & x); // Exact Solution
 double uFun2_ex_dt(const Vector & xt);
+double uFun2_ex_dt2(const Vector & xt);
 double uFun2_ex_laplace(const Vector & xt);
+double uFun2_ex_dtlaplace(const Vector & xt);
 void uFun2_ex_gradx(const Vector& xt, Vector& gradx );
+void uFun2_ex_dtgradx(const Vector& xt, Vector& gradx );
 
 double uFun3_ex(const Vector & x); // Exact Solution
 double uFun3_ex_dt(const Vector & xt);
+double uFun3_ex_dt2(const Vector & xt);
 double uFun3_ex_laplace(const Vector & xt);
+double uFun3_ex_dtlaplace(const Vector & xt);
 void uFun3_ex_gradx(const Vector& xt, Vector& gradx );
+void uFun3_ex_dtgradx(const Vector& xt, Vector& gradx );
 
-//double fFun1(const Vector & x); // Source f
-//void sigmaFun1_ex (const Vector &x, Vector &u);
+double uFun4_ex(const Vector & x); // Exact Solution
+double uFun4_ex_dt(const Vector & xt);
+double uFun4_ex_dt2(const Vector & xt);
+double uFun4_ex_laplace(const Vector & xt);
+double uFun4_ex_dtlaplace(const Vector & xt);
+void uFun4_ex_gradx(const Vector& xt, Vector& gradx );
+void uFun4_ex_dtgradx(const Vector& xt, Vector& gradx );
 
-template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
+double uFun5_ex(const Vector & x); // Exact Solution
+double uFun5_ex_dt(const Vector & xt);
+double uFun5_ex_dt2(const Vector & xt);
+double uFun5_ex_laplace(const Vector & xt);
+double uFun5_ex_dtlaplace(const Vector & xt);
+void uFun5_ex_gradx(const Vector& xt, Vector& gradx );
+void uFun5_ex_dtgradx(const Vector& xt, Vector& gradx );
+
+
+template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), \
+         double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt)> \
     double rhsideTemplate(const Vector& xt);
 
-template<double (*S)(const Vector & xt)> \
+template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt)> \
     double SnonhomoTemplate(const Vector& xt);
 
-template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
+template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     double divsigmaTemplate(const Vector& xt);
 
 
-template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
+template <double (*dSdt)(const Vector&), void(*Sgradxvec)(const Vector & x, Vector & gradx) >
     void sigmaTemplate(const Vector& xt, Vector& sigma);
 
-template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
+template <double (*dSdt)(const Vector&), void(*Sgradxvec)(const Vector & x, Vector & gradx), void (*dSdtgradxvec)(const Vector&, Vector& )> \
     void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma);
 
 
-class Heat_test
+class Wave_test
 {
 protected:
     int dim;
     int numsol;
-    bool testisgood;
 
 public:
-    FunctionCoefficient * scalaru;             // S
+    FunctionCoefficient * scalarS;             // S
     FunctionCoefficient * scalarSnonhomo;      // S(t=0)
-    FunctionCoefficient * scalarf;             // = dS/dt - laplace S + laplace S(t=0) - what is used for solving
-    FunctionCoefficient * scalardivsigma;      // = dS/dt - laplace S                  - what is used for computing error
+    FunctionCoefficient * scalarf;             // = d2 S/dt2 - laplace S + laplace S(t=0) - what is used for solving
+    FunctionCoefficient * scalardivsigma;      // = d2 S/dt2 - laplace S                  - what is used for computing error
     VectorFunctionCoefficient * sigma;
-    VectorFunctionCoefficient * sigma_nonhomo; // to incorporate inhomogeneous boundary conditions, stores (conv *S0, S0) with S(t=0) = S0
+    VectorFunctionCoefficient * sigma_nonhomo; // to incorporate inhomogeneous boundary conditions, stores ( - gradx S0, 0) with S0 = S(t=0)
 public:
-    Heat_test (int Dim, int NumSol);
+    Wave_test (int Dim, int NumSol);
 
     int GetDim() {return dim;}
     int GetNumSol() {return numsol;}
-    int CheckIfTestIsGood() {return testisgood;}
     int SetDim(int Dim) { dim = Dim;}
     int SetNumSol(int NumSol) { numsol = NumSol;}
     bool CheckTestConfig();
 
-    ~Heat_test () {}
+    ~Wave_test () {}
 private:
     void SetScalarFun( double (*f)(const Vector & xt))
-    { scalaru = new FunctionCoefficient(f);}
+    { scalarS = new FunctionCoefficient(f);}
 
-    template<double (*S)(const Vector & xt)> \
+    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt)> \
     void SetScalarSnonhomo()
-    { scalarSnonhomo = new FunctionCoefficient(SnonhomoTemplate<S>);}
+    { scalarSnonhomo = new FunctionCoefficient(SnonhomoTemplate<S, dSdt>);}
 
-    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
+    template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt)> \
     void SetRhandFun()
-    { scalarf = new FunctionCoefficient(rhsideTemplate<S, dSdt, Slaplace>);}
+    { scalarf = new FunctionCoefficient(rhsideTemplate<S, d2Sdt2, Slaplace, dSdtlaplace>);}
 
-    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
+    template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     void SetDivSigma()
-    { scalardivsigma = new FunctionCoefficient(divsigmaTemplate<S, dSdt, Slaplace>);}
+    { scalardivsigma = new FunctionCoefficient(divsigmaTemplate<S, d2Sdt2, Slaplace>);}
 
 
-    template<double (*f1)(const Vector & xt), void(*f2)(const Vector & x, Vector & vec)> \
-    void SetHdivFun()
+    template<double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & vec)> \
+    void SetSigmaVec()
     {
-        sigma = new VectorFunctionCoefficient(dim, sigmaTemplate<f1,f2>);
+        sigma = new VectorFunctionCoefficient(dim, sigmaTemplate<dSdt,Sgradxvec>);
     }
 
-    template<double (*f1)(const Vector & xt), void(*f2)(const Vector & x, Vector & vec)> \
-    void SetInitCondVec()
+    template<double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & vec), void (*dSdtgradxvec)(const Vector&, Vector& )> \
+    void SetInitSigmaVec()
     {
-        sigma_nonhomo = new VectorFunctionCoefficient(dim, sigmaNonHomoTemplate<f1,f2>);
+        sigma_nonhomo = new VectorFunctionCoefficient(dim, sigmaNonHomoTemplate<dSdt,Sgradxvec,dSdtgradxvec>);
     }
 
 
-    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx) > \
+    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*d2Sdt2)(const Vector & xt),\
+             double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt), \
+             void(*Sgradxvec)(const Vector & x, Vector & gradx), void (*dSdtgradxvec)(const Vector&, Vector& ) > \
     void SetTestCoeffs ( );
 };
 
 
-template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx) > \
-void Heat_test::SetTestCoeffs ()
+template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), \
+         double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt), \
+         void(*Sgradxvec)(const Vector & x, Vector & gradx), void (*dSdtgradxvec)(const Vector&, Vector& ) > \
+void Wave_test::SetTestCoeffs ()
 {
     SetScalarFun(S);
-    SetScalarSnonhomo<S>();
-    SetRhandFun<S, dSdt, Slaplace>();
-    SetHdivFun<S,Sgradxvec>();
-    SetInitCondVec<S,Sgradxvec>();
-    SetDivSigma<S, dSdt, Slaplace>();
+    SetScalarSnonhomo<S, dSdt>();
+    SetRhandFun<S, d2Sdt2, Slaplace, dSdtlaplace>();
+    SetSigmaVec<dSdt,Sgradxvec>();
+    SetInitSigmaVec<dSdt,Sgradxvec,dSdtgradxvec>();
+    SetDivSigma<S, d2Sdt2, Slaplace>();
     return;
 }
 
 
-bool Heat_test::CheckTestConfig()
+bool Wave_test::CheckTestConfig()
 {
     if (dim == 4 || dim == 3)
     {
@@ -469,6 +486,10 @@ bool Heat_test::CheckTestConfig()
             return true;
         if (numsol == 3 && dim == 3)
             return true;
+        if (numsol == 4 && dim == 3)
+            return true;
+        if (numsol == 5 && dim == 3)
+            return true;
         return false;
     }
     else
@@ -476,39 +497,42 @@ bool Heat_test::CheckTestConfig()
 
 }
 
-Heat_test::Heat_test (int Dim, int NumSol)
+Wave_test::Wave_test (int Dim, int NumSol)
 {
     dim = Dim;
     numsol = NumSol;
 
     if ( CheckTestConfig() == false )
-    {
-        std::cerr << "Inconsistent dim and numsol \n" << std::flush;
-        testisgood = false;
-    }
+        std::cout << "Inconsistent dim and numsol \n" << std::flush;
     else
     {
         if (numsol == 0)
         {
-            //std::cout << "The domain should be either a unit rectangle or cube" << std::endl << std::flush;
-            SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx>();
+            SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_dt2, &uFun_ex_laplace, &uFun_ex_dtlaplace, &uFun_ex_gradx, &uFun_ex_dtgradx>();
         }
         if (numsol == 1)
         {
-            //std::cout << "The domain should be either a unit rectangle or cube" << std::endl << std::flush;
-            SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx>();
+            SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_dt2, &uFun1_ex_laplace, &uFun1_ex_dtlaplace, &uFun1_ex_gradx, &uFun1_ex_dtgradx>();
         }
         if (numsol == 2)
         {
-            SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx>();
+            SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_dt2, &uFun2_ex_laplace, &uFun2_ex_dtlaplace, &uFun2_ex_gradx, &uFun2_ex_dtgradx>();
         }
         if (numsol == 3)
         {
-            SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx>();
+            SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_dt2, &uFun3_ex_laplace, &uFun3_ex_dtlaplace, &uFun3_ex_gradx, &uFun3_ex_dtgradx>();
         }
-        testisgood = true;
+        if (numsol == 4)
+        {
+            SetTestCoeffs<&uFun4_ex, &uFun4_ex_dt, &uFun4_ex_dt2, &uFun4_ex_laplace, &uFun4_ex_dtlaplace, &uFun4_ex_gradx, &uFun4_ex_dtgradx>();
+        }
+        if (numsol == 5)
+        {
+            SetTestCoeffs<&uFun5_ex, &uFun5_ex_dt, &uFun5_ex_dt2, &uFun5_ex_laplace, &uFun5_ex_dtlaplace, &uFun5_ex_gradx, &uFun5_ex_dtgradx>();
+        }
     }
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -522,34 +546,39 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
     bool verbose = (myid == 0);
-    bool visualization = 1;
+    bool visualization = 0;
 
     int nDimensions     = 3;
     int numsol          = 3;
 
-    int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int ser_ref_levels  = 1;//0;
+    int par_ref_levels  = 1;//2;
 
     /*
-    int generate_frombase   = 1;
-    int Nsteps          = 8;
-    double tau          = 0.125;
+    int generate_frombase   = 0;
     int generate_parallel   = generate_frombase * 1;
     int whichparallel       = generate_parallel * 2;
     int bnd_method          = 1;
     int local_method        = 2;
+    int Nsteps          = 8;//16;//2;
+    double tau          = 0.125;//0.0625;//0.5;
     */
 
-    const char *formulation = "cfosls";     // or "fosls"
-    bool with_divdiv = true;                // should be true for fosls and can be false for cfosls
-    bool use_ADS = true;                   // works only in 3D and for with_divdiv = true
+    const char *formulation = "cfosls";      // "cfosls" or "fosls"
+    bool with_divdiv = false;                // should be true for fosls and can be false for cfosls
+    bool use_ADS = false;                    // works only in 3D and for with_divdiv = true
 
-    const char *mesh_file = "../data/cube_3d_moderate.mesh";
+    const char *mesh_file = "../data/cube_3d_fine.mesh";
     //const char *mesh_file = "../data/square_2d_moderate.mesh";
 
     //const char *mesh_file = "../data/cube4d_low.MFEM";
     //const char *mesh_file = "../data/cube4d.MFEM";
+    //const char *mesh_file = "../data/pmesh_cube_for_test.mesh";
+    //const char *mesh_file = "../data/mesh4_saved";
     //const char *mesh_file = "dsadsad";
+    //const char *mesh_file = "../build3/mesh_par1_id0_np_1.mesh";
+    //const char *mesh_file = "../build3/mesh_par1_id0_np_2.mesh";
+    //const char *mesh_file = "../data/tempmesh_frompmesh.mesh";
     //const char *mesh_file = "../data/orthotope3D_moderate.mesh";
     //const char *mesh_file = "../data/sphere3D_0.1to0.2.mesh";
     //const char * mesh_file = "../data/orthotope3D_fine.mesh";
@@ -571,7 +600,7 @@ int main(int argc, char *argv[])
     int feorder         = 0;
 
     if (verbose)
-        cout << "Solving (C)FOSLS Heat equation with MFEM & hypre" << endl;
+        cout << "Solving (C)FOSLS Wave equation with MFEM & hypre" << endl;
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh",
@@ -615,7 +644,6 @@ int main(int argc, char *argv[])
     args.AddOption(&use_ADS, "-ADS", "--with-ADS", "-no-ADS",
                    "--no-ADS",
                    "Decide whether to use ADS.");
-
     args.Parse();
     if (!args.Good())
     {
@@ -675,9 +703,28 @@ int main(int argc, char *argv[])
             for (int l = 0; l < ser_ref_levels; l++)
                 meshbase->UniformRefinement();
 
+
+            //if ( verbose )
+            //{
+                //std::stringstream fname;
+                //fname << "mesh_" << nDimensions - 1 << "dbase.mesh";
+                //std::ofstream ofid(fname.str().c_str());
+                //ofid.precision(8);
+                //meshbase->Print(ofid);
+            //}
+
+
             if (generate_parallel == 1) //parallel version
             {
                 ParMesh * pmeshbase = new ParMesh(comm, *meshbase);
+
+
+                //std::stringstream fname;
+                //fname << "pmesh_"<< nDimensions - 1 << "dbase_" << myid << ".mesh";
+                //std::ofstream ofid(fname.str().c_str());
+                //ofid.precision(8);
+                //pmesh3dbase->Print(ofid);
+
 
                 chrono.Clear();
                 chrono.Start();
@@ -773,8 +820,24 @@ int main(int argc, char *argv[])
 
     }
 
-    //MPI_Finalize();
-    //return 0;
+
+    /*
+     * Short reading mesh from the mesh, with no mentions of space-time mesh generator
+    if (myid == 0)
+        cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+    ifstream imesh(mesh_file);
+    if (!imesh)
+    {
+         std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+         MPI_Finalize();
+         return -2;
+    }
+    else
+    {
+        mesh = new Mesh(imesh, 1, 1);
+        imesh.close();
+    }
+    */
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
@@ -892,50 +955,46 @@ int main(int argc, char *argv[])
 
     // 8. Define the coefficients, analytical solution, and rhs of the PDE.
 
-    Heat_test Mytest(nDimensions,numsol);
-    if (Mytest.CheckIfTestIsGood() == false && verbose)
-    {
-        cout << "Test is bad" << endl;
-        MPI_Finalize();
-        return 0;
-    }
+    Wave_test Mytest(nDimensions,numsol);
 
     ConstantCoefficient k(1.0);
     ConstantCoefficient zero(.0);
     Vector vzero(dim); vzero = 0.;
     VectorConstantCoefficient vzero_coeff(vzero);
 
-    /*
-    FunctionCoefficient fcoeff(fFun);//<<<<<<
-    FunctionCoefficient ucoeff(uFun_ex);//<<<<<<
-    //FunctionCoefficient u0(u0_function); //initial condition
-    VectorFunctionCoefficient sigmacoeff(dim, sigmaFun_ex);
-    */
-
     //----------------------------------------------------------
     // Setting boundary conditions.
     //----------------------------------------------------------
 
-    Array<int> ess_bdr(pmesh->bdr_attributes.Max()); // applied to H^1 variable
-    ess_bdr = 1;
-    ess_bdr[pmesh->bdr_attributes.Max()-1] = 0;
+    Array<int> ess_bdrS(pmesh->bdr_attributes.Max());       // applied to H^1 variable
+    ess_bdrS = 1;
+    ess_bdrS[pmesh->bdr_attributes.Max()-1] = 0;
+    Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());   // applied to Hdiv variable
+    ess_bdrSigma = 0;
+    ess_bdrSigma[0] = 1; // t = 0 = essential boundary for sigma from Hdiv
 
-     //-----------------------
 
+    // 8.5 some additional parelag stuff which is used for coarse lagrange
+    // multiplier implementation at the matrix level
+
+    HypreParMatrix * pPT;
+    //-----------------------
 
     // 9. Define the parallel grid function and parallel linear forms, solution
     //    vector and rhs.
-    BlockVector x(block_offsets), rhs(block_offsets);
-    BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
-    trueX =0.0;
-    //ParGridFunction *u(new ParGridFunction);
-    //u->MakeRef(H_space, x.GetBlock(1), 0);
-    //*u = 0.0;
-    //u->ProjectCoefficient(*(Mytest.scalaru));
-    trueRhs=.0;
+
+    BlockVector * x, * rhs;
+    x = new BlockVector(block_offsets);
+    *x = 0.0;
+    rhs = new BlockVector(block_offsets);
+    *rhs = 0.0;
 
     ParLinearForm *fform(new ParLinearForm);
-    fform->Update(R_space, rhs.GetBlock(0), 0);
+    fform->Update(R_space, rhs->GetBlock(0), 0);
+    //if (strcmp(formulation,"cfosls") == 0)
+        //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
+    //else // fosls, then we need righthand side term here
+        //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
     if (strcmp(formulation,"cfosls") == 0) // cfosls case
         if (with_divdiv)
         {
@@ -955,34 +1014,36 @@ int main(int argc, char *argv[])
             cout << "Adding div-driven rhside term to the formulation" << endl;
         fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
     }
+    //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
     fform->Assemble();
-    fform->ParallelAssemble(trueRhs.GetBlock(0));
+    //fform->ParallelAssemble(trueRhs->GetBlock(0));
 
     ParLinearForm *qform(new ParLinearForm);
-    qform->Update(H_space, rhs.GetBlock(1), 0);
+    qform->Update(H_space, rhs->GetBlock(1), 0);
     qform->AddDomainIntegrator(new VectorDomainLFIntegrator(vzero_coeff));
     qform->Assemble();
-    qform->ParallelAssemble(trueRhs.GetBlock(1));
+    //qform->ParallelAssemble(trueRhs->GetBlock(1));
 
     ParLinearForm *gform(new ParLinearForm);
     if (strcmp(formulation,"cfosls") == 0)
     {
-        gform->Update(W_space, rhs.GetBlock(2), 0);
+        gform->Update(W_space, rhs->GetBlock(2), 0);
         gform->AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalarf)));
         gform->Assemble();
-        gform->ParallelAssemble(trueRhs.GetBlock(2));
+        //gform->ParallelAssemble(trueRhs->GetBlock(2));
     }
 
-    // 10. Assemble the finite element matrices for the Darcy operator
+
+    // 10. Assemble the finite element matrices for the operator
     //
     //                       CFOSLS = [  A   B  D^T ]
     //                                [ B^T  C   0  ]
     //                                [  D   0   0  ]
     //     where:
     //
-    //     A = (sigma, tau)_{H(div)} (for fosls or cfosls w/ div-div) or (sigma, tau)_L2 (for cfosls w/o div-div)
-    //     B = (sigma, [ dx(S), -S] )
-    //     C = ( [dx(S), -S], [dx(V),-V] )
+    //     A = ( sigma, tau)_{H(div)}
+    //     B = (sigma, [ dx(S), -dtS] )
+    //     C = ( [dx(S), -dtS], [dx(V),-dtV] )
     //     D = ( div(sigma), mu )
 
     chrono.Clear();
@@ -996,6 +1057,8 @@ int main(int argc, char *argv[])
     HypreParMatrix *A;
 
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+    //if (strcmp(formulation,"cfosls") != 0) // fosls, then we need div-div term
+        //Ablock->AddDomainIntegrator(new DivDivIntegrator());
     if (strcmp(formulation,"cfosls") != 0) // fosls, then we need div-div term
     {
         if (verbose)
@@ -1014,7 +1077,9 @@ int main(int argc, char *argv[])
             if (verbose)
                 cout << "No div-div term in the formulation" << endl;
         }
+    //Ablock->AddDomainIntegrator(new DivDivIntegrator());
     Ablock->Assemble();
+    Ablock->EliminateEssentialBC(ess_bdrSigma, x->GetBlock(0), rhs->GetBlock(0)); // new
     Ablock->Finalize();
     A = Ablock->ParallelAssemble();
 
@@ -1024,9 +1089,9 @@ int main(int argc, char *argv[])
 
     ParBilinearForm *Cblock(new ParBilinearForm(H_space));
     HypreParMatrix *C;
-    Cblock->AddDomainIntegrator(new PAUVectorFEMassIntegrator2);
+    Cblock->AddDomainIntegrator(new WaveVectorFEIntegrator);
     Cblock->Assemble();
-    Cblock->EliminateEssentialBC(ess_bdr, x.GetBlock(1), rhs.GetBlock(1));
+    Cblock->EliminateEssentialBC(ess_bdrS, x->GetBlock(1), rhs->GetBlock(1));
     Cblock->Finalize();
     C = Cblock->ParallelAssemble();
 
@@ -1036,9 +1101,10 @@ int main(int argc, char *argv[])
 
     ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(H_space, R_space));
     HypreParMatrix *B;
-    Bblock->AddDomainIntegrator(new PAUVectorFEMassIntegrator);
+    Bblock->AddDomainIntegrator(new WaveVectorFEIntegratorB);
     Bblock->Assemble();
-    Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(1), rhs.GetBlock(0));
+    Bblock->EliminateTestDofs(ess_bdrSigma); // new
+    Bblock->EliminateTrialDofs(ess_bdrS, x->GetBlock(1), rhs->GetBlock(0));
     Bblock->Finalize();
     B = Bblock->ParallelAssemble();
     HypreParMatrix *BT = B->Transpose();
@@ -1055,6 +1121,7 @@ int main(int argc, char *argv[])
         ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
         Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
         Dblock->Assemble();
+        Dblock->EliminateTestDofs(ess_bdrSigma); // new
         Dblock->Finalize();
         D = Dblock->ParallelAssemble();
         DT = D->Transpose();
@@ -1064,12 +1131,10 @@ int main(int argc, char *argv[])
     // Assembling the Matrix
     //-------------------------------------------------------
 
-    fform->ParallelAssemble(trueRhs.GetBlock(0));
-    qform->ParallelAssemble(trueRhs.GetBlock(1));
-    if (strcmp(formulation,"cfosls") == 0)
-        gform->ParallelAssemble(trueRhs.GetBlock(2));
+    BlockOperator *CFOSLSop;
 
-    BlockOperator *CFOSLSop = new BlockOperator(block_trueOffsets);
+    CFOSLSop = new BlockOperator(block_trueOffsets);
+
     CFOSLSop->SetBlock(0,0, A);
     CFOSLSop->SetBlock(0,1, B);
     CFOSLSop->SetBlock(1,0, BT);
@@ -1079,6 +1144,7 @@ int main(int argc, char *argv[])
         CFOSLSop->SetBlock(0,2, DT);
         CFOSLSop->SetBlock(2,0, D);
     }
+
 
     if (verbose)
         std::cout << "System built in " << chrono.RealTime() << "s. \n";
@@ -1090,36 +1156,36 @@ int main(int argc, char *argv[])
     //
     //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
     //     pressure Schur Complement.
-
     if (verbose)
         if (use_ADS == true)
             cout << "Using ADS (+ I) preconditioner for sigma (and lagrange multiplier)" << endl;
         else
             cout << "Using Diag(A) (and D Diag^(-1)(A) Dt) preconditioner for sigma (and lagrange multiplier)" << endl;
+
     chrono.Clear();
     chrono.Start();
     Solver * invA;
     HypreParMatrix *DAinvDt;
     if (use_ADS == false)
     {
-        if (strcmp(formulation,"cfosls") == 0 )
+        if (strcmp(formulation,"cfosls") == 0)
         {
             HypreParMatrix *AinvDt = D->Transpose();
             HypreParVector *Ad = new HypreParVector(MPI_COMM_WORLD, A->GetGlobalNumRows(),
-                                                A->GetRowStarts());
+                                                    A->GetRowStarts());
             A->GetDiag(*Ad);
-            AinvDt->InvScaleRows(*Ad);
-            DAinvDt = ParMult(D, AinvDt);
-        }
 
+            AinvDt->InvScaleRows(*Ad);
+            DAinvDt= ParMult(D, AinvDt);
+        }
         invA = new HypreDiagScale(*A);
     }
     else // use_ADS
     {
         invA = new HypreADS(*A, R_space);
     }
+    invA->iterative_mode = false;
 
-    //HypreDiagScale * invS = new HypreDiagScale(*S);
     Operator * invL;
     if (strcmp(formulation,"cfosls") == 0)
     {
@@ -1141,14 +1207,16 @@ int main(int argc, char *argv[])
     HypreBoomerAMG * invC = new HypreBoomerAMG(*C);
     invC->SetPrintLevel(0);
 
-    invA->iterative_mode = false;
     invC->iterative_mode = false;
 
-    BlockDiagonalPreconditioner prec(block_trueOffsets);
-    prec.SetDiagonalBlock(0, invA);
-    prec.SetDiagonalBlock(1, invC);
+    BlockDiagonalPreconditioner * prec;
+
+    prec = new BlockDiagonalPreconditioner(block_trueOffsets);
+    //BlockDiagonalPreconditioner prec(block_trueOffsets);
+    prec->SetDiagonalBlock(0, invA);
+    prec->SetDiagonalBlock(1, invC);
     if (strcmp(formulation,"cfosls") == 0)
-        prec.SetDiagonalBlock(2, invL);
+        prec->SetDiagonalBlock(2, invL);
 
     if (verbose)
         std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
@@ -1156,19 +1224,34 @@ int main(int argc, char *argv[])
     // 12. Solve the linear system with MINRES.
     //     Check the norm of the unpreconditioned residual.
 
-    int maxIter(max_num_iter);
 
     chrono.Clear();
     chrono.Start();
     MINRESSolver solver(MPI_COMM_WORLD);
     solver.SetAbsTol(atol);
     solver.SetRelTol(rtol);
-    solver.SetMaxIter(maxIter);
+    solver.SetMaxIter(max_num_iter);
     solver.SetOperator(*CFOSLSop);
-    solver.SetPreconditioner(prec);
+    solver.SetPreconditioner(*prec);
     solver.SetPrintLevel(0);
-    trueX = 0.0;
-    solver.Mult(trueRhs, trueX);
+    BlockVector * trueX;
+
+    trueX = new BlockVector(block_trueOffsets);
+    *trueX = 0.0;
+
+    BlockVector *trueRhs;
+
+    trueRhs = new BlockVector(block_trueOffsets);
+    *trueRhs=.0;
+
+    fform->ParallelAssemble(trueRhs->GetBlock(0));
+    qform->ParallelAssemble(trueRhs->GetBlock(1));
+    if (strcmp(formulation,"cfosls") == 0)
+    {
+        gform->ParallelAssemble(trueRhs->GetBlock(2));
+    }
+
+    solver.Mult(*trueRhs, *trueX);
     chrono.Stop();
 
     if (verbose)
@@ -1182,19 +1265,44 @@ int main(int argc, char *argv[])
        cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
     }
 
+    // Checking the residual in the divergence constraint
+    Vector vec1 = trueX->GetBlock(0);
+    Vector Dvec1(trueRhs->GetBlock(2).Size());
+    D->Mult(vec1, Dvec1);
+    Dvec1 -= trueRhs->GetBlock(2);
+    double local_res_norm = Dvec1.Norml2();
+    double global_res_norm = 0.0;
+    MPI_Reduce(&local_res_norm, &global_res_norm, 1,
+               MPI_DOUBLE, MPI_SUM, 0, comm);
+    double local_rhs_norm = trueRhs->GetBlock(2).Norml2();
+    double global_rhs_norm = 0.0;
+    MPI_Reduce(&local_rhs_norm, &global_rhs_norm, 1,
+               MPI_DOUBLE, MPI_SUM, 0, comm);
+    if (verbose)
+    {
+        cout << "rel res_norm for coarse conservation law = " << global_res_norm / global_rhs_norm << endl;
+        /*
+        cout << "Debugging" << endl;
+        cout << "vec1.size = " << vec1.Size() << endl;
+        cout << "Dvec1.size = " << Dvec1.Size() << endl;
+        cout << "D is " << D->M() << " x " << D->N() << endl;
+        */
+    }
+
+
     ParGridFunction *S(new ParGridFunction);
-    S->MakeRef(H_space, x.GetBlock(1), 0);
-    S->Distribute(&(trueX.GetBlock(1)));
+    S->MakeRef(H_space, x->GetBlock(1), 0);
+    S->Distribute(&(trueX->GetBlock(1)));
 
     ParGridFunction *sigma(new ParGridFunction);
-    sigma->MakeRef(R_space, x.GetBlock(0), 0);
-    sigma->Distribute(&(trueX.GetBlock(0)));
+    sigma->MakeRef(R_space, x->GetBlock(0), 0);
+    sigma->Distribute(&(trueX->GetBlock(0)));
 
     ParGridFunction *sigma_exact = new ParGridFunction(R_space);
     sigma_exact->ProjectCoefficient(*(Mytest.sigma));
 
     ParGridFunction *S_exact = new ParGridFunction(H_space);
-    S_exact->ProjectCoefficient(*(Mytest.scalaru));
+    S_exact->ProjectCoefficient(*(Mytest.scalarS));
 
 
     // adding back the term from nonhomogeneous initial condition
@@ -1213,53 +1321,31 @@ int main(int argc, char *argv[])
         irs[i] = &(IntRules.Get(i, order_quad));
 
 
-    /*
-    double err_sigma_loc  = sigma->ComputeL2Error(*(Mytest.sigma), irs);
-    err_sigma_loc *= err_sigma_loc;
-    double err_sigma;
-    MPI_Reduce(&err_sigma_loc, &err_sigma, 1,
-               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    */
     double err_sigma = sigma->ComputeL2Error(*(Mytest.sigma), irs);
-    /*
-    double norm_sigma_loc = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
-    norm_sigma_loc *= norm_sigma_loc;
-    double norm_sigma;
-    MPI_Reduce(&norm_sigma_loc, &norm_sigma, 1,
-               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    */
     double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
 
     if (verbose)
     {
+        //cout << "|| sigma_h - sigma_ex ||  = "
+        //          << err_sigma  << "\n";
         cout << "|| sigma_h - sigma_ex || / || sigma_ex || = "
                   << err_sigma/norm_sigma  << "\n";
     }
 
-    DiscreteLinearOperator Div(R_space, W_space);
+    ParDiscreteLinearOperator Div(R_space, W_space);
     Div.AddDomainInterpolator(new DivergenceInterpolator());
-    ParGridFunction DivSigma(W_space);
     Div.Assemble();
-    Div.Mult(*sigma, DivSigma);
+    Div.Finalize();
+    Div.ParallelAssemble();
 
-    /*
-     * no need for mpi_reduce, error and norm functions act globally
-    double err_div_loc = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
-    err_div_loc *= err_div_loc;
-    cout << " I am " << myid << ", my err_div_loc = " << err_div_loc << endl;
-    double err_div = 0.0;
-    MPI_Reduce(&err_div_loc, &err_div, 1,
-               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    */
+    ParGridFunction DivSigma(W_space);
+    Div.Mult(*sigma, DivSigma);
+    //SpecialDmat->Mult(*sigma, DivSigma);
+
+    ParGridFunction DivSigma_exact(W_space);
+    DivSigma_exact.ProjectCoefficient(*(Mytest.scalardivsigma));
+
     double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
-    /*
-    double norm_div_loc = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
-    cout << " I am " << myid << ", my norm_div_loc = " << norm_div_loc << endl;
-    norm_div_loc *= norm_div_loc;
-    double norm_div = 0.0;
-    MPI_Reduce(&norm_div_loc, &norm_div, 1,
-               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    */
     double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
 
     if (verbose)
@@ -1286,18 +1372,19 @@ int main(int argc, char *argv[])
 
     *S += *S_nonhomo;
 
-    double err_S  = S->ComputeL2Error(*(Mytest.scalaru), irs);
-    double norm_S = ComputeGlobalLpNorm(2, *(Mytest.scalaru), *pmesh, irs);
+    double err_S  = S->ComputeL2Error(*(Mytest.scalarS), irs);
+    double norm_S = ComputeGlobalLpNorm(2, *(Mytest.scalarS), *pmesh, irs);
 
     if (verbose)
     {
+        //cout << "|| S_h - S_ex || = "
+        //          << err_S << "\n";
         cout << "|| S_h - S_ex || / || S_ex || = "
                   << err_S/norm_S  << "\n";
     }
 
     // Computing error in mesh norms
 
-    /*
     if (verbose)
         cout << "Computing mesh norms" << endl;
 
@@ -1325,9 +1412,10 @@ int main(int argc, char *argv[])
         cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
                         << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
 
+
     BilinearForm *m = new BilinearForm(R_space);
     m->AddDomainIntegrator(new DivDivIntegrator);
-    m->AddDomainIntegrator(new VectorFEMassIntegrator);
+    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
     m->Assemble(); m->Finalize();
     SparseMatrix E = m->SpMat();
     Vector Asigma(sigmav->Size());
@@ -1338,11 +1426,12 @@ int main(int argc, char *argv[])
     E.Mult(*sigmav,Ae);
     double weighted_error = (*sigmav)*Ae;
 
+    //if(verbose)
+        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
+                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
     if(verbose)
-        cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
+        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
                         sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-    */
-
     if (verbose)
         cout << "Computing projection errors" << endl;
 
@@ -1352,32 +1441,46 @@ int main(int argc, char *argv[])
         cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
                         << projection_error_sigma / norm_sigma << endl;
 
-    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalaru), irs);
+    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
     if(verbose)
         cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
                         << projection_error_S / norm_S << endl;
 
-
     if (visualization)
     {
-        char vishost[] = "localhost";
-        int  visport   = 19916;
-        socketstream u_sock(vishost, visport);
-        u_sock << "parallel " << num_procs << " " << myid << "\n";
-        u_sock.precision(8);
-        MPI_Barrier(pmesh->GetComm());
-        u_sock << "solution\n" << *pmesh << *sigma_exact
-               << "window_title 'sigma_exact'" << endl;
         // Make sure all ranks have sent their 'u' solution before initiating
         // another set of GLVis connections (one from each rank):
-
+        char vishost[] = "localhost";
+        int  visport   = 19916;
         socketstream uu_sock(vishost, visport);
         uu_sock << "parallel " << num_procs << " " << myid << "\n";
         uu_sock.precision(8);
         MPI_Barrier(pmesh->GetComm());
         uu_sock << "solution\n" << *pmesh << *sigma << "window_title 'sigma'"
                 << endl;
+
+        socketstream u_sock(vishost, visport);
+        u_sock << "parallel " << num_procs << " " << myid << "\n";
+        u_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        u_sock << "solution\n" << *pmesh << *sigma_exact
+               << "window_title 'sigma_exact'" << endl;
+
+        socketstream delete_sock(vishost, visport);
+        delete_sock << "parallel " << num_procs << " " << myid << "\n";
+        delete_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        delete_sock << "solution\n" << *pmesh << *sigma_nonhomo
+                 << "window_title 'sigma_nonhomo'" << endl;
+
+        *sigma_nonhomo -= *sigma_exact;
+        socketstream delete_sock2(vishost, visport);
+        delete_sock2 << "parallel " << num_procs << " " << myid << "\n";
+        delete_sock2.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        delete_sock2 << "solution\n" << *pmesh << *sigma_nonhomo
+                 << "window_title 'sigma_nonhomo - sigma_exact'" << endl;
 
         *sigma_exact -= *sigma;
         socketstream uuu_sock(vishost, visport);
@@ -1387,13 +1490,20 @@ int main(int argc, char *argv[])
         uuu_sock << "solution\n" << *pmesh << *sigma_exact
                  << "window_title 'difference'" << endl;
 
-
         socketstream s_sock(vishost, visport);
         s_sock << "parallel " << num_procs << " " << myid << "\n";
         s_sock.precision(8);
         MPI_Barrier(pmesh->GetComm());
         s_sock << "solution\n" << *pmesh << *S_exact << "window_title 'S_exact'"
                 << endl;
+
+        socketstream deletes_sock(vishost, visport);
+        deletes_sock << "parallel " << num_procs << " " << myid << "\n";
+        deletes_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        deletes_sock << "solution\n" << *pmesh << *S_nonhomo << "window_title 'S_nonhomo'"
+                << endl;
+
 
         socketstream ss_sock(vishost, visport);
         ss_sock << "parallel " << num_procs << " " << myid << "\n";
@@ -1409,6 +1519,30 @@ int main(int argc, char *argv[])
         MPI_Barrier(pmesh->GetComm());
         sss_sock << "solution\n" << *pmesh << *S_exact
                  << "window_title 'difference for S'" << endl;
+
+
+        socketstream ds_sock(vishost, visport);
+        ds_sock << "parallel " << num_procs << " " << myid << "\n";
+        ds_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        ds_sock << "solution\n" << *pmesh << DivSigma << "window_title 'divsigma'"
+                << endl;
+
+        socketstream dse_sock(vishost, visport);
+        dse_sock << "parallel " << num_procs << " " << myid << "\n";
+        dse_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        dse_sock << "solution\n" << *pmesh << DivSigma_exact << "window_title 'divsigma exact'"
+                << endl;
+
+        DivSigma -= DivSigma_exact;
+        socketstream dsd_sock(vishost, visport);
+        dsd_sock << "parallel " << num_procs << " " << myid << "\n";
+        dsd_sock.precision(8);
+        MPI_Barrier(pmesh->GetComm());
+        dsd_sock << "solution\n" << *pmesh << DivSigma << "window_title 'divsigma error'"
+                << endl;
+
     }
 
     // 17. Free the used memory.
@@ -1441,7 +1575,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-template <double (*S)(const Vector&), void (*Sgradxvec)(const Vector&, Vector& )> \
+template <double (*dSdt)(const Vector&), void (*Sgradxvec)(const Vector&, Vector& )> \
 void sigmaTemplate(const Vector& xt, Vector& sigma)
 {
     sigma.SetSize(xt.Size());
@@ -1449,17 +1583,19 @@ void sigmaTemplate(const Vector& xt, Vector& sigma)
     Vector gradS;
     Sgradxvec(xt,gradS);
 
-    sigma(xt.Size()-1) = S(xt);
+    sigma(xt.Size()-1) = dSdt(xt);
     for (int i = 0; i < xt.Size()-1; i++)
         sigma(i) = - gradS(i);
 
     return;
 }
 
-template <double (*S)(const Vector&), void (*Sgradxvec)(const Vector&, Vector& )> \
-void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma) // sigmaNonHomo = ( - grad u, u) for u = S(t=0)
+template <double (*dSdt)(const Vector&), void (*Sgradxvec)(const Vector&, Vector& ), void (*dSdtgradxvec)(const Vector&, Vector& )> \
+void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma) // sigmaNonHomo = ( - grad u, u_t) for u = S(t=0)
 {
     sigma.SetSize(xt.Size());
+
+    double t = xt(xt.Size() - 1);
 
     Vector xteq0(xt.Size()); // xt with t = 0
     xteq0 = xt;
@@ -1467,43 +1603,50 @@ void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma) // sigmaNonHomo = ( -
 
     Vector gradS;
     Sgradxvec(xteq0,gradS);
+    Vector graddSdt;
+    dSdtgradxvec(xteq0,graddSdt);
+    //Sgradxvec(xt,gradS);
 
-    sigma(xt.Size()-1) = S(xteq0);
+    sigma(xt.Size()-1) = dSdt(xteq0); /////////////// because dSdt|t=0 = - sigma * n |t = 0
     for (int i = 0; i < xt.Size()-1; i++)
-        sigma(i) = - gradS(i);
+        sigma(i) = - gradS(i) - t * graddSdt(i);
 
     return;
 }
 
 
-template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt) > \
+template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt) > \
 double rhsideTemplate(const Vector& xt)
 {
     Vector xt0(xt.Size());
     xt0 = xt;
-    xt0 (xt0.Size() - 1) = 0;
+    xt0(xt0.Size() - 1) = 0;
 
-    return dSdt(xt) - Slaplace(xt) + Slaplace(xt0);
+    double t = xt(xt.Size() - 1);
+
+    return d2Sdt2(xt) - Slaplace(xt) + Slaplace(xt0) + t * dSdtlaplace(xt0);
 }
 
-template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt) > \
+template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt) > \
 double divsigmaTemplate(const Vector& xt)
 {
     Vector xt0(xt.Size());
     xt0 = xt;
     xt0 (xt0.Size() - 1) = 0;
 
-    return dSdt(xt) - Slaplace(xt);
+    return d2Sdt2(xt) - Slaplace(xt);
 }
 
-template<double (*S)(const Vector & xt)> \
+template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt)> \
     double SnonhomoTemplate(const Vector& xt)
 {
     Vector xt0(xt.Size());
     xt0 = xt;
     xt0 (xt0.Size() - 1) = 0;
 
-    return S(xt0);
+    double t = xt(xt.Size()-1);
+
+    return S(xt0) + t * dSdt(xt0);
 }
 
 
@@ -1517,8 +1660,10 @@ double uFun_ex(const Vector & xt)
 
     if (xt.Size() == 3)
     {
-        zi = xt(2);
-        return sin(PI*xi)*sin(PI*yi)*zi;
+        double t = xt(2);
+        return sin(PI*xi)*sin(PI*yi) * t * t;
+        //return sin(PI*xi)*sin(PI*yi);
+        //return sin(PI*xi)*sin(PI*yi) * t;
     }
     if (xt.Size() == 4)
     {
@@ -1531,7 +1676,6 @@ double uFun_ex(const Vector & xt)
     return 0.0;
 }
 
-
 double uFun_ex_dt(const Vector & xt)
 {
     const double PI = 3.141592653589793;
@@ -1539,27 +1683,61 @@ double uFun_ex_dt(const Vector & xt)
     double yi(xt(1));
     double zi(0.0);
 
+
     if (xt.Size() == 3)
-        return sin(PI*xi)*sin(PI*yi);
+    {
+        double t(xt(2));
+        return sin(PI*xi)*sin(PI*yi)*2*t;
+        //return 1.0;
+        //return 0.0;
+        //return sin(PI*xi)*sin(PI*yi);
+    }
     if (xt.Size() == 4)
     {
         zi = xt(2);
         return sin(PI*xi)*sin(PI*yi)*sin(PI*zi);
     }
 
+
     return 0.0;
+}
+
+double uFun_ex_dt2(const Vector & xt)
+{
+    double xi(xt(0));
+    double yi(xt(1));
+    double zi(0.0);
+
+    if (xt.Size() == 3)
+    {
+        return sin(M_PI*xi)*sin(M_PI*yi)*2.0;
+        //return 0.0;
+    }
+
+    return 0.0;
+
 }
 
 double uFun_ex_laplace(const Vector & xt)
 {
-    const double PI = 3.141592653589793;
-    return (-(xt.Size()-1) * PI * PI) *uFun_ex(xt);
+    return (-(xt.Size()-1) * M_PI * M_PI) *uFun_ex(xt);
+    //return 0.0;
+}
+
+double uFun_ex_dtlaplace(const Vector & xt)
+{
+    double xi(xt(0));
+    double yi(xt(1));
+    double zi(0.0);
+    double t(xt(xt.Size() - 1));
+    //return (-(xt.Size()-1) * PI * PI) *uFun_ex(xt);
+    //return (-(xt.Size()-1) * M_PI * M_PI) *sin(M_PI*xi)*sin(M_PI*yi);         // for t * sin x * sin y
+    return (-(xt.Size()-1) * M_PI * M_PI) *sin(M_PI*xi)*sin(M_PI*yi) * 2.0 * t; // for t^2 * sin x * sin y
+    return 0.0;
 }
 
 void uFun_ex_gradx(const Vector& xt, Vector& gradx )
 {
-    const double PI = 3.141592653589793;
-
     double x = xt(0);
     double y = xt(1);
     double z(0.0);
@@ -1567,11 +1745,14 @@ void uFun_ex_gradx(const Vector& xt, Vector& gradx )
 
     gradx.SetSize(xt.Size() - 1);
 
+
     if (xt.Size() == 3)
     {
-        gradx(0) = t * PI * cos (PI * x) * sin (PI * y);
-        gradx(1) = t * PI * sin (PI * x) * cos (PI * y);
+        gradx(0) = t * t * M_PI * cos (M_PI * x) * sin (M_PI * y);
+        gradx(1) = t * t * M_PI * sin (M_PI * x) * cos (M_PI * y);
     }
+
+    /*
     if (xt.Size() == 4)
     {
         z = xt(2);
@@ -1579,13 +1760,58 @@ void uFun_ex_gradx(const Vector& xt, Vector& gradx )
         gradx(1) = t * PI * sin (PI * x) * cos (PI * y) * sin (PI * z);
         gradx(2) = t * PI * sin (PI * x) * sin (PI * y) * cos (PI * z);
     }
+    */
+
+
+    /*
+    if (xt.Size() == 3)
+    {
+        gradx(0) = M_PI * cos (M_PI * x) * sin (M_PI * y);
+        gradx(1) = M_PI * sin (M_PI * x) * cos (M_PI * y);
+    }
+    */
+
+
+    /*
+    if (xt.Size() == 3)
+    {
+        gradx(0) = t * M_PI * cos (M_PI * x) * sin (M_PI * y);
+        gradx(1) = t * M_PI * sin (M_PI * x) * cos (M_PI * y);
+    }
+    */
+
 
 }
 
+void uFun_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double z(0.0);
+    double t = xt(xt.Size()-1);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    // for t * sin x * sin y
+    /*
+    if (xt.Size() == 3)
+    {
+        gradx(0) = M_PI * cos (M_PI * x) * sin (M_PI * y);
+        gradx(1) = M_PI * sin (M_PI * x) * cos (M_PI * y);
+    }
+    */
+
+    // for t^2 * sin x * sin y
+    if (xt.Size() == 3)
+    {
+        gradx(0) = M_PI * cos (M_PI * x) * sin (M_PI * y) * 2.0 * t;
+        gradx(1) = M_PI * sin (M_PI * x) * cos (M_PI * y) * 2.0 * t;
+    }
+
+}
 
 double fFun(const Vector & x)
 {
-    const double PI = 3.141592653589793;
     double xi(x(0));
     double yi(x(1));
     double zi(0.0);
@@ -1593,7 +1819,7 @@ double fFun(const Vector & x)
     if (x.Size() == 3)
     {
      zi = x(2);
-       return 2*PI*PI*sin(PI*xi)*sin(PI*yi)*zi+sin(PI*xi)*sin(PI*yi);
+       return 2*M_PI*M_PI*sin(M_PI*xi)*sin(M_PI*yi)*zi+sin(M_PI*xi)*sin(M_PI*yi);
     }
 
     if (x.Size() == 4)
@@ -1601,7 +1827,7 @@ double fFun(const Vector & x)
      zi = x(2);
          vi = x(3);
          //cout << "rhand for 4D" << endl;
-       return 3*PI*PI*sin(PI*xi)*sin(PI*yi)*sin(PI*zi)*vi + sin(PI*xi)*sin(PI*yi)*sin(PI*zi);
+       return 3*M_PI*M_PI*sin(M_PI*xi)*sin(M_PI*yi)*sin(M_PI*zi)*vi + sin(M_PI*xi)*sin(M_PI*yi)*sin(M_PI*zi);
     }
 
     return 0.0;
@@ -1657,15 +1883,23 @@ double uFun1_ex_dt(const Vector & xt)
     return - uFun1_ex(xt);
 }
 
+double uFun1_ex_dt2(const Vector & xt)
+{
+    return uFun1_ex(xt);
+}
+
 double uFun1_ex_laplace(const Vector & xt)
 {
     return (- (xt.Size() - 1) * M_PI * M_PI ) * uFun1_ex(xt);
 }
 
+double uFun1_ex_dtlaplace(const Vector & xt)
+{
+    return -uFun1_ex_laplace(xt);
+}
+
 void uFun1_ex_gradx(const Vector& xt, Vector& gradx )
 {
-    const double PI = 3.141592653589793;
-
     double x = xt(0);
     double y = xt(1);
     double z(0.0);
@@ -1675,17 +1909,28 @@ void uFun1_ex_gradx(const Vector& xt, Vector& gradx )
 
     if (xt.Size() == 3)
     {
-        gradx(0) = exp(-t) * PI * cos (PI * x) * sin (PI * y);
-        gradx(1) = exp(-t) * PI * sin (PI * x) * cos (PI * y);
+        gradx(0) = exp(-t) * M_PI * cos (M_PI * x) * sin (M_PI * y);
+        gradx(1) = exp(-t) * M_PI * sin (M_PI * x) * cos (M_PI * y);
     }
     if (xt.Size() == 4)
     {
         z = xt(2);
-        gradx(0) = exp(-t) * PI * cos (PI * x) * sin (PI * y) * sin (PI * z);
-        gradx(1) = exp(-t) * PI * sin (PI * x) * cos (PI * y) * sin (PI * z);
-        gradx(2) = exp(-t) * PI * sin (PI * x) * sin (PI * y) * cos (PI * z);
+        gradx(0) = exp(-t) * M_PI * cos (M_PI * x) * sin (M_PI * y) * sin (M_PI * z);
+        gradx(1) = exp(-t) * M_PI * sin (M_PI * x) * cos (M_PI * y) * sin (M_PI * z);
+        gradx(2) = exp(-t) * M_PI * sin (M_PI * x) * sin (M_PI * y) * cos (M_PI * z);
     }
 
+}
+
+void uFun1_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    gradx.SetSize(xt.Size() - 1);
+
+    Vector gradS;
+    uFun1_ex_gradx(xt,gradS);
+
+    for ( int d = 0; d < xt.Size() - 1; ++d)
+        gradx(d) = - gradS(d);
 }
 
 double fFun1(const Vector & x)
@@ -1713,7 +1958,7 @@ void sigmaFun1_ex(const Vector & x, Vector & sigma)
 double uFun2_ex(const Vector & xt)
 {
     if (xt.Size() != 4)
-        cout << "Error, this is only 4-d solution" << endl;
+        cout << "Error, this is only 4-d = 3-d + time solution" << endl;
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
@@ -1727,6 +1972,11 @@ double uFun2_ex_dt(const Vector & xt)
     return - uFun2_ex(xt);
 }
 
+double uFun2_ex_dt2(const Vector & xt)
+{
+    return uFun2_ex(xt);
+}
+
 double uFun2_ex_laplace(const Vector & xt)
 {
     double x = xt(0);
@@ -1737,8 +1987,13 @@ double uFun2_ex_laplace(const Vector & xt)
     double res = 0.0;
     res += exp(-t) * (2.0 * M_PI * cos(M_PI * x) - x * M_PI * M_PI * sin (M_PI * x)) * (1 + y) * sin (M_PI * y) * (2 - z) * sin (M_PI * z);
     res += exp(-t) * x * sin (M_PI * x) * (2.0 * M_PI * cos(M_PI * y) - (1 + y) * M_PI * M_PI * sin(M_PI * y)) * (2 - z) * sin (M_PI * z);
-    res += exp(-t) * x * sin (M_PI * x) * (1 + y) * sin (M_PI * y) * (2.0 * (-1) * M_PI * cos(M_PI * z) - (2 - z) * M_PI * M_PI * sin(M_PI * z));
+    res += exp(-t) * x * sin (M_PI * x) * (1 + y) * sin (M_PI * y) * (2.0 * (-1) * cos(M_PI * z) - (2 - z) * M_PI * M_PI * sin(M_PI * z));
     return res;
+}
+
+double uFun2_ex_dtlaplace(const Vector & xt)
+{
+    return -uFun2_ex_laplace(xt);
 }
 
 void uFun2_ex_gradx(const Vector& xt, Vector& gradx )
@@ -1755,10 +2010,93 @@ void uFun2_ex_gradx(const Vector& xt, Vector& gradx )
     gradx(2) = exp(-t) * x * sin (M_PI * x) * (1 + y) * sin (M_PI * y) * (- sin (M_PI * z) + (2 - z) * M_PI * cos(M_PI * z));
 }
 
+void uFun2_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    gradx.SetSize(xt.Size() - 1);
+
+    Vector gradS;
+    uFun2_ex_gradx(xt,gradS);
+
+    for ( int d = 0; d < xt.Size() - 1; ++d)
+        gradx(d) = - gradS(d);
+}
+
+double uFun4_ex(const Vector & xt)
+{
+    if (xt.Size() != 3)
+        cout << "Error, this is only 3-d solution" << endl;
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * (x - 1) * y * (y - 1) * t * t;
+}
+
+double uFun4_ex_dt(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * (x - 1) * y * (y - 1) * 2.0 * t;
+}
+
+double uFun4_ex_dt2(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * (x - 1) * y * (y - 1) * 2.0;
+}
+
+double uFun4_ex_laplace(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * (2.0 * y * (y - 1) + 2.0 * x * (x - 1)) * t * t;
+}
+
+double uFun4_ex_dtlaplace(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * (2.0 * y * (y - 1) + 2.0 * x * (x - 1)) * 2.0 * t;
+}
+
+void uFun4_ex_gradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    gradx(0) = 16.0 * (2.0 * x - 1) * y * (y - 1) * t * t;
+    gradx(1) = 16.0 * x * (x - 1) * (2.0 * y - 1) * t * t;
+
+}
+
+void uFun4_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    gradx(0) = 16.0 * (2.0 * x - 1) * y * (y - 1) * 2.0 * t;
+    gradx(1) = 16.0 * x * (x - 1) * (2.0 * y - 1) * 2.0 * t;
+}
+
 double uFun3_ex(const Vector & xt)
 {
     if (xt.Size() != 3)
-        cout << "Error, this is only 3-d = 2-d + time solution" << endl;
+        cout << "Error, this is only 3-d = 2d + time solution" << endl;
     double x = xt(0);
     double y = xt(1);
     double t = xt(2);
@@ -1769,6 +2107,11 @@ double uFun3_ex(const Vector & xt)
 double uFun3_ex_dt(const Vector & xt)
 {
     return - uFun3_ex(xt);
+}
+
+double uFun3_ex_dt2(const Vector & xt)
+{
+    return uFun3_ex(xt);
 }
 
 double uFun3_ex_laplace(const Vector & xt)
@@ -1783,6 +2126,11 @@ double uFun3_ex_laplace(const Vector & xt)
     return res;
 }
 
+double uFun3_ex_dtlaplace(const Vector & xt)
+{
+    return -uFun3_ex_laplace(xt);
+}
+
 void uFun3_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
@@ -1793,4 +2141,99 @@ void uFun3_ex_gradx(const Vector& xt, Vector& gradx )
 
     gradx(0) = exp(-t) * (sin (M_PI * x) + x * M_PI * cos(M_PI * x)) * (1 + y) * sin (M_PI * y);
     gradx(1) = exp(-t) * x * sin (M_PI * x) * (sin (M_PI * y) + (1 + y) * M_PI * cos(M_PI * y));
+}
+
+void uFun3_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    gradx(0) = - exp(-t) * (sin (M_PI * x) + x * M_PI * cos(M_PI * x)) * (1 + y) * sin (M_PI * y);
+    gradx(1) = - exp(-t) * x * sin (M_PI * x) * (sin (M_PI * y) + (1 + y) * M_PI * cos(M_PI * y));
+
+    /*
+    gradx.SetSize(xt.Size() - 1);
+
+    Vector gradS;
+    uFun3_ex_gradx(xt,gradS);
+
+    for ( int d = 0; d < xt.Size() - 1; ++d)
+        gradx(d) = - gradS(d);
+        */
+}
+
+
+double uFun5_ex(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * x * (x - 1) * (x - 1) * y * y * (y - 1) * (y - 1) * t * t;
+}
+
+double uFun5_ex_dt(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * x * (x - 1) * (x - 1) * y * y * (y - 1) * (y - 1) * 2.0 * t;
+}
+
+double uFun5_ex_dt2(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * x * x * (x - 1) * (x - 1) * y * y * (y - 1) * (y - 1) * 2.0;
+}
+
+double uFun5_ex_laplace(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * (2.0 * ((x-1)*(2*x-1) + x*(2*x-1) + 2*x*(x-1)) * y * (y - 1) * y * (y - 1)\
+                   + 2.0 * ((y-1)*(2*y-1) + y*(2*y-1) + 2*y*(y-1)) * x * (x - 1) * x * (x - 1)) * t * t;
+}
+
+double uFun5_ex_dtlaplace(const Vector & xt)
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    return 16.0 * (2.0 * ((x-1)*(2*x-1) + x*(2*x-1) + 2*x*(x-1)) * y * (y - 1) * y * (y - 1)\
+                   + 2.0 * ((y-1)*(2*y-1) + y*(2*y-1) + 2*y*(y-1)) * x * (x - 1) * x * (x - 1)) * 2.0 * t;
+}
+
+void uFun5_ex_gradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    gradx(0) = 16.0 * 2.0 * x * (x - 1) * (2.0 * x - 1) * y * (y - 1) * y * (y - 1) * t * t;
+    gradx(1) = 16.0 * x * (x - 1) * x * (x - 1) * 2.0 * y * (y - 1) * (2.0 * y - 1) * t * t;
+
+}
+
+void uFun5_ex_dtgradx(const Vector& xt, Vector& gradx )
+{
+    double x = xt(0);
+    double y = xt(1);
+    double t = xt(2);
+
+    gradx.SetSize(xt.Size() - 1);
+
+    gradx(0) = 16.0 * 2.0 * x * (x - 1) * (2.0 * x - 1) * y * (y - 1) * y * (y - 1) * 2.0 * t;
+    gradx(1) = 16.0 * x * (x - 1) * x * (x - 1) * 2.0 * y * (y - 1) * (2.0 * y - 1) * 2.0 * t;
 }

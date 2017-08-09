@@ -760,12 +760,12 @@ int main(int argc, char *argv[])
 
     bool verbose = (myid == 0);
 
-    int nDimensions     = 4;
-    int numsol          = 0;
+    int nDimensions     = 3;
+    int numsol          = 4;
     int numcurl         = 1;
 
     int ser_ref_levels  = 0;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 3;
 
     int generate_frombase   = 0;
     int Nsteps              = 8;
@@ -786,27 +786,27 @@ int main(int argc, char *argv[])
     //int nlevels = 2;
     //int coarsenfactor = 8;
 
-    //const char *mesh_file = "../build3/meshes/cube_3d_fine.mesh";
-    //const char *mesh_file = "../build3/meshes/square_2d_moderate.mesh";
+    //const char *mesh_file = "../data/cube_3d_fine.mesh";
+    //const char *mesh_file = "../data/square_2d_moderate.mesh";
 
-    //const char *mesh_file = "../build3/meshes/cube4d_low.MFEM";
-    const char *mesh_file = "../data/cube4d_96.MFEM";
+    //const char *mesh_file = "../data/cube4d_low.MFEM";
+    //const char *mesh_file = "../data/cube4d_96.MFEM";
     //const char *mesh_file = "dsadsad";
-    //const char *mesh_file = "../build3/meshes/orthotope3D_moderate.mesh";
-    //const char * mesh_file = "../build3/meshes/orthotope3D_fine.mesh";
+    //const char *mesh_file = "../data/orthotope3D_moderate.mesh";
+    const char * mesh_file = "../data/orthotope3D_fine.mesh";
 
-    //const char * meshbase_file = "../build3/meshes/sphere3D_0.1to0.2.mesh";
-    //const char * meshbase_file = "../build3/meshes/sphere3D_0.05to0.1.mesh";
-    //const char * meshbase_file = "../build3/meshes/sphere3D_veryfine.mesh";
-    //const char * meshbase_file = "../build3/meshes/orthotope3D_moderate.mesh";
+    //const char * meshbase_file = "../data/sphere3D_0.1to0.2.mesh";
+    //const char * meshbase_file = "../data/sphere3D_0.05to0.1.mesh";
+    //const char * meshbase_file = "../data/sphere3D_veryfine.mesh";
+    //const char * meshbase_file = "../data/orthotope3D_moderate.mesh";
     //const char * meshbase_file = "../data/orthotope3D_fine.mesh";
     //const char * meshbase_file = "../data/cube_3d_fine.mesh";
-    //const char * meshbase_file = "../build3/meshes/square_2d_moderate.mesh";
+    //const char * meshbase_file = "../data/square_2d_moderate.mesh";
     //const char * meshbase_file = "../data/square_2d_fine.mesh";
-    //const char * meshbase_file = "../build3/meshes/square-disc.mesh";
+    //const char * meshbase_file = "../data/square-disc.mesh";
     const char *meshbase_file = "dsadsad";
-    //const char * meshbase_file = "../build3/meshes/circle_fine_0.1.mfem";
-    //const char * meshbase_file = "../build3/meshes/circle_moderate_0.2.mfem";
+    //const char * meshbase_file = "../data/circle_fine_0.1.mfem";
+    //const char * meshbase_file = "../data/circle_moderate_0.2.mfem";
 
     int feorder         = 0;
 
@@ -1119,7 +1119,7 @@ int main(int argc, char *argv[])
         //u_exact->Print();
 
         // checking projection error computation
-        int order_quad = 2*feorder + 1;//max(2, 2*feorder+1);
+        int order_quad = 2*(feorder+1) + 1;//max(2, 2*feorder+1);
         const IntegrationRule *irs[Geometry::NumGeom];
         for (int i=0; i < Geometry::NumGeom; ++i)
         {
@@ -1137,6 +1137,8 @@ int main(int argc, char *argv[])
             else
                 std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
         }
+
+        /*
 
         if (verbose)
             std::cout << "Trying Martin's code to compute the error \n";
@@ -1226,19 +1228,9 @@ int main(int argc, char *argv[])
         }
 
         MPI_Finalize();
-        return -1;
-    }
-
-    // how to make it working?
-    //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
-    if (nDimensions == 4)
-    {
-        if (verbose)
-            std::cout << "4D case is not implemented - not a curl problem should be solved there! \n";
-        MPI_Finalize();
-        return -1;
-    }
-
+        return 0;
+        */
+    } // end of initialization of div-free f.e. space in 4D
 
     FiniteElementCollection *h1_coll;
     ParFiniteElementSpace *H_space;
@@ -1249,7 +1241,13 @@ int main(int argc, char *argv[])
     }
 
     // the space for sigma in the original problem
-    hdiv_coll = new RT_FECollection(feorder, nDimensions);
+    // hdiv_coll = new RT_FECollection(feorder, nDimensions);
+
+    if (dim == 4)
+        hdiv_coll = new RT0_4DFECollection;
+    else
+        hdiv_coll = new RT_FECollection(feorder, dim);
+
     R_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
 
     if (withDiv)
@@ -1286,9 +1284,10 @@ int main(int argc, char *argv[])
        std::cout << "***********************************************************\n";
        std::cout << "dim(C) = " << dimC << "\n";
        if (withS)
+       {
            std::cout << "dim(H) = " << dimH << ", ";
-       if (withS)
            std::cout << "dim(C+H) = " << dimC + dimH << "\n";
+       }
        if (withDiv)
            std::cout << "dim(R) = " << dimR << ", ";
        std::cout << "***********************************************************\n";
@@ -1401,6 +1400,16 @@ int main(int argc, char *argv[])
     else
     {
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
+    }
+
+    // how to make it working?
+    //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
+    if (nDimensions == 4)
+    {
+        if (verbose)
+            std::cout << "4D case is not implemented - not a curl problem should be solved there! \n";
+        MPI_Finalize();
+        return 0;
     }
 
     ParGridFunction *u_exact = new ParGridFunction(C_space);
@@ -2940,7 +2949,8 @@ void E_exactMat(const Vector &x, DenseMatrix &E)
 
    if (dim==4)
    {
-      Vector vecE; E_exactMat_vec(x, vecE);
+      Vector vecE;
+      E_exactMat_vec(x, vecE);
 
       E = 0.0;
 
