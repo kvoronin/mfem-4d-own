@@ -28,6 +28,8 @@
 #include <iomanip>
 #include <list>
 
+#include"cfosls_testsuite.hpp"
+
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
@@ -382,7 +384,6 @@ double uFun5_ex_dtlaplace(const Vector & xt);
 void uFun5_ex_gradx(const Vector& xt, Vector& gradx );
 void uFun5_ex_dtgradx(const Vector& xt, Vector& gradx );
 
-
 template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), \
          double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt)> \
     double rhsideTemplate(const Vector& xt);
@@ -490,6 +491,8 @@ bool Wave_test::CheckTestConfig()
             return true;
         if (numsol == 5 && dim == 3)
             return true;
+        if (numsol == -34 && (dim == 3 || dim == 4))
+            return true;
         return false;
     }
     else
@@ -506,6 +509,10 @@ Wave_test::Wave_test (int Dim, int NumSol)
         std::cout << "Inconsistent dim and numsol \n" << std::flush;
     else
     {
+        if (numsol == -34)
+        {
+            SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_dt2, &uFunTest_ex_laplace, &uFunTest_ex_dtlaplace, &uFunTest_ex_gradx, &uFunTest_ex_dtgradx>();
+        }
         if (numsol == 0)
         {
             SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_dt2, &uFun_ex_laplace, &uFun_ex_dtlaplace, &uFun_ex_gradx, &uFun_ex_dtgradx>();
@@ -552,10 +559,10 @@ int main(int argc, char *argv[])
     int numsol          = 3;
 
     int ser_ref_levels  = 1;//0;
-    int par_ref_levels  = 1;//2;
+    int par_ref_levels  = 2;//2;
 
     /*
-    int generate_frombase   = 0;
+    int generate_frombase   = 0;el norm
     int generate_parallel   = generate_frombase * 1;
     int whichparallel       = generate_parallel * 2;
     int bnd_method          = 1;
@@ -603,8 +610,8 @@ int main(int argc, char *argv[])
         cout << "Solving (C)FOSLS Wave equation with MFEM & hypre" << endl;
 
     OptionsParser args(argc, argv);
-    args.AddOption(&mesh_file, "-m", "--mesh",
-                   "Mesh file to use.");
+    //args.AddOption(&mesh_file, "-m", "--mesh",
+    //               "Mesh file to use.");
     //args.AddOption(&meshbase_file, "-mbase", "--meshbase",
     //               "Mesh base file to use.");
     args.AddOption(&feorder, "-o", "--feorder",
@@ -630,9 +637,9 @@ int main(int argc, char *argv[])
                    "Method for generating boundary elements.");
     args.AddOption(&local_method, "-loc", "--locmeth",
                    "Method for local mesh procedure.");
-    */
     args.AddOption(&numsol, "-nsol", "--numsol",
                    "Solution number.");
+    */
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -658,6 +665,25 @@ int main(int argc, char *argv[])
     {
        args.PrintOptions(cout);
     }
+
+    if (verbose)
+        std::cout << "Running tests for the paper: \n";
+
+    if (nDimensions == 3)
+    {
+        numsol = -34;
+        mesh_file = "../data/cube_3d_moderate.mesh";
+    }
+    else // 4D case
+    {
+        numsol = -34;
+        mesh_file = "../data/cube4d_96.MFEM";
+    }
+
+    if (verbose)
+        std::cout << "For the records: numsol = " << numsol
+                  << ", mesh_file = " << mesh_file << "\n";
+
 
     if (verbose)
         cout << "Number of mpi processes: " << num_procs << endl << flush;
@@ -841,11 +867,6 @@ int main(int argc, char *argv[])
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
-        // Checking that mesh is legal
-        //if (myid == 0)
-            //cout << "Checking the mesh" << endl << flush;
-        //mesh->MeshCheck(verbose);
-
         for (int l = 0; l < ser_ref_levels; l++)
             mesh->UniformRefinement();
 
@@ -1280,7 +1301,7 @@ int main(int argc, char *argv[])
                MPI_DOUBLE, MPI_SUM, 0, comm);
     if (verbose)
     {
-        cout << "rel res_norm for coarse conservation law = " << global_res_norm / global_rhs_norm << endl;
+        cout << "rel res_norm for the conservation law = " << global_res_norm / global_rhs_norm << endl;
         /*
         cout << "Debugging" << endl;
         cout << "vec1.size = " << vec1.Size() << endl;
@@ -2237,3 +2258,4 @@ void uFun5_ex_dtgradx(const Vector& xt, Vector& gradx )
     gradx(0) = 16.0 * 2.0 * x * (x - 1) * (2.0 * x - 1) * y * (y - 1) * y * (y - 1) * 2.0 * t;
     gradx(1) = 16.0 * x * (x - 1) * x * (x - 1) * 2.0 * y * (y - 1) * (2.0 * y - 1) * 2.0 * t;
 }
+

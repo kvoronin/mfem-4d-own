@@ -27,6 +27,8 @@
 #include <iomanip>
 #include <list>
 
+#include"cfosls_testsuite.hpp"
+
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
@@ -469,18 +471,6 @@ void uFun_ex_gradx(const Vector& xt, Vector& grad);
 void bFun_ex (const Vector& xt, Vector& b);
 double  bFundiv_ex(const Vector& xt);
 
-void bFunRect2D_ex(const Vector& xt, Vector& b );
-double  bFunRect2Ddiv_ex(const Vector& xt);
-
-void bFunCube3D_ex(const Vector& xt, Vector& b );
-double  bFunCube3Ddiv_ex(const Vector& xt);
-
-void bFunSphere3D_ex(const Vector& xt, Vector& b );
-double  bFunSphere3Ddiv_ex(const Vector& xt);
-
-void bFunCircle2D_ex (const Vector& xt, Vector& b);
-double  bFunCircle2Ddiv_ex(const Vector& xt);
-
 double uFun3_ex(const Vector& x); // Exact Solution
 double uFun3_ex_dt(const Vector& xt);
 void uFun3_ex_gradx(const Vector& xt, Vector& grad);
@@ -524,12 +514,6 @@ void uFun33_ex_gradx(const Vector& xt, Vector& grad);
 double uFun10_ex(const Vector& x); // Exact Solution
 double uFun10_ex_dt(const Vector& xt);
 void uFun10_ex_gradx(const Vector& xt, Vector& grad);
-
-void videofun(const Vector& xt, Vector& vecvalue);
-
-
-double cas_weight (const Vector& xt, double * params, const int &nparams);
-double deletethis (const Vector& xt);
 
 template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
     void sigmaTemplate(const Vector& xt, Vector& sigma);
@@ -703,6 +687,10 @@ class Transport_test
                 return true;
             if (numsol == 10 && dim == 4)
                 return true;
+            if (numsol == -3 && dim == 3)
+                return true;
+            if (numsol == -4 && dim == 4)
+                return true;
             return false;
         }
         else
@@ -719,6 +707,14 @@ class Transport_test
             std::cout << "Inconsistent dim and numsol \n" << std::flush;
         else
         {
+            if (numsol == -3) // 3D test for the paper
+            {
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex>();
+            }
+            if (numsol == -4) // 4D test for the paper
+            {
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex>();
+            }
             if (numsol == 0)
             {
                 //std::cout << "The domain is rectangular or cubic, velocity does not"
@@ -818,7 +814,7 @@ int main(int argc, char *argv[])
     int numsol          = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 3;
 
     /*
     int generate_frombase   = 0;
@@ -869,8 +865,8 @@ int main(int argc, char *argv[])
         cout << "Solving (С)FOSLS Transport equation with MFEM & hypre" << endl;
 
     OptionsParser args(argc, argv);
-    args.AddOption(&mesh_file, "-m", "--mesh",
-                   "Mesh file to use.");
+    //args.AddOption(&mesh_file, "-m", "--mesh",
+    //               "Mesh file to use.");
     //args.AddOption(&meshbase_file, "-mbase", "--meshbase",
     //               "Mesh base file to use.");
     args.AddOption(&feorder, "-o", "--feorder",
@@ -896,9 +892,9 @@ int main(int argc, char *argv[])
                    "Method for generating boundary elements.");
     args.AddOption(&local_method, "-loc", "--locmeth",
                    "Method for local mesh procedure.");
-    */
     args.AddOption(&numsol, "-nsol", "--numsol",
                    "Solution number.");
+    */
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -924,6 +920,26 @@ int main(int argc, char *argv[])
     {
        args.PrintOptions(cout);
     }
+
+    if (verbose)
+        std::cout << "Running tests for the paper: \n";
+
+    if (nDimensions == 3)
+    {
+        numsol = -3;
+        mesh_file = "../data/cube_3d_moderate.mesh";
+    }
+    else // 4D case
+    {
+        numsol = -4;
+        mesh_file = "../data/cube4d_96.MFEM";
+    }
+
+    if (verbose)
+        std::cout << "For the records: numsol = " << numsol
+                  << ", mesh_file = " << mesh_file << "\n";
+
+
 
     if (verbose)
         cout << "Number of mpi processes: " << num_procs << endl << flush;
@@ -1543,12 +1559,12 @@ int main(int argc, char *argv[])
    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
    if(verbose)
+   {
        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
                        << projection_error_sigma / norm_sigma << endl;
+   }
 
    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalaru), irs);
-
-   std::cout << "norm_S = " << norm_S << "\n";
 
    if(verbose)
        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
@@ -1620,39 +1636,6 @@ int main(int argc, char *argv[])
 
    return 0;
 }
-
-// nparams can be either 0, then unit wieght is used, or > 0
-// if nparams > 0, then params[0] should be epsilon for the weight
-// if epsilon < 0, then unit weight is used
-// else exp(-t/eps) is used, where t is the last component of xt vector
-double cas_weight (const Vector& xt, double * params, const int &nparams)
-{
-    //return 1.0;
-    if (nparams < 0)
-    {
-        cout << "Error: nparams should be nonnegative" << endl;
-        return 1.0;
-    }
-    if (nparams == 0)
-        return 1.0;
-    if (nparams > 0)
-    {
-        if (params[0] < 0)
-            return 1.0;
-        else
-        {
-            double t = xt[xt.Size()-1];
-            return exp (-t / params[0]);
-        }
-    }
-}
-
-double deletethis (const Vector& xt)
-{
-    double t = xt[xt.Size()-1];
-    return exp (-t / 0.1);
-}
-
 
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda)
@@ -1887,69 +1870,6 @@ double bFundiv_ex(const Vector& xt)
     return 0.0;
 }
 
-
-void bFunRect2D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = sin(x*M_PI)*cos(y*M_PI);
-    b(1) = - sin(y*M_PI)*cos(x*M_PI);
-
-    b(xt.Size()-1) = 1.;
-
-}
-
-double bFunRect2Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-void bFunCube3D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-
-    b.SetSize(xt.Size());
-
-    b(0) = sin(x*M_PI)*cos(y*M_PI)*cos(z*M_PI);
-    b(1) = - 0.5 * sin(y*M_PI)*cos(x*M_PI) * cos(z*M_PI);
-    b(2) = - 0.5 * sin(z*M_PI)*cos(x*M_PI) * cos(y*M_PI);
-
-    b(xt.Size()-1) = 1.;
-
-}
-
-double bFunCube3Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-void bFunSphere3D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = -y;  // -x2
-    b(1) = x;   // x1
-    b(2) = 0.0;
-
-    b(xt.Size()-1) = 1.;
-    return;
-}
-
-double bFunSphere3Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-
 double uFun2_ex(const Vector& xt)
 {
     double x = xt(0);
@@ -1992,30 +1912,6 @@ double fFun2(const Vector& xt)
              t * exp(t) * 2.0 * y         * cos (((x - 0.5)*(x - 0.5) + y*y)) * b(1);
 }
 */
-
-void bFunCircle2D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = -y;  // -x2
-    b(1) = x;   // x1
-
-    b(xt.Size()-1) = 1.;
-    return;
-}
-
-double bFunCircle2Ddiv_ex(const Vector& xt)
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-    return 0.0;
-}
-
 
 double uFun3_ex(const Vector& xt)
 {
@@ -2317,21 +2213,6 @@ double L2test_fun(const Vector& xt)
     return x;
 }
 
-
-void videofun(const Vector& xt, Vector& vecvalue )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
-
-    vecvalue.SetSize(xt.Size());
-    vecvalue(0) = 3 * x * ( 1 + 0.4 * sin (M_PI * (t + 1.0))) + 2.0 * (y * (y - 0.5) - z) * exp(-0.5*t) + exp(-100.0*(x*x + y * y + (z-0.5)*(z-0.5)));
-    vecvalue(1) = 0.0;
-    vecvalue(2) = 0.0;
-    vecvalue(3) = 0.0;
-    //return 3 * x * ( 1 + 0.2 * sin (M_PI * 0.5 * t/(t + 1))) + 2.0 * (y * (y - 0.5) - z) * exp(-0.5*t);
-}
 
 double uFun10_ex(const Vector& xt)
 {

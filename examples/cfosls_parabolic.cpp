@@ -34,6 +34,8 @@
 #include <iomanip>
 #include <list>
 
+#include"cfosls_testsuite.hpp"
+
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
@@ -469,6 +471,8 @@ bool Heat_test::CheckTestConfig()
             return true;
         if (numsol == 3 && dim == 3)
             return true;
+        if (numsol == -34 && (dim == 3 || dim == 4))
+            return true;
         return false;
     }
     else
@@ -488,6 +492,10 @@ Heat_test::Heat_test (int Dim, int NumSol)
     }
     else
     {
+        if (numsol == -34)
+        {
+            SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx>();
+        }
         if (numsol == 0)
         {
             //std::cout << "The domain should be either a unit rectangle or cube" << std::endl << std::flush;
@@ -522,13 +530,13 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
     bool verbose = (myid == 0);
-    bool visualization = 1;
+    bool visualization = 0;
 
     int nDimensions     = 3;
     int numsol          = 3;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 3;
 
     /*
     int generate_frombase   = 1;
@@ -574,8 +582,8 @@ int main(int argc, char *argv[])
         cout << "Solving (C)FOSLS Heat equation with MFEM & hypre" << endl;
 
     OptionsParser args(argc, argv);
-    args.AddOption(&mesh_file, "-m", "--mesh",
-                   "Mesh file to use.");
+    //args.AddOption(&mesh_file, "-m", "--mesh",
+    //               "Mesh file to use.");
     //args.AddOption(&meshbase_file, "-mbase", "--meshbase",
     //               "Mesh base file to use.");
     args.AddOption(&feorder, "-o", "--feorder",
@@ -601,9 +609,9 @@ int main(int argc, char *argv[])
                    "Method for generating boundary elements.");
     args.AddOption(&local_method, "-loc", "--locmeth",
                    "Method for local mesh procedure.");
-    */
     args.AddOption(&numsol, "-nsol", "--numsol",
                    "Solution number.");
+    */
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -630,6 +638,24 @@ int main(int argc, char *argv[])
     {
        args.PrintOptions(cout);
     }
+
+    if (verbose)
+        std::cout << "Running tests for the paper: \n";
+
+    if (nDimensions == 3)
+    {
+        numsol = -34;
+        mesh_file = "../data/cube_3d_moderate.mesh";
+    }
+    else // 4D case
+    {
+        numsol = -34;
+        mesh_file = "../data/cube4d_96.MFEM";
+    }
+
+    if (verbose)
+        std::cout << "For the records: numsol = " << numsol
+                  << ", mesh_file = " << mesh_file << "\n";
 
     if (verbose)
         cout << "Number of mpi processes: " << num_procs << endl << flush;
