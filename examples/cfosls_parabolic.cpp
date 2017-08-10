@@ -549,8 +549,8 @@ int main(int argc, char *argv[])
     */
 
     const char *formulation = "cfosls";     // or "fosls"
-    bool with_divdiv = true;                // should be true for fosls and can be false for cfosls
-    bool use_ADS = true;                   // works only in 3D and for with_divdiv = true
+    bool with_divdiv = false;                // should be true for fosls and can be false for cfosls
+    bool use_ADS = false;                   // works only in 3D and for with_divdiv = true
 
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
     //const char *mesh_file = "../data/square_2d_moderate.mesh";

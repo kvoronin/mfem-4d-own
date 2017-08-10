@@ -1120,7 +1120,7 @@ int main(int argc, char *argv[])
     }
 
     if (dim == 4)
-        MFEM_ASSERT(order==0, "Only lowest order elements are support in 4D!");
+        MFEM_ASSERT(feorder==0, "Only lowest order elements are support in 4D!");
     FiniteElementCollection *h1_coll;
     if (dim == 4)
     {
