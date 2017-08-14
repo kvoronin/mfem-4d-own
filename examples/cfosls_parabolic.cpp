@@ -828,7 +828,7 @@ int main(int argc, char *argv[])
 
     //if(dim==3) pmesh->ReorientTetMesh();
 
-    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
+//    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
@@ -952,6 +952,8 @@ int main(int argc, char *argv[])
     // 9. Define the parallel grid function and parallel linear forms, solution
     //    vector and rhs.
     BlockVector x(block_offsets), rhs(block_offsets);
+    x = 0.0;
+    rhs = 0.0;
     BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
     trueX =0.0;
     //ParGridFunction *u(new ParGridFunction);

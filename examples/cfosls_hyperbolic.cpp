@@ -1191,6 +1191,7 @@ int main(int argc, char *argv[])
     BlockVector x(block_offsets), rhs(block_offsets);
     BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
     x = 0.0;
+    rhs = 0.0;
     trueX = 0.0;
     trueRhs = 0.0;
 
