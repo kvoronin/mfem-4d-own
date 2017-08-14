@@ -1404,69 +1404,94 @@ int main(int argc, char *argv[])
                   << err_S/norm_S  << "\n";
     }
 
+    {
+        auto *hcurl_coll = new L2_FECollection(feorder, dim);
+        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+
+        DiscreteLinearOperator Grad(H_space, N_space);
+        Grad.AddDomainInterpolator(new GradientInterpolator());
+        ParGridFunction GradS(N_space);
+        Grad.Assemble();
+        Grad.Mult(*S, GradS);
+
+        VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+        double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+        double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+        if (verbose)
+        {
+            std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                         err_GradS / norm_GradS << "\n";
+            std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                         sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+        }
+
+        delete hcurl_coll;
+        delete N_space;
+    }
+
     // Computing error in mesh norms
 
-    if (verbose)
-        cout << "Computing mesh norms" << endl;
+//    if (verbose)
+//        cout << "Computing mesh norms" << endl;
 
-    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
-    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
-    HypreParVector * sigmapv = sigma->ParallelAssemble();
-    Vector * sigmav = sigmapv->GlobalVector();
-    *sigmav -= *sigma_exactv;
+//    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
+//    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
+//    HypreParVector * sigmapv = sigma->ParallelAssemble();
+//    Vector * sigmav = sigmapv->GlobalVector();
+//    *sigmav -= *sigma_exactv;
 
-    double sigma_meshnorm = (*sigma_exactv)*(*sigma_exactv);
-    double sigma_mesherror = (*sigmav) * (*sigmav);
-    if(verbose)
-        cout << "|| sigma_h - sigma_ex ||_h / || sigma_ex ||_h = "
-                        << sqrt(sigma_mesherror) / sqrt(sigma_meshnorm) << endl;
+//    double sigma_meshnorm = (*sigma_exactv)*(*sigma_exactv);
+//    double sigma_mesherror = (*sigmav) * (*sigmav);
+//    if(verbose)
+//        cout << "|| sigma_h - sigma_ex ||_h / || sigma_ex ||_h = "
+//                        << sqrt(sigma_mesherror) / sqrt(sigma_meshnorm) << endl;
 
-    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
-    Vector * S_exactv = S_exactpv->GlobalVector();
-    HypreParVector * Spv = S->ParallelAssemble();
-    Vector * Sv = Spv->GlobalVector();
-    *Sv -= *S_exactv;
+//    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
+//    Vector * S_exactv = S_exactpv->GlobalVector();
+//    HypreParVector * Spv = S->ParallelAssemble();
+//    Vector * Sv = Spv->GlobalVector();
+//    *Sv -= *S_exactv;
 
-    double S_meshnorm = (*S_exactv)*(*S_exactv);
-    double S_mesherror = (*Sv) * (*Sv);
-    if(verbose)
-        cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
-                        << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
+//    double S_meshnorm = (*S_exactv)*(*S_exactv);
+//    double S_mesherror = (*Sv) * (*Sv);
+//    if(verbose)
+//        cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
+//                        << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
 
 
-    BilinearForm *m = new BilinearForm(R_space);
-    m->AddDomainIntegrator(new DivDivIntegrator);
-    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
-    m->Assemble(); m->Finalize();
-    SparseMatrix E = m->SpMat();
-    Vector Asigma(sigmav->Size());
-    E.Mult(*sigma_exactv,Asigma);
-    double weighted_norm = (*sigma_exactv)*Asigma;
+//    BilinearForm *m = new BilinearForm(R_space);
+//    m->AddDomainIntegrator(new DivDivIntegrator);
+//    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
+//    m->Assemble(); m->Finalize();
+//    SparseMatrix E = m->SpMat();
+//    Vector Asigma(sigmav->Size());
+//    E.Mult(*sigma_exactv,Asigma);
+//    double weighted_norm = (*sigma_exactv)*Asigma;
 
-    Vector Ae(sigmav->Size());
-    E.Mult(*sigmav,Ae);
-    double weighted_error = (*sigmav)*Ae;
+//    Vector Ae(sigmav->Size());
+//    E.Mult(*sigmav,Ae);
+//    double weighted_error = (*sigmav)*Ae;
 
-    //if(verbose)
-        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
-                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-    if(verbose)
-        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
-                        sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-    if (verbose)
-        cout << "Computing projection errors" << endl;
+//    //if(verbose)
+//        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
+//                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
+//    if(verbose)
+//        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
+//                        sqrt(weighted_error)/sqrt(weighted_norm) << endl;
+//    if (verbose)
+//        cout << "Computing projection errors" << endl;
 
-    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
+//    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
-    if(verbose)
-        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
-                        << projection_error_sigma / norm_sigma << endl;
+//    if(verbose)
+//        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
+//                        << projection_error_sigma / norm_sigma << endl;
 
-    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
+//    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
-    if(verbose)
-        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
-                        << projection_error_S / norm_S << endl;
+//    if(verbose)
+//        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
+//                        << projection_error_S / norm_S << endl;
 
     if (visualization)
     {
