@@ -229,7 +229,7 @@ void bFunSphere3D_ex(const Vector& xt, Vector& b )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     b.SetSize(xt.Size());
 
@@ -249,7 +249,7 @@ void bFunCircle2D_ex(const Vector& xt, Vector& b )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     b.SetSize(xt.Size());
 
@@ -262,9 +262,9 @@ void bFunCircle2D_ex(const Vector& xt, Vector& b )
 
 double bFunCircle2Ddiv_ex(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
     return 0.0;
 }
 
