@@ -1321,6 +1321,31 @@ int main(int argc, char *argv[])
                   << err_S/norm_S  << "\n";
     }
 
+    {
+        auto *hcurl_coll = new L2_FECollection(feorder, dim);
+        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+
+        DiscreteLinearOperator Grad(H_space, N_space);
+        Grad.AddDomainInterpolator(new GradientInterpolator());
+        ParGridFunction GradS(N_space);
+        Grad.Assemble();
+        Grad.Mult(*S, GradS);
+
+        VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+        double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+        double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+        if (verbose)
+        {
+            std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                         err_GradS / norm_GradS << "\n";
+            std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                         sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+        }
+
+        delete hcurl_coll;
+        delete N_space;
+    }
+
     // Computing error in mesh norms
 
     /*
