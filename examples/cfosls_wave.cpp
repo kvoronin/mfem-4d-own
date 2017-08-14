@@ -998,7 +998,7 @@ int main(int argc, char *argv[])
     // 8.5 some additional parelag stuff which is used for coarse lagrange
     // multiplier implementation at the matrix level
 
-    HypreParMatrix * pPT;
+//    HypreParMatrix * pPT;
     //-----------------------
 
     // 9. Define the parallel grid function and parallel linear forms, solution
@@ -1178,10 +1178,12 @@ int main(int argc, char *argv[])
     //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
     //     pressure Schur Complement.
     if (verbose)
+    {
         if (use_ADS == true)
             cout << "Using ADS (+ I) preconditioner for sigma (and lagrange multiplier)" << endl;
         else
             cout << "Using Diag(A) (and D Diag^(-1)(A) Dt) preconditioner for sigma (and lagrange multiplier)" << endl;
+    }
 
     chrono.Clear();
     chrono.Start();
@@ -1752,7 +1754,7 @@ double uFun_ex_dt2(const Vector & xt)
 {
     double xi(xt(0));
     double yi(xt(1));
-    double zi(0.0);
+//    double zi(0.0);
 
     if (xt.Size() == 3)
     {
@@ -1774,7 +1776,7 @@ double uFun_ex_dtlaplace(const Vector & xt)
 {
     double xi(xt(0));
     double yi(xt(1));
-    double zi(0.0);
+//    double zi(0.0);
     double t(xt(xt.Size() - 1));
     //return (-(xt.Size()-1) * PI * PI) *uFun_ex(xt);
     //return (-(xt.Size()-1) * M_PI * M_PI) *sin(M_PI*xi)*sin(M_PI*yi);         // for t * sin x * sin y
@@ -1786,7 +1788,7 @@ void uFun_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z(0.0);
+//    double z(0.0);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
@@ -1833,7 +1835,7 @@ void uFun_ex_dtgradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z(0.0);
+//    double z(0.0);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
@@ -2091,7 +2093,7 @@ double uFun4_ex_dt2(const Vector & xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(2);
+//    double t = xt(2);
 
     return 16.0 * x * (x - 1) * y * (y - 1) * 2.0;
 }
@@ -2234,7 +2236,7 @@ double uFun5_ex_dt2(const Vector & xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(2);
+//    double t = xt(2);
 
     return 16.0 * x * x * (x - 1) * (x - 1) * y * y * (y - 1) * (y - 1) * 2.0;
 }

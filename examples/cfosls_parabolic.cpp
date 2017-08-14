@@ -1118,10 +1118,13 @@ int main(int argc, char *argv[])
     //     pressure Schur Complement.
 
     if (verbose)
+    {
         if (use_ADS == true)
             cout << "Using ADS (+ I) preconditioner for sigma (and lagrange multiplier)" << endl;
         else
             cout << "Using Diag(A) (and D Diag^(-1)(A) Dt) preconditioner for sigma (and lagrange multiplier)" << endl;
+    }
+
     chrono.Clear();
     chrono.Start();
     Solver * invA;

@@ -1427,13 +1427,13 @@ int main(int argc, char *argv[])
    ParGridFunction *sigma_exact = new ParGridFunction(R_space);
    //sigma_exact->ProjectCoefficient(sigmacoeff);
    sigma_exact->ProjectCoefficient(*(Mytest.sigma));
-   HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
-   Vector * sigma_exactv = sigma_exactpv->GlobalVector();
+//   HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
+//   Vector * sigma_exactv = sigma_exactpv->GlobalVector();
 
    ParGridFunction *S_exact = new ParGridFunction(H_space);
    S_exact->ProjectCoefficient(*(Mytest.scalaru));
-   HypreParVector * S_exactpv = S_exact->ParallelAssemble();
-   Vector * S_exactv = S_exactpv->GlobalVector();
+//   HypreParVector * S_exactpv = S_exact->ParallelAssemble();
+//   Vector * S_exactv = S_exactpv->GlobalVector();
 
 
    // adding back the term from nonhomogeneous initial condition
@@ -1679,7 +1679,7 @@ void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda)
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 void bbTTemplate(const Vector& xt, DenseMatrix& bbT)
 {
-    int nDimensions = xt.Size();
+//    int nDimensions = xt.Size();
     Vector b;
     bvecfunc(xt,b);
     MultVVt(b, bbT);
@@ -1890,7 +1890,7 @@ double bFundiv_ex(const Vector& xt)
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
     if (xt.Size() == 4)
         return 2*M_PI * cos(x*2*M_PI)*cos(y*M_PI) + M_PI * cos(y*M_PI)*cos(x*M_PI) + 2*M_PI * sin(2*z*M_PI);
     if (xt.Size() == 3)
@@ -2089,9 +2089,9 @@ double uFun5_ex(const Vector& xt)
 
 double uFun5_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
     return 0.0;
 }
 
@@ -2099,7 +2099,7 @@ void uFun5_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2118,9 +2118,9 @@ double uFun6_ex(const Vector& xt)
 
 double uFun6_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2128,7 +2128,7 @@ void uFun6_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2172,9 +2172,9 @@ double uFunCylinder_ex_dt(const Vector& xt)
 
 void uFunCylinder_ex_gradx(const Vector& xt, Vector& gradx )
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2194,10 +2194,10 @@ double uFun66_ex(const Vector& xt)
 
 double uFun66_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2206,7 +2206,7 @@ void uFun66_ex_gradx(const Vector& xt, Vector& gradx )
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2220,9 +2220,9 @@ void Hdivtest_fun(const Vector& xt, Vector& out )
     out.SetSize(xt.Size());
 
     double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
 
     out(0) = x;
     out(1) = 0.0;
@@ -2234,9 +2234,9 @@ void Hdivtest_fun(const Vector& xt, Vector& out )
 double L2test_fun(const Vector& xt)
 {
     double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
 
     return x;
 }
@@ -2254,7 +2254,7 @@ double uFun10_ex_dt(const Vector& xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double z = xt(2);
+//    double z = xt(2);
     double t = xt(xt.Size()-1);
     return (cos(t)*exp(t) + sin(t)*exp(t)) * x * y;
 }
@@ -2263,7 +2263,7 @@ void uFun10_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z = xt(2);
+//    double z = xt(2);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
