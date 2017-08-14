@@ -1203,9 +1203,9 @@ int main(int argc, char *argv[])
    //----------------------------------------------------------
 
    // for sigma essential bdr's are in=mposed everywhere except top t = t_final
-   Array<int> ess_bdr(pmesh->bdr_attributes.Max());
-   ess_bdr = 1;
-   ess_bdr[pmesh->bdr_attributes.Max()-1] = 0;
+//   Array<int> ess_bdr(pmesh->bdr_attributes.Max());
+//   ess_bdr = 1;
+//   ess_bdr[pmesh->bdr_attributes.Max()-1] = 0;
    //ess_bdr = 0;
    //ess_bdr[0] = 1; // t = 0
    //ess_bdr[1] = 1; // lateral boundary in case of 3 bdr attributes
@@ -1256,7 +1256,7 @@ int main(int argc, char *argv[])
 //    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(mass_k));
    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
    Ablock->Assemble();
-   Ablock->EliminateEssentialBC(ess_bdr,x.GetBlock(0),*fform);
+//   Ablock->EliminateEssentialBC(ess_bdr,x.GetBlock(0),*fform);
    Ablock->Finalize();
    A = Ablock->ParallelAssemble();
 
@@ -1290,7 +1290,7 @@ int main(int argc, char *argv[])
    Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
 //    Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(bt));
    Bblock->Assemble();
-   Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *qform);
+//   Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *qform);
    Bblock->EliminateTestDofs(ess_bdrS);
    Bblock->Finalize();
    B = Bblock->ParallelAssemble();
@@ -1308,7 +1308,7 @@ int main(int argc, char *argv[])
       ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
       Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
       Dblock->Assemble();
-      Dblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *gform);;
+//      Dblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *gform);;
       Dblock->Finalize();
       D = Dblock->ParallelAssemble();
       DT = D->Transpose();
