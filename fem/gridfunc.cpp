@@ -1830,8 +1830,8 @@ double GridFunction::ComputeL2Error(
                   //exact_valsvec.Print();
                   //std::cout << "exactmat \n";
                   //exactmat.Print();
-                  std::cout << "exact_valsvec ~ exactSolVec \n";
-                  exact_valsvec.Print();
+                  //std::cout << "exact_valsvec ~ exactSolVec \n";
+                  //exact_valsvec.Print();
               }
 
 
