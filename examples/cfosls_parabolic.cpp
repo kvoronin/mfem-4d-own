@@ -828,7 +828,7 @@ int main(int argc, char *argv[])
 
     //if(dim==3) pmesh->ReorientTetMesh();
 
-//    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
+    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
