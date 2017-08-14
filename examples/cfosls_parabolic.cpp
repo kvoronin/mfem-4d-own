@@ -408,8 +408,8 @@ public:
     int GetDim() {return dim;}
     int GetNumSol() {return numsol;}
     int CheckIfTestIsGood() {return testisgood;}
-    int SetDim(int Dim) { dim = Dim;}
-    int SetNumSol(int NumSol) { numsol = NumSol;}
+    void SetDim(int Dim) { dim = Dim;}
+    void SetNumSol(int NumSol) { numsol = NumSol;}
     bool CheckTestConfig();
 
     ~Heat_test () {}

@@ -461,6 +461,8 @@ double FunctionCoefficientExtra::Eval(ElementTransformation & T,
    {
       return ((*Function)(transip, parameters, nparams));
    }
+   mfem_error("FunctionCoefficientExtra::Eval: 'Function' is missing!");
+   return 0;
 }
 }
 
