@@ -9,9 +9,13 @@
 #include <iomanip>
 #include <list>
 
+#include"cfosls_testsuite.hpp"
+
 //#define BAD_TEST
 //#define ONLY_DIVFREEPART
 //#define K_IDENTITY
+
+//#define PAULINA_CODE
 
 #define MYZEROTOL (1.0e-13)
 
@@ -20,6 +24,476 @@ using namespace mfem;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
+
+#ifdef PAULINA_CODE
+class DivPart
+{
+
+public:
+
+// Returns the particular solution, sigma
+void div_part( int ref_levels,
+               SparseMatrix *M_fine,
+               SparseMatrix *B_fine,
+               Vector &G_fine,
+               Vector &F_fine,
+               Array< SparseMatrix*> &P_W,
+               Array< SparseMatrix*> &P_R,
+               Array< SparseMatrix*> &Element_Elementc,
+               Array< SparseMatrix*> &Element_dofs_R,
+               Array< SparseMatrix*> &Element_dofs_W,
+               HypreParMatrix * d_td_coarse_R,
+               HypreParMatrix * d_td_coarse_W,
+               Vector &sigma, Array<int>& ess_dof_list
+              )
+{
+    StopWatch chrono;
+
+    Vector sol_p_c2f;
+    Vector vec1;
+
+    Vector rhs_l;
+    Vector comp;
+    Vector F_coarse;
+
+
+    Vector total_sig(P_R[0]->Height());
+    total_sig = .0;
+
+    chrono.Clear();
+    chrono.Start();
+
+    for (int l=0; l < ref_levels; l++)
+         {
+               // 1. Obtaining the relation Dofs_Coarse_Element
+           SparseMatrix *R_t = Transpose(*Element_dofs_R[l]);
+           SparseMatrix *W_t = Transpose(*Element_dofs_W[l]);
+
+           MFEM_ASSERT(R_t->Width() == Element_Elementc[l]->Height() ,
+                       "Element_Elementc matrix and R_t does not match");
+
+           SparseMatrix *W_AE = Mult(*W_t,*Element_Elementc[l]);
+           SparseMatrix *R_AE = Mult(*R_t,*Element_Elementc[l]);
+
+           // 2. For RT elements, we impose boundary condition equal zero,
+           //   see the function: GetInternalDofs2AE to obtained them
+
+           SparseMatrix intDofs_R_AE;
+           GetInternalDofs2AE(*R_AE,intDofs_R_AE);
+
+           //  AE elements x localDofs stored in AE_R & AE_W
+           SparseMatrix *AE_R =  Transpose(intDofs_R_AE);
+           SparseMatrix *AE_W = Transpose(*W_AE);
+
+
+           // 3. Right hand size at each level is of the form:
+           //
+           //   rhs = F - (P_W[l])^T inv((P_W[l]^T)(P_W[l]))(P_W^T)F
+
+           rhs_l.SetSize(P_W[l]->Height());
+
+           if(l ==0)
+                rhs_l = F_fine;
+
+           if (l>0)
+               rhs_l = comp;
+
+           comp.SetSize(P_W[l]->Width());
+
+           F_coarse.SetSize(P_W[l]->Height());
+
+           P_W[l]->MultTranspose(rhs_l,comp);
+
+           SparseMatrix * P_WT = Transpose(*P_W[l]);
+           SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[l]);
+           Vector Diag(P_WTxP_W->Size());
+           Vector invDiag(P_WTxP_W->Size());
+           P_WTxP_W->GetDiag(Diag);
+
+           for(int m=0; m < P_WTxP_W->Size(); m++)
+              invDiag(m) = comp(m)/Diag(m);
+
+
+           P_W[l]->Mult(invDiag,F_coarse);
+
+
+
+           rhs_l -=F_coarse;
+
+           MFEM_ASSERT(rhs_l.Sum()<= 9e-11,
+                       "Average of rhs at each level is not zero: " << rhs_l.Sum());
+
+
+           if (l> 0) {
+
+              // 4. Creating matrices for the coarse problem:
+               SparseMatrix *P_WT2 = Transpose(*P_W[l-1]);
+               SparseMatrix *P_RT2 = Transpose(*P_R[l-1]);
+
+               SparseMatrix *B_PR = Mult(*B_fine, *P_R[l-1]);
+               B_fine = Mult(*P_WT2, *B_PR);
+
+               SparseMatrix *M_PR = Mult(*M_fine, *P_R[l-1]);
+               M_fine = Mult(*P_RT2, *M_PR);
+
+             }
+
+           //5. Setting for the coarse problem
+           DenseMatrix sub_M;
+           DenseMatrix sub_B;
+           DenseMatrix sub_BT;
+           DenseMatrix invBB;
+
+           Vector sub_F;
+           Vector sub_G;
+
+           //Vector to Assamble the solution at level l
+           Vector u_loc_vec(AE_W->Width());
+           Vector p_loc_vec(AE_R->Width());
+
+           u_loc_vec =0.0;
+           p_loc_vec =0.0;
+
+
+         for( int e = 0; e < AE_R->Height(); e++){
+
+             Array<int> Rtmp_j(AE_R->GetRowColumns(e), AE_R->RowSize(e));
+             Array<int> Wtmp_j(AE_W->GetRowColumns(e), AE_W->RowSize(e));
+
+             // Setting size of Dense Matrices
+             sub_M.SetSize(Rtmp_j.Size());
+             sub_B.SetSize(Wtmp_j.Size(),Rtmp_j.Size());
+             sub_BT.SetSize(Rtmp_j.Size(),Wtmp_j.Size());
+             sub_G.SetSize(Rtmp_j.Size());
+             sub_F.SetSize(Wtmp_j.Size());
+
+             // Obtaining submatrices:
+             M_fine->GetSubMatrix(Rtmp_j,Rtmp_j, sub_M);
+             B_fine->GetSubMatrix(Wtmp_j,Rtmp_j, sub_B);
+             sub_BT.Transpose(sub_B);
+
+             sub_G  = .0;
+             sub_F  = .0;
+
+             rhs_l.GetSubVector(Wtmp_j, sub_F);
+
+
+             Vector sig(Rtmp_j.Size());
+
+            if (e ==1){
+             MFEM_ASSERT(sub_F.Sum()<= 9e-11,
+                       "checking global average at each level " << sub_F.Sum());
+          }
+             Vector sub_FF = sub_F;
+
+            // Solving local problem:
+             Local_problem(sub_M, sub_B, sub_G, sub_F,sig);
+
+         if ( e ==1){
+
+             // Checking if the local problems satisfy the condition
+             Vector fcheck(Wtmp_j.Size());
+             fcheck =.0;
+             sub_B.Mult(sig, fcheck);
+             fcheck-=sub_FF;
+             MFEM_ASSERT(fcheck.Norml2()<= 9e-11,
+                       "checking global average at each level " << fcheck.Norml2());
+
+
+             }
+
+         p_loc_vec.AddElementVector(Rtmp_j,sig);
+
+         }
+
+           Vector fcheck2(u_loc_vec.Size());
+           fcheck2 = .0;
+           B_fine->Mult(p_loc_vec, fcheck2);
+           fcheck2-=rhs_l;
+           MFEM_ASSERT(fcheck2.Norml2()<= 9e-11,
+                       "checking global solution at each level " << fcheck2.Norml2());
+
+
+            // Final Solution ==
+            if (l>0){
+              for (int k = l-1; k>=0; k--){
+
+                vec1.SetSize(P_R[k]->Height());
+                P_R[k]->Mult(p_loc_vec, vec1);
+                p_loc_vec = vec1;
+
+              }
+            }
+
+            total_sig +=p_loc_vec;
+
+            MFEM_ASSERT(fcheck2.Norml2()<= 9e+9,
+                       "checking global solution added" << total_sig.Norml2());
+
+        }
+
+
+     // The coarse problem::
+
+         SparseMatrix *M_coarse;
+         SparseMatrix *B_coarse;
+         Vector FF_coarse(P_W[ref_levels-1]->Width());
+
+         rhs_l +=F_coarse;
+         P_W[ref_levels-1]->MultTranspose(rhs_l, FF_coarse );
+
+         SparseMatrix *P_WT2 = Transpose(*P_W[ref_levels-1]);
+             SparseMatrix *P_RT2 = Transpose(*P_R[ref_levels-1]);
+
+             SparseMatrix *B_PR = Mult(*B_fine, *P_R[ref_levels-1]);
+             B_coarse = Mult(*P_WT2, *B_PR);
+
+             B_coarse->EliminateCols(ess_dof_list);
+
+             SparseMatrix *M_PR = Mult(*M_fine, *P_R[ref_levels-1]);
+
+             M_coarse =  Mult(*P_RT2, *M_PR);
+             std::cout << "M_coarse size = " << M_coarse->Height() << "\n";
+             for ( int k = 0; k < ess_dof_list.Size(); ++k)
+                 if (ess_dof_list[k] !=0)
+                        M_coarse->EliminateRowCol(k);
+
+             Vector sig_c(B_coarse->Width());
+
+             auto d_td_M = d_td_coarse_R->LeftDiagMult(*M_coarse);
+             HypreParMatrix *d_td_T = d_td_coarse_R->Transpose();
+
+             HypreParMatrix *M_Global = ParMult(d_td_T, d_td_M);
+
+             auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
+             HypreParMatrix *BT = B_Global->Transpose();
+
+         Vector Truesig_c(B_Global->Width());
+
+       Array<int> block_offsets(3); // number of variables + 1
+       block_offsets[0] = 0;
+       block_offsets[1] = M_Global->Width();
+       block_offsets[2] = B_Global->Height();
+       block_offsets.PartialSum();
+
+       BlockOperator coarseMatrix(block_offsets);
+       coarseMatrix.SetBlock(0,0, M_Global);
+       coarseMatrix.SetBlock(0,1, BT);
+       coarseMatrix.SetBlock(1,0, B_Global);
+
+
+       BlockVector trueX(block_offsets), trueRhs(block_offsets);
+       trueRhs =0;
+       trueRhs.GetBlock(1)= FF_coarse;
+
+
+       // 9. Construct the operators for preconditioner
+       //
+       //                 P = [ diag(M)         0         ]
+       //                     [  0       B diag(M)^-1 B^T ]
+       //
+       //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
+       //     pressure Schur Complement
+
+       HypreParMatrix *MinvBt = B_Global->Transpose();
+       HypreParVector *Md = new HypreParVector(MPI_COMM_WORLD, M_Global->GetGlobalNumRows(),
+                                               M_Global->GetRowStarts());
+       M_Global->GetDiag(*Md);
+
+       MinvBt->InvScaleRows(*Md);
+       HypreParMatrix *S = ParMult(B_Global, MinvBt);
+
+       //HypreSolver *invM, *invS;
+       auto invM = new HypreDiagScale(*M_Global);
+       auto invS = new HypreBoomerAMG(*S);
+       invS->SetPrintLevel(0);
+          invM->iterative_mode = false;
+       invS->iterative_mode = false;
+
+       BlockDiagonalPreconditioner *darcyPr = new BlockDiagonalPreconditioner(
+          block_offsets);
+       darcyPr->SetDiagonalBlock(0, invM);
+       darcyPr->SetDiagonalBlock(1, invS);
+
+       // 12. Solve the linear system with MINRES.
+       //     Check the norm of the unpreconditioned residual.
+
+       int maxIter(50000);
+       double rtol(1.e-18);
+       double atol(1.e-18);
+
+
+       MINRESSolver solver(MPI_COMM_WORLD);
+       solver.SetAbsTol(atol);
+       solver.SetRelTol(rtol);
+       solver.SetMaxIter(maxIter);
+       solver.SetOperator(coarseMatrix);
+       solver.SetPreconditioner(*darcyPr);
+       solver.SetPrintLevel(0);
+       trueX = 0.0;
+       solver.Mult(trueRhs, trueX);
+       chrono.Stop();
+
+       //cout << "CG converged in " << solver.GetNumIterations() << " iterations" <<endl;
+       cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+
+       Truesig_c = trueX.GetBlock(0);
+
+       d_td_coarse_R->Mult(Truesig_c,sig_c);
+      for (int k = ref_levels-1; k>=0; k--){
+
+                vec1.SetSize(P_R[k]->Height());
+                P_R[k]->Mult(sig_c, vec1);
+                sig_c.SetSize(P_R[k]->Height());
+                sig_c = vec1;
+
+            }
+
+       total_sig+=sig_c;
+       sigma.SetSize(total_sig.Size());
+       sigma = total_sig;
+}
+
+void Dofs_AE(SparseMatrix &Element_Dofs, const SparseMatrix &Element_Element_coarse, SparseMatrix &Dofs_Ae)
+{
+        // Returns a SparseMatrix with the relation dofs to Element coarse.
+        SparseMatrix *R_T = Transpose(Element_Dofs);
+        SparseMatrix *Dofs_AE = Mult(*R_T,Element_Element_coarse);
+        SparseMatrix *AeDofs = Transpose(*Dofs_AE);
+        Dofs_Ae = *AeDofs;
+}
+
+
+void Elem2Dofs(const FiniteElementSpace &fes, SparseMatrix &Element_to_dofs)
+{
+  // Returns a SparseMatrix with the relation Element to Dofs
+  int * I = new int[fes.GetNE()+1];
+  Array<int> vdofs_R;
+  Array<int> dofs_R;
+
+  I[0] = 0;
+  for (int i = 0; i < fes.GetNE(); i++)
+    {
+      fes.GetElementVDofs(i, vdofs_R);
+      I[i+1] = I[i] + vdofs_R.Size();
+    }
+  int * J = new int[I[fes.GetNE()]];
+  double * data = new double[I[fes.GetNE()]];
+
+  for (int i = 0; i<fes.GetNE(); i++)
+    {
+      // Returns indexes of dofs in array for ith' elements'
+      fes.GetElementVDofs(i,vdofs_R);
+      fes.AdjustVDofs(vdofs_R);
+      for (int j = I[i];j<I[i+1];j++)
+        {
+          J[j] = vdofs_R[j-I[i]];
+          data[j] =1;
+        }
+
+    }
+  SparseMatrix A(I,J,data,fes.GetNE(), fes.GetVSize());
+  Element_to_dofs.Swap(A);
+}
+
+void GetInternalDofs2AE(const SparseMatrix &R_AE, SparseMatrix &B)
+{
+  /* Returns a SparseMatrix with the relation InteriorDofs to Coarse Element.
+   * This is use for the Raviart-Thomas dofs, which vanish at the
+   * boundary of the coarse elements.
+   *
+   * row.Size() ==2, means, it share by 2 AE
+   *
+   * For the lowest order case:
+   * row.Size()==1, and data=1, means bdry
+   * row.Size()==1, and data=2, means interior
+   */
+
+  int nnz=0;
+  int * R_AE_i = R_AE.GetI();
+  int * R_AE_j = R_AE.GetJ();
+  double * R_AE_data = R_AE.GetData();
+
+  int * out_i = new int [R_AE.Height()+1];
+
+  // Find Hdivdofs_interior_AE
+  for (int i=0; i<R_AE.Height(); i++)
+    {
+      out_i[i]= nnz;
+      for (int j= R_AE_i[i]; j< R_AE_i[i+1]; j++)
+        if (R_AE_data[j]==2)
+           nnz++; // If the degree is share by two elements
+    }
+  out_i[R_AE.Height()] = nnz;
+
+  int * out_j = new int[nnz];
+  double * out_data = new double[nnz];
+  nnz = 0;
+
+  for (int i=0; i< R_AE.Height(); i++)
+    for (int j=R_AE_i[i]; j<R_AE_i[i+1]; j++)
+      if (R_AE_data[j] == 2)
+        out_j[nnz++] = R_AE_j[j];
+
+  // Forming the data array:
+  std::fill_n(out_data, nnz, 1);
+
+  SparseMatrix out(out_i, out_j, out_data, R_AE.Height(),
+                   R_AE.Width());
+  B.Swap(out);
+}
+
+void Local_problem(const DenseMatrix &sub_M,  DenseMatrix &sub_B, Vector &Sub_G, Vector &sub_F, Vector &sigma){
+                  // Returns sigma local
+
+                  DenseMatrixInverse invM_loc(sub_M);
+                  DenseMatrix sub_BT(sub_B.Width(), sub_B.Height());
+                  sub_BT.Transpose(sub_B);
+
+                  DenseMatrix invM_BT(sub_B.Width());
+          invM_loc.Mult(sub_BT,invM_BT);
+
+
+          /* Solving the local problem:
+                  *
+              * Msig + B^tu = G
+              * Bsig        = F
+              *
+              * sig =  M^{-1} B^t(-u) + M^{-1} G
+              *
+              * B M^{-1} B^t (-u) = F
+              */
+
+          DenseMatrix B_invM_BT;
+          B_invM_BT = 0.0;
+          B_invM_BT.SetSize(sub_B.Height());
+
+          Mult(sub_B, invM_BT, B_invM_BT);
+
+          Vector one(sub_B.Height());
+          one = 0.0;
+          one[0] =1;
+          B_invM_BT.SetRow(0,0);
+          B_invM_BT.SetCol(0,0);
+          B_invM_BT.SetCol(0,one);
+          B_invM_BT(0,0)=1;
+
+
+          DenseMatrixInverse inv_BinvMBT(B_invM_BT);
+
+          Vector invMG(sub_M.Size());
+          invM_loc.Mult(Sub_G,invMG);
+
+          sub_F[0] = 0;
+          Vector uu(sub_B.Height());
+          inv_BinvMBT.Mult(sub_F, uu);
+          invM_BT.Mult(uu,sigma);
+          sigma += invMG;
+}
+
+};
+
+#endif
 
 class VectorcurlDomainLFIntegrator : public LinearFormIntegrator
 {
@@ -360,9 +834,9 @@ void VectorFECurlVQIntegrator::AssembleElementMatrix2(
    }
 }
 
-double uFun_ex(const Vector& x); // Exact Solution
-double uFun_ex_dt(const Vector& xt);
-void uFun_ex_gradx(const Vector& xt, Vector& grad);
+double uFun1_ex(const Vector& x); // Exact Solution
+double uFun1_ex_dt(const Vector& xt);
+void uFun1_ex_gradx(const Vector& xt, Vector& grad);
 
 void bFun_ex (const Vector& xt, Vector& b);
 double  bFundiv_ex(const Vector& xt);
@@ -682,9 +1156,15 @@ bool Transport_test_divfree::CheckTestConfig()
     {
         if ( numsol == 0 && dim >= 3 )
             return true;
+        if ( numsol == 1 && dim == 3 )
+            return true;
         if ( numsol == 2 && dim == 3 )
             return true;
         if ( numsol == 4 && dim == 3 )
+            return true;
+        if ( numsol == -3 && dim == 3 )
+            return true;
+        if ( numsol == -4 && dim == 4 )
             return true;
         return false;
     }
@@ -721,6 +1201,33 @@ Transport_test_divfree::Transport_test_divfree (int Dim, int NumSol, int NumCurl
                 else
                     SetTestCoeffs<&zero_ex, &zero_ex, &zerovecx_ex, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &zerovec_ex, &zerovec_ex>();
             }
+        }
+        if (numsol == -3)
+        {
+            if (numcurl == 1)
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            else if (numcurl == 2)
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            else
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &zerovec_ex, &zerovec_ex>();
+        }
+        if (numsol == -4)
+        {
+            if (numcurl == 1)
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            else if (numcurl == 2)
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            else
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &zerovec_ex, &zerovec_ex>();
+        }
+        if (numsol == 1)
+        {
+            if (numcurl == 1)
+                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            else if (numcurl == 2)
+                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            else
+                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &zerovec_ex, &zerovec_ex>();
         }
         if (numsol == 2)
         {
@@ -767,21 +1274,13 @@ int main(int argc, char *argv[])
     int ser_ref_levels  = 1;
     int par_ref_levels  = 2;
 
-    int generate_frombase   = 0;
-    int Nsteps              = 8;
-    double tau              = 0.125;
-    int generate_parallel   = generate_frombase * 1;
-    int whichparallel       = generate_parallel * 2;
-    int bnd_method          = 1;
-    int local_method        = 2;
-
     bool withDiv = true;
     bool withS = true;
     bool blockedversion = true;
 
     // solver options
     int prec_option = 0;        // defines whether to use preconditioner or not, and which one
-    bool prec_is_MG = false;
+    bool prec_is_MG;
 
     //const char *mesh_file = "../data/cube_3d_fine.mesh";
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
@@ -793,31 +1292,16 @@ int main(int argc, char *argv[])
     //const char *mesh_file = "../data/orthotope3D_moderate.mesh";
     //const char * mesh_file = "../data/orthotope3D_fine.mesh";
 
-    //const char * meshbase_file = "../data/sphere3D_0.1to0.2.mesh";
-    //const char * meshbase_file = "../data/sphere3D_0.05to0.1.mesh";
-    //const char * meshbase_file = "../data/sphere3D_veryfine.mesh";
-    //const char * meshbase_file = "../data/orthotope3D_moderate.mesh";
-    //const char * meshbase_file = "../data/orthotope3D_fine.mesh";
-    //const char * meshbase_file = "../data/cube_3d_fine.mesh";
-    //const char * meshbase_file = "../data/square_2d_moderate.mesh";
-    //const char * meshbase_file = "../data/square_2d_fine.mesh";
-    //const char * meshbase_file = "../data/square-disc.mesh";
-    const char *meshbase_file = "dsadsad";
-    //const char * meshbase_file = "../data/circle_fine_0.1.mfem";
-    //const char * meshbase_file = "../data/circle_moderate_0.2.mfem";
-
     int feorder         = 0;
 
     kappa = freq * M_PI;
 
     if (verbose)
-        cout << "Solving FOSLS Transport equation with MFEM & hypre, div-free approach \n";
+        cout << "Solving CFOSLS Transport equation with MFEM & hypre, div-free approach \n";
 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh",
                    "Mesh file to use.");
-    args.AddOption(&meshbase_file, "-mbase", "--meshbase",
-                   "Mesh base file to use.");
     args.AddOption(&feorder, "-o", "--feorder",
                    "Finite element order (polynomial degree).");
     args.AddOption(&ser_ref_levels, "-sref", "--sref",
@@ -826,26 +1310,11 @@ int main(int argc, char *argv[])
                    "Number of parallel refinements 4d mesh.");
     args.AddOption(&nDimensions, "-dim", "--whichD",
                    "Dimension of the space-time problem.");
-    args.AddOption(&Nsteps, "-nstps", "--nsteps",
-                   "Number of time steps.");
-    args.AddOption(&tau, "-tau", "--tau",
-                   "Time step.");
-    args.AddOption(&generate_frombase, "-gbase", "--genfrombase",
-                   "Generating mesh from the base mesh.");
-    args.AddOption(&generate_parallel, "-gp", "--genpar",
-                   "Generating mesh in parallel.");
-    args.AddOption(&numsol, "-nsol", "--numsol",
-                   "Solution number.");
-    args.AddOption(&numcurl, "-ncurl", "--numcurl",
-                   "Curl additive term's' number.");
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
     args.AddOption(&prec_option, "-precopt", "--prec-option",
                    "Preconditioner choice.");
-
-    //MPI_Finalize();
-    //return 0;
 
     args.Parse();
     if (!args.Good())
@@ -863,12 +1332,34 @@ int main(int argc, char *argv[])
     }
 
     if (verbose)
+        std::cout << "Running tests for the paper: \n";
+
+    if (nDimensions == 3)
+    {
+        numsol = -3;
+        mesh_file = "../data/cube_3d_moderate.mesh";
+    }
+    else // 4D case
+    {
+        numsol = -4;
+        mesh_file = "../data/cube4d_96.MFEM";
+    }
+
+    if (verbose)
+        std::cout << "For the records: numsol = " << numsol
+                  << ", mesh_file = " << mesh_file << "\n";
+
+    if (verbose)
         cout << "Number of mpi processes: " << num_procs << endl << flush;
 
-    bool with_prec = true;
+    bool with_prec;
 
     switch (prec_option)
     {
+    case 1: // smth simple like AMS
+        with_prec = true;
+        prec_is_MG = false;
+        break;
     case 2: // MG
         with_prec = true;
         prec_is_MG = true;
@@ -899,186 +1390,145 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-        if ( generate_frombase == 1 )
+        if (verbose)
+            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+        ifstream imesh(mesh_file);
+        if (!imesh)
         {
-            if ( verbose )
-                cout << "Creating a " << nDimensions << "d mesh from a " <<
-                        nDimensions - 1 << "d mesh from the file " << meshbase_file << endl;
-
-            Mesh * meshbase;
-            ifstream imesh(meshbase_file);
-            if (!imesh)
-            {
-                 cerr << "\nCan not open mesh file for base mesh: " <<
-                                                    meshbase_file << endl << flush;
-                 MPI_Finalize();
-                 return -2;
-            }
-            meshbase = new Mesh(imesh, 1, 1);
-            imesh.close();
-
-            for (int l = 0; l < ser_ref_levels; l++)
-                meshbase->UniformRefinement();
-
-            if (verbose)
-                meshbase->PrintInfo();
-
-            /*
-            if ( verbose )
-            {
-                std::stringstream fname;
-                fname << "mesh_" << nDimensions - 1 << "dbase.mesh";
-                std::ofstream ofid(fname.str().c_str());
-                ofid.precision(8);
-                meshbase->Print(ofid);
-            }
-            */
-
-            if (generate_parallel == 1) //parallel version
-            {
-                ParMesh * pmeshbase = new ParMesh(comm, *meshbase);
-
-                /*
-                std::stringstream fname;
-                fname << "pmesh_"<< nDimensions - 1 << "dbase_" << myid << ".mesh";
-                std::ofstream ofid(fname.str().c_str());
-                ofid.precision(8);
-                pmesh3dbase->Print(ofid);
-                */
-
-                chrono.Clear();
-                chrono.Start();
-
-                if ( whichparallel == 1 )
-                {
-                    if ( nDimensions == 3)
-                    {
-                        if  (verbose)
-                            cout << "Not implemented for 2D->3D. Use parallel version2"
-                                    " instead" << endl << flush;
-                        MPI_Finalize();
-                        return 0;
-                    }
-                    else // nDimensions == 4
-                    {
-                        mesh = new Mesh( comm, *pmeshbase, tau, Nsteps, bnd_method, local_method);
-                        if ( verbose )
-                            cout << "Success: ParMesh is created by deprecated method"
-                                 << endl << flush;
-
-                        std::stringstream fname;
-                        fname << "mesh_par1_id" << myid << "_np_" << num_procs << ".mesh";
-                        std::ofstream ofid(fname.str().c_str());
-                        ofid.precision(8);
-                        mesh->Print(ofid);
-
-                        MPI_Barrier(comm);
-                    }
-                }
-                else
-                {
-                    if (verbose)
-                        cout << "Starting parallel \"" << nDimensions-1 << "D->"
-                             << nDimensions <<"D\" mesh generator" << endl;
-
-                    pmesh = make_shared<ParMesh>( comm, *pmeshbase, tau, Nsteps,
-                                                  bnd_method, local_method);
-
-                    if (verbose)
-                        cout << "Success: ParMesh created" << endl << flush;
-                    MPI_Barrier(comm);
-                }
-
-                chrono.Stop();
-                if (verbose && whichparallel == 2)
-                    cout << "Timing: Space-time mesh extension done in parallel in "
-                              << chrono.RealTime() << " seconds.\n" << endl << flush;
-                delete pmeshbase;
-            }
-            else // serial version
-            {
-                if (verbose)
-                    cout << "Starting serial \"" << nDimensions-1 << "D->"
-                         << nDimensions <<"D\" mesh generator" << endl;
-                mesh = new Mesh( *meshbase, tau, Nsteps, bnd_method, local_method);
-                if (verbose)
-                    cout << "Timing: Space-time mesh extension done in serial in "
-                              << chrono.RealTime() << " seconds.\n" << endl << flush;
-            }
-
-            delete meshbase;
-
+             std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+             MPI_Finalize();
+             return -2;
         }
-        else // not generating from a lower dimensional mesh
+        else
         {
-            if (verbose)
-                cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-            ifstream imesh(mesh_file);
-            if (!imesh)
-            {
-                 std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-                 MPI_Finalize();
-                 return -2;
-            }
-            else
-            {
-                mesh = new Mesh(imesh, 1, 1);
-                imesh.close();
-            }
-
+            mesh = new Mesh(imesh, 1, 1);
+            imesh.close();
         }
 
     }
     else //if nDimensions is not 3 or 4
     {
         if (verbose)
-            cerr << "Case nDimensions = " << nDimensions << " is not supported"
-                 << endl << flush;
+            cerr << "Case nDimensions = " << nDimensions << " is not supported \n" << std::flush;
         MPI_Finalize();
         return -1;
-
     }
-
-    //MPI_Finalize();
-    //return 0;
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
-        // Checking that mesh is legal
-        //if (myid == 0)
-            //cout << "Checking the mesh" << endl << flush;
-        //mesh->MeshCheck();
-
         for (int l = 0; l < ser_ref_levels; l++)
             mesh->UniformRefinement();
 
-        if ( verbose )
+        if (verbose)
             cout << "Creating parmesh(" << nDimensions <<
                     "d) from the serial mesh (" << nDimensions << "d)" << endl << flush;
         pmesh = make_shared<ParMesh>(comm, *mesh);
         delete mesh;
     }
 
-   //pmesh->ComputeSlices ( 0.1, 2, 0.3, myid);
-   //MPI_Finalize();
-   //return 0;
+    int dim = nDimensions;
+    int sdim = nDimensions; // used in 4D case
 
+    FiniteElementCollection *hdiv_coll;
+    ParFiniteElementSpace *R_space;
+    FiniteElementCollection *l2_coll;
+    ParFiniteElementSpace *W_space;
+
+    if (dim == 4)
+        hdiv_coll = new RT0_4DFECollection;
+    else
+        hdiv_coll = new RT_FECollection(feorder, dim);
+
+    R_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
+
+    if (withDiv)
+    {
+        l2_coll = new L2_FECollection(feorder, nDimensions);
+        W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+    }
+
+#ifdef PAULINA_CODE
+    if (!withDiv && verbose)
+        std::cout << "Paulina's code cannot be used withut withDiv flag \n";
+
+    int ref_levels = par_ref_levels;
+
+    ParFiniteElementSpace *coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
+    ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+
+    // Input to the algorithm::
+
+    Array< SparseMatrix*> P_W(ref_levels);
+    Array< SparseMatrix*> P_R(ref_levels);
+    Array< SparseMatrix*> Element_dofs_R(ref_levels);
+    Array< SparseMatrix*> Element_dofs_W(ref_levels);
+   // Array< int * > Sol_sig_level(ref_levels);
+
+    const SparseMatrix* P_W_local;
+    const SparseMatrix* P_R_local;
+
+    Array<int> ess_dof_list;
+
+    // Dofs_TrueDofs at each space:
+
+    auto d_td_coarse_R = coarseR_space->Dof_TrueDof_Matrix();
+    auto d_td_coarse_W = coarseW_space->Dof_TrueDof_Matrix();
+
+    DivPart divp;
+
+    for (int l = 0; l < ref_levels+1; l++){
+      if (l > 0){
+        //W_space->Update();
+        //R_space->Update();
+
+          if (l == 1)
+          {
+              Array<int> ess_bdrU(pmesh->bdr_attributes.Max());
+              ess_bdrU=0;
+              ess_bdrU[0]=1;
+              ess_bdrU[1] = 1;
+              R_space->GetEssentialVDofs(ess_bdrU, ess_dof_list);
+              ess_dof_list.Print();
+          }
+
+        pmesh->UniformRefinement();
+
+        P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
+        P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
+
+        SparseMatrix* R_Element_to_dofs1 = new SparseMatrix();
+        SparseMatrix* W_Element_to_dofs1 = new SparseMatrix();
+
+        divp.Elem2Dofs(*R_space, *R_Element_to_dofs1);
+        divp.Elem2Dofs(*W_space, *W_Element_to_dofs1);
+
+        P_W[ref_levels -l] = new SparseMatrix ( *P_W_local);
+        P_R[ref_levels -l] = new SparseMatrix ( *P_R_local);
+
+        Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
+        Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
+
+      }
+    }
+
+    Vector sigmahat_pau;
+
+#else
     for (int l = 0; l < par_ref_levels; l++)
     {
        pmesh->UniformRefinement();
+       W_space->Update();
+       R_space->Update();
     }
-
+#endif
     //if(dim==3) pmesh->ReorientTetMesh();
 
-    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
+    pmesh->PrintInfo(std::cout); if(verbose) cout << "\n";
 
     Transport_test_divfree Mytest(nDimensions, numsol, numcurl);
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
-
-    int dim = nDimensions;
-    int sdim = nDimensions;
 
     shared_ptr<mfem::HypreParMatrix> A;
     HypreParMatrix Amat;
@@ -1089,10 +1539,6 @@ int main(int argc, char *argv[])
 
     FiniteElementCollection *hdivfree_coll;
     ParFiniteElementSpace *C_space;
-    FiniteElementCollection *hdiv_coll;
-    ParFiniteElementSpace *R_space;
-    FiniteElementCollection *l2_coll;
-    ParFiniteElementSpace *W_space;
 
     if (dim == 3)
     {
@@ -1135,99 +1581,6 @@ int main(int argc, char *argv[])
             else
                 std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
         }
-
-        /*
-
-        if (verbose)
-            std::cout << "Trying Martin's code to compute the error \n";
-        MatrixFunctionCoefficient solMat(sdim, E_exactMat);
-        // 14. Compute and print the L^2 norm of the error. (taken from ex4d_DivSkew.cpp)
-        {
-           double error = 0.0;
-           for (int i = 0; i < C_space->GetNE(); i++)
-           {
-              const FiniteElement* fe = C_space->GetFE(i);
-              int fdof = fe->GetDof();
-              ElementTransformation* transf = C_space->GetElementTransformation(i);
-              DenseMatrix shape(fdof,dim*dim);
-
-              int intorder = 2*fe->GetOrder() + 1; // <----------
-              const IntegrationRule *ir;
-              ir = &(IntRules.Get(fe->GetGeomType(), intorder));
-
-              Vector elSol(dim*dim);
-              DenseMatrix elSolMat(dim,dim);
-              DenseMatrix exactSol(dim,dim);
-              Vector exactSolVec(dim*dim);
-
-              Array<int> vdofs;
-              C_space->GetElementVDofs(i, vdofs);
-
-              for (int j = 0; j < ir->GetNPoints(); j++)
-              {
-                 const IntegrationPoint &ip = ir->IntPoint(j);
-                 transf->SetIntPoint(&ip);
-
-                 fe->CalcVShape(*transf, shape);
-
-                 elSol = 0.0;
-                 for (int k = 0; k < fdof; k++)
-                 {
-                    if (vdofs[k] >= 0)
-                    {
-                       for (int l=0; l<dim*dim; l++)
-                       {
-                           elSol(l) += shape(k,l)* (*u_exact)(vdofs[k]);
-                       }
-                    }
-                    else
-                    {
-                       for (int l=0; l<dim*dim; l++)
-                       {
-                           elSol(l) -= shape(k,l)*(*u_exact)(-1-vdofs[k]);
-                       }
-                    }
-                 }
-                 for (int k=0; k<dim; k++)
-                    for (int l=0; l<dim; l++)
-                    {
-                       elSolMat(k,l) = elSol(dim*k+l);
-                    }
-
-
-                 solMat.Eval(exactSol,*transf, ip);
-                 for (int k=0; k<dim; k++)
-                    for (int l=0; l<dim; l++)
-                    {
-                       exactSolVec(dim*k+l) = exactSol(k,l);
-                    }
-
-                 if (i == 0 && j == 0)
-                 {
-                     //std::cout << "shape \n";
-                     //shape.Print();
-                     //std::cout << "vdofs \n";
-                     //vdofs.Print();
-                     std::cout << "elSol \n";
-                     elSol.Print();
-                     //std::cout << "exactSol \n";
-                     //exactSol.Print();
-                     std::cout << "exactSolVec \n";
-                     exactSolVec.Print();
-                 }
-                 elSol.Add(-1.0, exactSolVec);
-
-                 error += ip.weight * fabs(transf->Weight()) * (elSol * elSol);
-              }
-           }
-           double globalError = 0.0;
-           MPI_Allreduce(&error, &globalError, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-           if (myid==0) { std::cout << "L2 error: " << sqrt(globalError) << std::endl;}
-        }
-
-        MPI_Finalize();
-        return 0;
-        */
     } // end of initialization of div-free f.e. space in 4D
 
     FiniteElementCollection *h1_coll;
@@ -1236,22 +1589,6 @@ int main(int argc, char *argv[])
     {
         h1_coll = new H1_FECollection(feorder+1, nDimensions);
         H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
-    }
-
-    // the space for sigma in the original problem
-    // hdiv_coll = new RT_FECollection(feorder, nDimensions);
-
-    if (dim == 4)
-        hdiv_coll = new RT0_4DFECollection;
-    else
-        hdiv_coll = new RT_FECollection(feorder, dim);
-
-    R_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
-
-    if (withDiv)
-    {
-        l2_coll = new L2_FECollection(feorder, nDimensions);
-        W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
     }
 
     int numblocks = 1;
@@ -1287,7 +1624,7 @@ int main(int argc, char *argv[])
            std::cout << "dim(C+H) = " << dimC + dimH << "\n";
        }
        if (withDiv)
-           std::cout << "dim(R) = " << dimR << ", ";
+           std::cout << "dim(R) = " << dimR << "\n";
        std::cout << "***********************************************************\n";
     }
 
@@ -1311,14 +1648,14 @@ int main(int argc, char *argv[])
     Array<int> ess_tdof_listU, ess_bdrU(pmesh->bdr_attributes.Max());
     ess_bdrU = 0;
 
-    MFEM_ASSERT(pmesh->bdr_attributes.Max() == 3, "Remove before proceeding: are you sure about number of bdr attributes? \n");
+    MFEM_ASSERT(pmesh->bdr_attributes.Max() == 3, "Remove before proceeding: are you sure about the number of bdr attributes? \n");
 
     if (withS)
     {
         //ess_bdrU[0] = 1;
         //ess_bdrU[1] = 1;
-        ess_bdrU = 1;
-        ess_bdrU[pmesh->bdr_attributes.Max() - 1] = 0;
+        //ess_bdrU = 1;
+        //ess_bdrU[pmesh->bdr_attributes.Max() - 1] = 0;
     }
     else
     {
@@ -1341,9 +1678,6 @@ int main(int argc, char *argv[])
         H_space->GetEssentialTrueDofs(ess_bdrS, ess_tdof_listS);
     }
 
-    //VectorFunctionCoefficient * vzero = new VectorFunctionCoefficient(dim, zerovec_ex);
-    //Coefficient *zero = new ConstantCoefficient(0.0);
-
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
     ParGridFunction * Temp = new ParGridFunction(R_space);
     if (withDiv)
@@ -1351,6 +1685,74 @@ int main(int argc, char *argv[])
         if (verbose)
             std::cout << "Assembling linear system for finding sigmahat \n";
 
+#ifdef PAULINA_CODE
+        int ref_levels = par_ref_levels;
+
+        if (verbose)
+            std::cout << "Running Paulina's code \n";
+
+        // Setting boundary conditions if any:
+
+        // Define the coefficients, analytical solution, and rhs of the PDE.
+        ConstantCoefficient k(1.0);
+        //FunctionCoefficient fcoeff(fFun);
+
+
+        ParBilinearForm *mVarf(new ParBilinearForm(R_space));
+        mVarf->AddDomainIntegrator(new VectorFEMassIntegrator(k));
+        mVarf->Assemble();
+        mVarf->Finalize();
+        SparseMatrix &M_fine(mVarf->SpMat());
+
+        ParMixedBilinearForm *bVarf(new ParMixedBilinearForm(R_space, W_space));
+        bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+        bVarf->Assemble();
+        bVarf->Finalize();
+        SparseMatrix &B_fine = bVarf->SpMat();
+
+        SparseMatrix *M_local = &M_fine;
+
+
+        SparseMatrix *B_local = &B_fine;
+
+        //Right hand size
+        Vector F_fine(P_W[0]->Height());
+        Vector G_fine(P_R[0]->Height());
+
+
+        ParLinearForm gform(R_space);
+        gform.Update();
+        gform.Assemble();
+
+        ParLinearForm fform(W_space);
+        fform.Update();
+        fform.AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+        fform.Assemble();
+
+        F_fine = fform;
+        G_fine = .0;
+
+        divp.div_part(ref_levels,
+                 M_local, B_local,
+                 G_fine,
+                 F_fine,
+                 P_W, P_R, P_W,
+                 Element_dofs_R,
+                 Element_dofs_W,
+                 d_td_coarse_R,
+                 d_td_coarse_W,
+                 sigmahat_pau, ess_dof_list);
+
+
+        Vector sth(F_fine.Size());
+
+        bVarf->SpMat().Mult(sigmahat_pau, sth);
+        sth -= F_fine;
+
+        cout<< "final check " << sth.Norml2() <<endl;
+
+        *Sigmahat = sigmahat_pau;
+#else
         ParGridFunction *sigma_exact;
         ParLinearForm *gform(new ParLinearForm);
         ParMixedBilinearForm *Bblock;
@@ -1394,13 +1796,15 @@ int main(int argc, char *argv[])
 
         Sigmahat->Distribute(*Temp);
         //Sigmahat->SetFromTrueDofs(*Temp);
+#endif
+
     }
-    else
+    else // solving a div-free system with some analytical solution for the div-free part
     {
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
 
-    // how to make it working?
+    // how to make MFEM_ASSERT working?
     //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
     if (nDimensions == 4)
     {
@@ -1410,6 +1814,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // the div-free part
     ParGridFunction *u_exact = new ParGridFunction(C_space);
     u_exact->ProjectCoefficient(*(Mytest.divfreepart));
 
@@ -1437,21 +1842,8 @@ int main(int argc, char *argv[])
         if (withS)
         {
             ffform->Update(C_space, rhsblks.GetBlock(0), 0);
-#ifdef DEBUG
-            ParMixedBilinearForm * Tblock = new ParMixedBilinearForm(R_space, C_space);
-            Tblock->AddDomainIntegrator(new MixedVectorWeakCurlIntegrator);
-            Tblock->Assemble();
-            Tblock->EliminateTestDofs(ess_bdrU);
-            Tblock->Finalize();
-            //HypreParMatrix * T = Tblock->ParallelAssemble();
-            *Sigmahat *= -1.0;
-            Tblock->Mult(*Sigmahat, *ffform);
-            //T->Mult(*Sigmahat, *ffform);
-            *Sigmahat *= -1.0;
-#else
             ffform->AddDomainIntegrator(new VectorcurlDomainLFIntegrator(*(Mytest.minsigmahat)));
             ffform->Assemble();
-#endif
         }
         else
         {
@@ -1459,21 +1851,8 @@ int main(int argc, char *argv[])
                 ffform->Update(C_space, rhsblks.GetBlock(0), 0);
             //else
                 //ffform->Update(C_space, *u_exact, 0);
-#ifdef DEBUG
-            ParMixedBilinearForm * Tblock = new ParMixedBilinearForm(R_space, C_space);
-            Tblock->AddDomainIntegrator(new MixedVectorWeakCurlIntegrator(*Mytest.Ktilda));
-            Tblock->Assemble();
-            Tblock->EliminateTestDofs(ess_bdrU);
-            Tblock->Finalize();
-            *Sigmahat *= -1.0;
-
-            Tblock->Mult(*Sigmahat, *ffform);
-
-            *Sigmahat *= -1.0;
-#else
             ffform->AddDomainIntegrator(new VectorcurlDomainLFIntegrator(*(Mytest.minKsigmahat)));
             ffform->Assemble();
-#endif
         }
     }
     else // if withDiv = true
@@ -1518,27 +1897,10 @@ int main(int argc, char *argv[])
         {
             qform->Update(H_space, rhsblks.GetBlock(1), 0);
             qform->AddDomainIntegrator(new GradDomainLFIntegrator(*Mytest.bdivsigma));
-#ifdef DEBUG
-            ParMixedBilinearForm * LTblock = new ParMixedBilinearForm(H_space, R_space);
-            LTblock->AddDomainIntegrator(new MixedVectorProductIntegrator(*(Mytest.b)));
-            LTblock->Assemble();
-            LTblock->EliminateTestDofs(ess_bdrS);
-            //LTblock->EliminateTrialDofs(ess_bdrU);
-            LTblock->Finalize();
-            //HypreParMatrix * LT = LTblock->ParallelAssemble();
-            //tmp_to_add = new ParGridFunction(H_space);
-            //LT->MultTranspose(*Sigmahat, *tmp_to_add);
-            tmp_to_add = new ParGridFunction(H_space);
-            LTblock->MultTranspose(*Sigmahat, *tmp_to_add);
-#else
             qform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.bsigmahat));
-#endif
             qform->Assemble();
-#ifdef DEBUG
-            *qform += *tmp_to_add;
-#endif
         }
-        else
+        else // Div-Div
         {
             //if (print_progress_report)
                 //std::cout << "A required change of rh side qform is not implemented yet for withDiv case \n";
@@ -1665,6 +2027,29 @@ int main(int argc, char *argv[])
                 //int formcurl = 1; // for H(curl)
                 //prec = new MG3dPrec(&Amat, nlevels, coarsenfactor, pmesh.get(), formcurl, feorder, C_space, ess_tdof_listU, verbose);
             }
+            else // prec is AMS-like for the div-free part (block-diagonal for the system with boomerAMG for S)
+            {
+                if (withS) // case of block system
+                {
+                    prec = new BlockDiagonalPreconditioner(block_trueOffsets);
+                    Operator * precU = new HypreAMS(*A, C_space);
+                    ((HypreAMS*)precU)->SetSingularProblem();
+                    Operator * precS = new HypreBoomerAMG(*C);
+                    ((HypreBoomerAMG*)precS)->SetPrintLevel(0);
+
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
+                }
+                else // only equation in div-free subspace
+                {
+                    if (blockedversion)
+                        prec = new HypreAMS(*A, C_space);
+                    else
+                        prec = new HypreAMS(Amat, C_space);
+                    ((HypreAMS*)prec)->SetSingularProblem();
+                }
+
+            }
         }
         else // if(dim==4)
         {
@@ -1701,20 +2086,11 @@ int main(int argc, char *argv[])
     }
 
     if (with_prec)
-    {
-        if (withS)
-        {
-            if (verbose)
-                cout << "Hcurl-H1 case doesn't have a preconditioner currently" << endl;
-        }
-        else
-            solver->SetPreconditioner(*prec);
-    }
+        solver->SetPreconditioner(*prec);
     solver->SetPrintLevel(0);
     if (withS || blockedversion )
     {
         trueX = 0.0;
-        //trueRhs.GetBlock(1).Print();
         solver->Mult(trueRhs, trueX);
     }
     else
@@ -1760,66 +2136,47 @@ int main(int argc, char *argv[])
     double err_u = u->ComputeL2Error(*(Mytest.divfreepart), irs);
     double norm_u = ComputeGlobalLpNorm(2, *(Mytest.divfreepart), *pmesh, irs);
 
-    if (verbose)
+    if (verbose && !withDiv)
         if ( norm_u > MYZEROTOL )
         {
-            std::cout << "norm_u = " << norm_u << "\n";
+            //std::cout << "norm_u = " << norm_u << "\n";
             cout << "|| u - u_ex || / || u_ex || = " << err_u / norm_u << endl;
         }
         else
             cout << "|| u || = " << err_u << " (u_ex = 0)" << endl;
 
-    // Computing error for S
-    double err_S, norm_S;
-    if (withS)
-    {
-        err_S = S->ComputeL2Error(*(Mytest.scalarS), irs);
-        norm_S = ComputeGlobalLpNorm(2, *(Mytest.scalarS), *pmesh, irs);
-        if (verbose)
-        {
-            if ( norm_S > MYZEROTOL )
-                std::cout << "|| S_h - S_ex || / || S_ex || = " <<
-                         err_S / norm_S << "\n";
-            else
-                std::cout << "|| S_h || = " << err_S << " (S_ex = 0) \n";
-        }
-    }
+    // if we are solving without finding a particular solution, just a simple system in div-free space
+    // then we replace our Sigmahat (which will be a prt of final sigma) by the projection of the artificial
+    // sigmahat related to the div-free system
+    if (!withDiv)
+        Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
 
-    ParGridFunction * sigmahat = new ParGridFunction(R_space);
-    sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
-
-    ParGridFunction * curlu = new ParGridFunction(R_space);
+    ParGridFunction * divfreepart = new ParGridFunction(R_space);
     DiscreteLinearOperator Curl_h(C_space, R_space);
     Curl_h.AddDomainInterpolator(new CurlInterpolator());
     Curl_h.Assemble();
-    Curl_h.Mult(*u, *curlu);
+    Curl_h.Mult(*u, *divfreepart); // if replaced by u_exact, makes the error look nicer
 
-    ParGridFunction * curlu_exact = new ParGridFunction(R_space);
-    curlu_exact->ProjectCoefficient(*(Mytest.opdivfreepart));
+    ParGridFunction * divfreepart_exact = new ParGridFunction(R_space);
+    divfreepart_exact->ProjectCoefficient(*(Mytest.opdivfreepart));
 
-    double err_curlu = curlu->ComputeL2Error(*(Mytest.opdivfreepart), irs);
-    double norm_curlu = ComputeGlobalLpNorm(2, *(Mytest.opdivfreepart), *pmesh, irs);
+    double err_divfreepart = divfreepart->ComputeL2Error(*(Mytest.opdivfreepart), irs);
+    double norm_divfreepart = ComputeGlobalLpNorm(2, *(Mytest.opdivfreepart), *pmesh, irs);
 
-    if (verbose)
-        if ( norm_curlu > MYZEROTOL )
+    if (verbose && !withDiv)
+        if ( norm_divfreepart > MYZEROTOL )
         {
-            cout << "|| curlu_ex || = " << norm_curlu << endl;
-            cout << "|| curl_h u_h - curlu_ex || / || curlu_ex || = " << err_curlu / norm_curlu << endl;
+            //cout << "|| divfreepart_ex || = " << norm_divfreepart << endl;
+            cout << "|| curl_h u_h - divfreepart_ex || / || divfreepart_ex || = " << err_divfreepart / norm_divfreepart << endl;
         }
         else
-            cout << "|| curl_h u_h || = " << err_curlu << " (curlu_ex = 0)" << endl;
-
-    // not needed
-    //ParGridFunction *sigma_nonhomo = new ParGridFunction(R_space);
-    //sigma_nonhomo->ProjectCoefficient(*(Mytest.sigma_nonhomo));
+            cout << "|| curl_h u_h || = " << err_divfreepart << " (divfreepart_ex = 0)" << endl;
 
     ParGridFunction * sigma = new ParGridFunction(R_space);
-    *sigma = *sigmahat;
-    *sigma += * curlu;
-    //*sigma += *sigma_nonhomo; // not needed
-
+    *sigma = *Sigmahat; // particular solution
+    *sigma += *divfreepart;   // plus div-free guy
     ParGridFunction * sigma_exact = new ParGridFunction(R_space);
-    sigma_exact->ProjectCoefficient(*(Mytest.sigmahat));
+    sigma_exact->ProjectCoefficient(*(Mytest.sigma));
 
     double err_sigma = sigma->ComputeL2Error(*(Mytest.sigma), irs);
     double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
@@ -1833,21 +2190,23 @@ int main(int argc, char *argv[])
         else
             cout << "|| sigma || = " << err_sigma << " (sigma_ex = 0)" << endl;
 
-    double err_sigmahat = sigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+    double err_sigmahat = Sigmahat->ComputeL2Error(*(Mytest.sigma), irs);
 
-    if (verbose)
+    /*
+    if (verbose && !withDiv)
         if ( norm_sigma > MYZEROTOL )
             cout << "|| sigma_hat - sigma_ex || / || sigma_ex || = " << err_sigmahat / norm_sigma << endl;
         else
             cout << "|| sigma_hat || = " << err_sigmahat << " (sigma_ex = 0)" << endl;
+    */
 
-
+    double norm_S;
     if (withS)
     {
         S_exact = new ParGridFunction(H_space);
         S_exact->ProjectCoefficient(*(Mytest.scalarS));
 
-        err_S = S->ComputeL2Error(*(Mytest.scalarS), irs);
+        double err_S = S->ComputeL2Error(*(Mytest.scalarS), irs);
         norm_S = ComputeGlobalLpNorm(2, *(Mytest.scalarS), *pmesh, irs);
         if (verbose)
         {
@@ -1866,7 +2225,7 @@ int main(int argc, char *argv[])
     //double projection_error_u = u_exact->ComputeL2Error(E, irs);
     double projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
 
-    if(verbose)
+    if(verbose && !withDiv)
         if ( norm_u > MYZEROTOL )
         {
             //std::cout << "Debug: || u_ex || = " << norm_u << "\n";
@@ -1876,11 +2235,20 @@ int main(int argc, char *argv[])
         else
             cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
 
+    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
+
+    if(verbose)
+        if ( norm_sigma > MYZEROTOL )
+        {
+            cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = " << projection_error_sigma / norm_sigma << endl;
+        }
+        else
+            cout << "|| Pi_h sigma_ex || = " << projection_error_sigma << " (sigma_ex = 0) \n ";
     if (withS)
     {
         double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
-        if(verbose)
+         if(verbose)
             if ( norm_S > MYZEROTOL )
                 cout << "|| S_ex - Pi_h S_ex || / || S_ex || = " << projection_error_S / norm_S << endl;
             else
@@ -1912,23 +2280,23 @@ int main(int argc, char *argv[])
               << endl;
 
 
-       socketstream curluex_sock(vishost, visport);
-       curluex_sock << "parallel " << num_procs << " " << myid << "\n";
-       curluex_sock.precision(8);
-       curluex_sock << "solution\n" << *pmesh << *curlu_exact << "window_title 'curl u_exact'"
+       socketstream divfreepartex_sock(vishost, visport);
+       divfreepartex_sock << "parallel " << num_procs << " " << myid << "\n";
+       divfreepartex_sock.precision(8);
+       divfreepartex_sock << "solution\n" << *pmesh << *divfreepart_exact << "window_title 'curl u_exact'"
               << endl;
 
-       socketstream curlu_sock(vishost, visport);
-       curlu_sock << "parallel " << num_procs << " " << myid << "\n";
-       curlu_sock.precision(8);
-       curlu_sock << "solution\n" << *pmesh << *curlu << "window_title 'curl u_h'"
+       socketstream divfreepart_sock(vishost, visport);
+       divfreepart_sock << "parallel " << num_procs << " " << myid << "\n";
+       divfreepart_sock.precision(8);
+       divfreepart_sock << "solution\n" << *pmesh << *divfreepart << "window_title 'curl u_h'"
               << endl;
 
-       *curlu -= *curlu_exact;
-       socketstream curludiff_sock(vishost, visport);
-       curludiff_sock << "parallel " << num_procs << " " << myid << "\n";
-       curludiff_sock.precision(8);
-       curludiff_sock << "solution\n" << *pmesh << *curlu << "window_title 'curl u_h - curl u_exact'"
+       *divfreepart -= *divfreepart_exact;
+       socketstream divfreepartdiff_sock(vishost, visport);
+       divfreepartdiff_sock << "parallel " << num_procs << " " << myid << "\n";
+       divfreepartdiff_sock.precision(8);
+       divfreepartdiff_sock << "solution\n" << *pmesh << *divfreepart << "window_title 'curl u_h - curl u_exact'"
               << endl;
 
        if (withS)
@@ -2228,69 +2596,6 @@ double bFundiv_ex(const Vector& xt)
     return 0.0;
 }
 
-
-void bFunRect2D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = sin(x*M_PI)*cos(y*M_PI);
-    b(1) = - sin(y*M_PI)*cos(x*M_PI);
-
-    b(xt.Size()-1) = 1.;
-
-}
-
-double bFunRect2Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-void bFunCube3D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-
-    b.SetSize(xt.Size());
-
-    b(0) = sin(x*M_PI)*cos(y*M_PI)*cos(z*M_PI);
-    b(1) = - 0.5 * sin(y*M_PI)*cos(x*M_PI) * cos(z*M_PI);
-    b(2) = - 0.5 * sin(z*M_PI)*cos(x*M_PI) * cos(y*M_PI);
-
-    b(xt.Size()-1) = 1.;
-
-}
-
-double bFunCube3Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-void bFunSphere3D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = -y;  // -x2
-    b(1) = x;   // x1
-    b(2) = 0.0;
-
-    b(xt.Size()-1) = 1.;
-    return;
-}
-
-double bFunSphere3Ddiv_ex(const Vector& xt)
-{
-    return 0.0;
-}
-
-
 double uFun2_ex(const Vector& xt)
 {
     double x = xt(0);
@@ -2333,30 +2638,6 @@ double fFun2(const Vector& xt)
              t * exp(t) * 2.0 * y         * cos (((x - 0.5)*(x - 0.5) + y*y)) * b(1);
 }
 */
-
-void bFunCircle2D_ex(const Vector& xt, Vector& b )
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-
-    b.SetSize(xt.Size());
-
-    b(0) = -y;  // -x2
-    b(1) = x;   // x1
-
-    b(xt.Size()-1) = 1.;
-    return;
-}
-
-double bFunCircle2Ddiv_ex(const Vector& xt)
-{
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-    return 0.0;
-}
-
 
 double uFun3_ex(const Vector& xt)
 {
@@ -3000,4 +3281,24 @@ void f_exactMat(const Vector &x, DenseMatrix &f)
       f(3,1) =  -f(1,3);
       f(3,2) =  -f(2,3);
    }
+}
+
+double uFun1_ex(const Vector& xt)
+{
+    double t = xt(xt.Size()-1);
+    //return t;
+    ////setback
+    return sin(t)*exp(t);
+}
+
+double uFun1_ex_dt(const Vector& xt)
+{
+    double t = xt(xt.Size()-1);
+    return (cos(t) + sin(t)) * exp(t);
+}
+
+void uFun1_ex_gradx(const Vector& xt, Vector& gradx )
+{
+    gradx.SetSize(xt.Size() - 1);
+    gradx = 0.0;
 }
