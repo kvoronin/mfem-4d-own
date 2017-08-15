@@ -15,7 +15,7 @@
 //#define ONLY_DIVFREEPART
 //#define K_IDENTITY
 
-//#define PAULINA_CODE
+#define PAULINA_CODE
 
 #define MYZEROTOL (1.0e-13)
 
@@ -44,7 +44,7 @@ void div_part( int ref_levels,
                Array< SparseMatrix*> &Element_dofs_W,
                HypreParMatrix * d_td_coarse_R,
                HypreParMatrix * d_td_coarse_W,
-               Vector &sigma, Array<int>& ess_dof_list
+               Vector &sigma, Array<int>& ess_dof_coarsestlvl_list
               )
 {
     StopWatch chrono;
@@ -248,14 +248,14 @@ void div_part( int ref_levels,
              SparseMatrix *B_PR = Mult(*B_fine, *P_R[ref_levels-1]);
              B_coarse = Mult(*P_WT2, *B_PR);
 
-             B_coarse->EliminateCols(ess_dof_list);
+             B_coarse->EliminateCols(ess_dof_coarsestlvl_list);
 
              SparseMatrix *M_PR = Mult(*M_fine, *P_R[ref_levels-1]);
 
              M_coarse =  Mult(*P_RT2, *M_PR);
-             std::cout << "M_coarse size = " << M_coarse->Height() << "\n";
-             for ( int k = 0; k < ess_dof_list.Size(); ++k)
-                 if (ess_dof_list[k] !=0)
+             //std::cout << "M_coarse size = " << M_coarse->Height() << "\n";
+             for ( int k = 0; k < ess_dof_coarsestlvl_list.Size(); ++k)
+                 if (ess_dof_coarsestlvl_list[k] !=0)
                         M_coarse->EliminateRowCol(k);
 
              Vector sig_c(B_coarse->Width());
@@ -1448,6 +1448,8 @@ int main(int argc, char *argv[])
         W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
     }
 
+    Array<int> ess_bdrU(pmesh->bdr_attributes.Max());
+
 #ifdef PAULINA_CODE
     if (!withDiv && verbose)
         std::cout << "Paulina's code cannot be used withut withDiv flag \n";
@@ -1468,7 +1470,7 @@ int main(int argc, char *argv[])
     const SparseMatrix* P_W_local;
     const SparseMatrix* P_R_local;
 
-    Array<int> ess_dof_list;
+    Array<int> ess_dof_coarsestlvl_list;
 
     // Dofs_TrueDofs at each space:
 
@@ -1484,12 +1486,11 @@ int main(int argc, char *argv[])
 
           if (l == 1)
           {
-              Array<int> ess_bdrU(pmesh->bdr_attributes.Max());
               ess_bdrU=0;
-              ess_bdrU[0]=1;
-              ess_bdrU[1] = 1;
-              R_space->GetEssentialVDofs(ess_bdrU, ess_dof_list);
-              ess_dof_list.Print();
+              //ess_bdrU=1;
+              //ess_bdrU[pmesh->bdr_attributes.Max() - 1] = 0;
+              R_space->GetEssentialVDofs(ess_bdrU, ess_dof_coarsestlvl_list);
+              //ess_dof_list.Print();
           }
 
         pmesh->UniformRefinement();
@@ -1647,18 +1648,15 @@ int main(int argc, char *argv[])
     // Setting boundary conditions.
     //----------------------------------------------------------
 
-    Array<int> ess_tdof_listU, ess_bdrU(pmesh->bdr_attributes.Max());
-    ess_bdrU = 0;
+    Array<int> ess_tdof_listU;
 
-    //std::cout << "mfem assert is not working? pmesh->bdr_attributes.Max() = " << pmesh->bdr_attributes.Max() << "\n";
-    //MFEM_ASSERT(pmesh->bdr_attributes.Max() == 3, "Remove before proceeding: are you sure about the number of bdr attributes? \n");
-
+#ifndef PAULINA_CODE
     if (withS)
     {
         //ess_bdrU[0] = 1;
         //ess_bdrU[1] = 1;
-        //ess_bdrU = 1;
-        //ess_bdrU[pmesh->bdr_attributes.Max() - 1] = 0;
+        ess_bdrU = 1;
+        ess_bdrU[pmesh->bdr_attributes.Max() - 1] = 0;
     }
     else
     {
@@ -1669,6 +1667,7 @@ int main(int argc, char *argv[])
         //ess_bdrU[0] = 1;
         //ess_bdrU[1] = 1;
     }
+#endif
     C_space->GetEssentialTrueDofs(ess_bdrU, ess_tdof_listU);
 
     Array<int> ess_tdof_listS, ess_bdrS(pmesh->bdr_attributes.Max());
@@ -1743,7 +1742,7 @@ int main(int argc, char *argv[])
                  Element_dofs_W,
                  d_td_coarse_R,
                  d_td_coarse_W,
-                 sigmahat_pau, ess_dof_list);
+                 sigmahat_pau, ess_dof_coarsestlvl_list);
 
 
         Vector sth(F_fine.Size());
