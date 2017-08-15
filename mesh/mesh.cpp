@@ -4470,7 +4470,7 @@ void Mesh::GetBdrElementFace(int i, int *f, int *o) const
 void Mesh::GetElementPlanars(int i, Array<int> &pls, Array<int> &cor)
 const
 {
-   int n, j;
+   int n;
 
    if (el_to_planar)
    {
@@ -5273,7 +5273,7 @@ STable4D * Mesh::GetElementToFaceTable4D(int ret_ftbl)
    {
       v = elements[i]->GetVertices();
 
-      bool swapped = swappedElements[i];
+      //bool swapped = swappedElements[i];
       int tempv[5];
       for (int j=0; j<5; j++) { tempv[j] = v[j]; }
       //   if(swapped) Swap(tempv);

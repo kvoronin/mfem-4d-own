@@ -740,31 +740,29 @@ void VectorFECurlVQIntegrator::AssembleElementMatrix2(
    //int dim = trial_fe.GetDim();
    //int dimc = (dim == 3) ? 3 : 1;
    int dim;
-   int dimc;
    int vector_dof, scalar_dof;
 
    MFEM_ASSERT(trial_fe.GetMapType() == mfem::FiniteElement::H_CURL ||
                test_fe.GetMapType() == mfem::FiniteElement::H_CURL,
                "At least one of the finite elements must be in H(Curl)");
 
-   int curl_nd, vec_nd;
+   //int curl_nd;
+   int vec_nd;
    if ( trial_fe.GetMapType() == mfem::FiniteElement::H_CURL )
    {
-      curl_nd = trial_nd;
+      //curl_nd = trial_nd;
       vector_dof = trial_fe.GetDof();
       vec_nd  = test_nd;
       scalar_dof = test_fe.GetDof();
       dim = trial_fe.GetDim();
-      dimc = dim;
    }
    else
    {
-      curl_nd = test_nd;
+      //curl_nd = test_nd;
       vector_dof = test_fe.GetDof();
       vec_nd  = trial_nd;
       scalar_dof = trial_fe.GetDof();
       dim = test_fe.GetDim();
-      dimc = dim;
    }
 
    MFEM_ASSERT(dim == 3, "VectorFECurlVQIntegrator is working only in 3D currently \n");
@@ -862,10 +860,6 @@ double uFun4_ex(const Vector& x); // Exact Solution
 double uFun4_ex_dt(const Vector& xt);
 void uFun4_ex_gradx(const Vector& xt, Vector& grad);
 
-//void bFun4_ex (const Vector& xt, Vector& b);
-
-//void bFun6_ex (const Vector& xt, Vector& b);
-
 double uFun5_ex(const Vector& x); // Exact Solution
 double uFun5_ex_dt(const Vector& xt);
 void uFun5_ex_gradx(const Vector& xt, Vector& grad);
@@ -887,14 +881,9 @@ double uFun2_ex(const Vector& x); // Exact Solution
 double uFun2_ex_dt(const Vector& xt);
 void uFun2_ex_gradx(const Vector& xt, Vector& grad);
 
-void Hdivtest_fun(const Vector& xt, Vector& out );
-double  L2test_fun(const Vector& xt);
-
 double uFun33_ex(const Vector& x); // Exact Solution
 double uFun33_ex_dt(const Vector& xt);
 void uFun33_ex_gradx(const Vector& xt, Vector& grad);
-
-void videofun(const Vector& xt, Vector& vecvalue);
 
 void hcurlFun3D_ex(const Vector& xt, Vector& vecvalue);
 void curlhcurlFun3D_ex(const Vector& xt, Vector& vecvalue);
@@ -910,9 +899,6 @@ void zerovecx_ex(const Vector& xt, Vector& zerovecx );
 
 void vminusone_exact(const Vector &x, Vector &vminusone);
 void vone_exact(const Vector &x, Vector &vone);
-
-double cas_weight (const Vector& xt, double * params, const int &nparams);
-double deletethis (const Vector& xt);
 
 // Exact solution, E, and r.h.s., f. See below for implementation.
 void E_exact(const Vector &, Vector &);
@@ -1233,7 +1219,6 @@ Transport_test_divfree::Transport_test_divfree (int Dim, int NumSol, int NumCurl
         if (numsol == 2)
         {
             //std::cout << "The domain must be a cylinder over a square" << std::endl << std::flush;
-            //SetTestCoeffs<&uFun4_ex, &uFun4_ex_dt, &uFun4_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &cas_weight, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
             if (numcurl == 1)
                 SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
             else if (numcurl == 2)
@@ -1244,7 +1229,6 @@ Transport_test_divfree::Transport_test_divfree (int Dim, int NumSol, int NumCurl
         if (numsol == 4)
         {
             //std::cout << "The domain must be a cylinder over a square" << std::endl << std::flush;
-            //SetTestCoeffs<&uFun4_ex, &uFun4_ex_dt, &uFun4_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &cas_weight, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
             if (numcurl == 1)
                 SetTestCoeffs<&uFun4_ex, &uFun4_ex_dt, &uFun4_ex_gradx, &bFunRect2D_ex, &bFunRect2Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
             else if (numcurl == 2)
@@ -1428,7 +1412,7 @@ int main(int argc, char *argv[])
     }
 
     int dim = nDimensions;
-    int sdim = nDimensions; // used in 4D case
+    //int sdim = nDimensions; // used in 4D case
 
     FiniteElementCollection *hdiv_coll;
     ParFiniteElementSpace *R_space;
@@ -2139,6 +2123,7 @@ int main(int argc, char *argv[])
     double norm_u = ComputeGlobalLpNorm(2, *(Mytest.divfreepart), *pmesh, irs);
 
     if (verbose && !withDiv)
+    {
         if ( norm_u > MYZEROTOL )
         {
             //std::cout << "norm_u = " << norm_u << "\n";
@@ -2146,6 +2131,7 @@ int main(int argc, char *argv[])
         }
         else
             cout << "|| u || = " << err_u << " (u_ex = 0)" << endl;
+    }
 
     // if we are solving without finding a particular solution, just a simple system in div-free space
     // then we replace our Sigmahat (which will be a prt of final sigma) by the projection of the artificial
@@ -2166,6 +2152,7 @@ int main(int argc, char *argv[])
     double norm_divfreepart = ComputeGlobalLpNorm(2, *(Mytest.opdivfreepart), *pmesh, irs);
 
     if (verbose && !withDiv)
+    {
         if ( norm_divfreepart > MYZEROTOL )
         {
             //cout << "|| divfreepart_ex || = " << norm_divfreepart << endl;
@@ -2173,6 +2160,7 @@ int main(int argc, char *argv[])
         }
         else
             cout << "|| curl_h u_h || = " << err_divfreepart << " (divfreepart_ex = 0)" << endl;
+    }
 
     ParGridFunction * sigma = new ParGridFunction(R_space);
     *sigma = *Sigmahat; // particular solution
@@ -2187,14 +2175,15 @@ int main(int argc, char *argv[])
         cout << "sigma_h = sigma_hat + div-free part, div-free part = curl u_h \n";
 
     if (verbose)
+    {
         if ( norm_sigma > MYZEROTOL )
             cout << "|| sigma_h - sigma_ex || / || sigma_ex || = " << err_sigma / norm_sigma << endl;
         else
             cout << "|| sigma || = " << err_sigma << " (sigma_ex = 0)" << endl;
-
-    double err_sigmahat = Sigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+    }
 
     /*
+    double err_sigmahat = Sigmahat->ComputeL2Error(*(Mytest.sigma), irs);
     if (verbose && !withDiv)
         if ( norm_sigma > MYZEROTOL )
             cout << "|| sigma_hat - sigma_ex || / || sigma_ex || = " << err_sigmahat / norm_sigma << endl;
@@ -2228,6 +2217,7 @@ int main(int argc, char *argv[])
     double projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
 
     if(verbose && !withDiv)
+    {
         if ( norm_u > MYZEROTOL )
         {
             //std::cout << "Debug: || u_ex || = " << norm_u << "\n";
@@ -2236,25 +2226,30 @@ int main(int argc, char *argv[])
         }
         else
             cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
+    }
 
     double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
     if(verbose)
+    {
         if ( norm_sigma > MYZEROTOL )
         {
             cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = " << projection_error_sigma / norm_sigma << endl;
         }
         else
             cout << "|| Pi_h sigma_ex || = " << projection_error_sigma << " (sigma_ex = 0) \n ";
+    }
     if (withS)
     {
         double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
          if(verbose)
+         {
             if ( norm_S > MYZEROTOL )
                 cout << "|| S_ex - Pi_h S_ex || / || S_ex || = " << projection_error_S / norm_S << endl;
             else
                 cout << "|| Pi_h S_ex ||  = " << projection_error_S << " (S_ex = 0) \n";
+         }
     }
 
     if (visualization && nDimensions < 4)
@@ -2590,7 +2585,7 @@ double bFundiv_ex(const Vector& xt)
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+    //double t = xt(xt.Size()-1);
     if (xt.Size() == 4)
         return 2*M_PI * cos(x*2*M_PI)*cos(y*M_PI) + M_PI * cos(y*M_PI)*cos(x*M_PI) + 2*M_PI * sin(2*z*M_PI);
     if (xt.Size() == 3)
@@ -2706,11 +2701,7 @@ double uFun4_ex(const Vector& xt)
 
 double uFun4_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
     return uFun4_ex(xt);
-    //return (1 + t) * exp(t) * sin (((x - 0.5)*(x - 0.5) + y*y));
 }
 
 void uFun4_ex_gradx(const Vector& xt, Vector& gradx )
@@ -2769,9 +2760,6 @@ double uFun5_ex(const Vector& xt)
 
 double uFun5_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
     return 0.0;
 }
 
@@ -2779,7 +2767,7 @@ void uFun5_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+    //double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2798,9 +2786,6 @@ double uFun6_ex(const Vector& xt)
 
 double uFun6_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2808,7 +2793,7 @@ void uFun6_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+    //double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2852,10 +2837,6 @@ double uFunCylinder_ex_dt(const Vector& xt)
 
 void uFunCylinder_ex_gradx(const Vector& xt, Vector& gradx )
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
-
     gradx.SetSize(xt.Size() - 1);
 
     gradx(0) = 0.0;
@@ -2874,10 +2855,6 @@ double uFun66_ex(const Vector& xt)
 
 double uFun66_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2886,7 +2863,7 @@ void uFun66_ex_gradx(const Vector& xt, Vector& gradx )
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+    //double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2940,9 +2917,9 @@ void hcurlFun3D_ex(const Vector& xt, Vector& vecvalue)
     //vecvalue(2) = t * (1 - t);
 
     // Martin's function
-    vecvalue(0) = sin(kappa * xt(1));
-    vecvalue(1) = sin(kappa * xt(2));
-    vecvalue(2) = sin(kappa * xt(0));
+    vecvalue(0) = sin(kappa * y);
+    vecvalue(1) = sin(kappa * t);
+    vecvalue(2) = sin(kappa * x);
 
     return;
 }
@@ -2960,9 +2937,9 @@ void curlhcurlFun3D_ex(const Vector& xt, Vector& vecvalue)
     //vecvalue(2) = -2.0 * (1 - t);
 
     // Martin's function's curl
-    vecvalue(0) = - kappa * cos(kappa * xt(2));
-    vecvalue(1) = - kappa * cos(kappa * xt(0));
-    vecvalue(2) = - kappa * cos(kappa * xt(1));
+    vecvalue(0) = - kappa * cos(kappa * t);
+    vecvalue(1) = - kappa * cos(kappa * x);
+    vecvalue(2) = - kappa * cos(kappa * y);
 
     return;
 }
@@ -2979,10 +2956,10 @@ void DivmatFun4D_ex(const Vector& xt, Vector& vecvalue)
 
     // 4D counterpart of the Martin's 3D function
     //std::cout << "Error: DivmatFun4D_ex is incorrect \n";
-    vecvalue(0) = sin(kappa * xt(1));
-    vecvalue(1) = sin(kappa * xt(2));
-    vecvalue(2) = sin(kappa * xt(3));
-    vecvalue(3) = sin(kappa * xt(0));
+    vecvalue(0) = sin(kappa * y);
+    vecvalue(1) = sin(kappa * z);
+    vecvalue(2) = sin(kappa * t);
+    vecvalue(3) = sin(kappa * x);
 
     return;
 }
@@ -3002,9 +2979,10 @@ void DivmatDivmatFun4D_ex(const Vector& xt, Vector& vecvalue)
 
     // Divmat of the 4D counterpart of the Martin's 3D function
     std::cout << "Error: DivmatDivmatFun4D_ex is incorrect \n";
-    vecvalue(0) = - kappa * cos(kappa * xt(2));
-    vecvalue(1) = - kappa * cos(kappa * xt(0));
-    vecvalue(2) = - kappa * cos(kappa * xt(1));
+    vecvalue(0) = - kappa * cos(kappa * t);
+    vecvalue(1) = - kappa * cos(kappa * x);
+    vecvalue(2) = - kappa * cos(kappa * y);
+    vecvalue(3) = z;
 
     return;
 }

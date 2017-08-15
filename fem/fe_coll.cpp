@@ -1675,8 +1675,6 @@ void RT0_4DFECollection::InitFaces(const int p, const int dim, const int map_typ
    MFEM_VERIFY(Quadrature1D::CheckOpen(op_type) != Quadrature1D::Invalid,
                "invalid open point type");
 
-   const int pp1 = p + 1, pp2 = p + 2;
-
    for (int g = 0; g < Geometry::NumGeom; g++)
    {
       RT_Elements[g] = NULL;
@@ -1704,6 +1702,7 @@ void RT0_4DFECollection::InitFaces(const int p, const int dim, const int map_typ
 
 
    /*
+   const int pp1 = p + 1, pp2 = p + 2;
    if (dim == 2)
    {
       L2_SegmentElement *l2_seg = new L2_SegmentElement(p, op_type);
