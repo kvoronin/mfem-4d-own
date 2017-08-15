@@ -526,6 +526,7 @@ void VectorcurlDomainLFIntegrator::AssembleRHSElementVect(
 {
     int dof = el.GetDof();
 
+    int dim = el.GetDim();
     MFEM_ASSERT(dim == 3, "VectorcurlDomainLFIntegrator is working only in 3D currently \n");
 
     curlshape.SetSize(dof,3);           // matrix of size dof x 3, works only in 3D
@@ -1516,9 +1517,10 @@ int main(int argc, char *argv[])
 #else
     for (int l = 0; l < par_ref_levels; l++)
     {
-       pmesh->UniformRefinement();
-       W_space->Update();
-       R_space->Update();
+        pmesh->UniformRefinement();
+        if (withDiv)
+             W_space->Update();
+        R_space->Update();
     }
 #endif
     //if(dim==3) pmesh->ReorientTetMesh();
@@ -1648,7 +1650,8 @@ int main(int argc, char *argv[])
     Array<int> ess_tdof_listU, ess_bdrU(pmesh->bdr_attributes.Max());
     ess_bdrU = 0;
 
-    MFEM_ASSERT(pmesh->bdr_attributes.Max() == 3, "Remove before proceeding: are you sure about the number of bdr attributes? \n");
+    //std::cout << "mfem assert is not working? pmesh->bdr_attributes.Max() = " << pmesh->bdr_attributes.Max() << "\n";
+    //MFEM_ASSERT(pmesh->bdr_attributes.Max() == 3, "Remove before proceeding: are you sure about the number of bdr attributes? \n");
 
     if (withS)
     {
@@ -1679,7 +1682,6 @@ int main(int argc, char *argv[])
     }
 
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
-    ParGridFunction * Temp = new ParGridFunction(R_space);
     if (withDiv)
     {
         if (verbose)
@@ -1789,9 +1791,10 @@ int main(int argc, char *argv[])
         solver.SetPreconditioner(*invBBT);
         solver.SetOperator(*BBT);
 
-        ParGridFunction * Temphat = new ParGridFunction(W_space);
+        Vector * Temphat = new Vector(W_space->TrueVSize());
         solver.Mult(*Rhs, *Temphat);
 
+        Vector * Temp = new Vector(R_space->TrueVSize());
         BdivT->Mult(*Temphat, *Temp);
 
         Sigmahat->Distribute(*Temp);
