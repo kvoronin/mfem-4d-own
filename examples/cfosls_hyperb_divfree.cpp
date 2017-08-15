@@ -1443,6 +1443,52 @@ int main(int argc, char *argv[])
     ParFiniteElementSpace *coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
     ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
 
+    FiniteElementCollection *hdivfree_coll;
+    ParFiniteElementSpace *C_space;
+
+    if (dim == 3)
+    {
+        hdivfree_coll = new ND_FECollection(feorder + 1, nDimensions);
+        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
+    }
+    else // dim == 4
+    {
+        hdivfree_coll = new DivSkew1_4DFECollection;
+        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
+
+        // testing ProjectCoefficient
+        VectorFunctionCoefficient * divfreepartcoeff = new
+                VectorFunctionCoefficient(6, E_exactMat_vec);
+        //VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
+        ParGridFunction *u_exact = new ParGridFunction(C_space);
+        u_exact->ProjectCoefficient(*divfreepartcoeff);//(*(Mytest.divfreepart));
+
+
+        if (verbose)
+            std::cout << "ProjectCoefficient is ok with vectors from DivSkew \n";
+        //u_exact->Print();
+
+        // checking projection error computation
+        int order_quad = 2*(feorder+1) + 1;//max(2, 2*feorder+1);
+        const IntegrationRule *irs[Geometry::NumGeom];
+        for (int i=0; i < Geometry::NumGeom; ++i)
+        {
+            irs[i] = &(IntRules.Get(i, order_quad));
+        }
+
+        double norm_u = ComputeGlobalLpNorm(2, *divfreepartcoeff, *pmesh, irs);
+        double projection_error_u = u_exact->ComputeL2Error(*divfreepartcoeff, irs);
+
+        if(verbose)
+        {
+            std::cout << "|| u_ex - Pi_h u_ex || = " << projection_error_u << "\n";
+            if ( norm_u > MYZEROTOL )
+                std::cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << "\n";
+            else
+                std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
+        }
+    } // end of initialization of div-free f.e. space in 4D
+
     // Input to the algorithm::
 
     Array< SparseMatrix*> P_W(ref_levels);
@@ -1523,52 +1569,6 @@ int main(int argc, char *argv[])
     Vector X, B;
     ParBilinearForm *Ablock;
     ParLinearForm *ffform;
-
-    FiniteElementCollection *hdivfree_coll;
-    ParFiniteElementSpace *C_space;
-
-    if (dim == 3)
-    {
-        hdivfree_coll = new ND_FECollection(feorder + 1, nDimensions);
-        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
-    }
-    else // dim == 4
-    {
-        hdivfree_coll = new DivSkew1_4DFECollection;
-        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
-
-        // testing ProjectCoefficient
-        VectorFunctionCoefficient * divfreepartcoeff = new
-                VectorFunctionCoefficient(6, E_exactMat_vec);
-        //VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
-        ParGridFunction *u_exact = new ParGridFunction(C_space);
-        u_exact->ProjectCoefficient(*divfreepartcoeff);//(*(Mytest.divfreepart));
-
-
-        if (verbose)
-            std::cout << "ProjectCoefficient is ok with vectors from DivSkew \n";
-        //u_exact->Print();
-
-        // checking projection error computation
-        int order_quad = 2*(feorder+1) + 1;//max(2, 2*feorder+1);
-        const IntegrationRule *irs[Geometry::NumGeom];
-        for (int i=0; i < Geometry::NumGeom; ++i)
-        {
-            irs[i] = &(IntRules.Get(i, order_quad));
-        }
-
-        double norm_u = ComputeGlobalLpNorm(2, *divfreepartcoeff, *pmesh, irs);
-        double projection_error_u = u_exact->ComputeL2Error(*divfreepartcoeff, irs);
-
-        if(verbose)
-        {
-            std::cout << "|| u_ex - Pi_h u_ex || = " << projection_error_u << "\n";
-            if ( norm_u > MYZEROTOL )
-                std::cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << "\n";
-            else
-                std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
-        }
-    } // end of initialization of div-free f.e. space in 4D
 
     FiniteElementCollection *h1_coll;
     ParFiniteElementSpace *H_space;
