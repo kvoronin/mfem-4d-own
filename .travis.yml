@@ -7,7 +7,7 @@ os:
    - osx
 
 env:
-   - DEBUG=NO MPI=YES TMPDIR=/tmp
+   - DEBUG=YES MPI=YES TMPDIR=/tmp
 
 # Test with GCC on Linux an Clang on Mac
 matrix:
