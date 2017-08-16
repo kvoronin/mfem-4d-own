@@ -1614,6 +1614,7 @@ int main(int argc, char *argv[])
     } // end of initialization of div-free f.e. space in 4D
 
     // For geometric multigrid
+    Array<HypreParMatrix*> P_C(par_ref_levels);
     ParFiniteElementSpace *coarseC_space;
     if (prec_is_MG)
         coarseC_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
@@ -1646,8 +1647,6 @@ int main(int argc, char *argv[])
     auto d_td_coarse_W = coarseW_space->Dof_TrueDof_Matrix();
 
     DivPart divp;
-
-    Array<HypreParMatrix*> P_C(ref_levels);
 
     for (int l = 0; l < ref_levels+1; l++){
         if (l > 0){
@@ -1704,10 +1703,26 @@ int main(int argc, char *argv[])
 #else
     for (int l = 0; l < par_ref_levels; l++)
     {
+        if (prec_is_MG)
+            coarseC_space->Update();
+
         pmesh->UniformRefinement();
         if (withDiv)
             W_space->Update();
         R_space->Update();
+
+        C_space->Update();
+        if (prec_is_MG)
+        {
+            auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
+            auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+            unique_ptr<SparseMatrix>RP_C_local(
+                        Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
+            P_C[l] = d_td_coarse_C->LeftDiagMult(
+                        *RP_C_local, C_space->GetTrueDofOffsets());
+            P_C[l]->CopyColStarts();
+            P_C[l]->CopyRowStarts();
+        }
     }
 #endif
     //if(dim==3) pmesh->ReorientTetMesh();
@@ -1819,6 +1834,9 @@ int main(int argc, char *argv[])
         //ess_bdrS = 1;
         H_space->GetEssentialTrueDofs(ess_bdrS, ess_tdof_listS);
     }
+
+    chrono.Clear();
+    chrono.Start();
 
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
     if (withDiv)
@@ -1945,6 +1963,9 @@ int main(int argc, char *argv[])
     {
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
+
+    if (verbose)
+        std::cout << "Particular solution found in " << chrono.RealTime() << "s. \n";
 
     // how to make MFEM_ASSERT working?
     //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
