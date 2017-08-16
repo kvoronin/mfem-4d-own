@@ -226,7 +226,7 @@ public:
 
             total_sig +=p_loc_vec;
 
-            MFEM_ASSERT(fcheck2.Norml2()<= 9e+9,
+            MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
                         "checking global solution added" << total_sig.Norml2());
 
         }
