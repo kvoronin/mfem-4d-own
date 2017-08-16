@@ -180,39 +180,38 @@ public:
 
                 Vector sig(Rtmp_j.Size());
 
-                if (e ==1){
-                    MFEM_ASSERT(sub_F.Sum()<= 9e-11,
-                                "checking global average at each level " << sub_F.Sum());
-                }
+                MFEM_ASSERT(sub_F.Sum()<= 9e-11,
+                            "checking global average at each level " << sub_F.Sum());
+
+#ifdef MFEM_DEBUG
                 Vector sub_FF = sub_F;
+#endif
 
                 // Solving local problem:
                 Local_problem(sub_M, sub_B, sub_G, sub_F,sig);
 
-                if ( e ==1){
-
-                    // Checking if the local problems satisfy the condition
-                    Vector fcheck(Wtmp_j.Size());
-                    fcheck =.0;
-                    sub_B.Mult(sig, fcheck);
-                    fcheck-=sub_FF;
-                    MFEM_ASSERT(fcheck.Norml2()<= 9e-11,
-                                "checking global average at each level " << fcheck.Norml2());
-
-
-                }
+#ifdef MFEM_DEBUG
+                // Checking if the local problems satisfy the condition
+                Vector fcheck(Wtmp_j.Size());
+                fcheck =.0;
+                sub_B.Mult(sig, fcheck);
+                fcheck-=sub_FF;
+                MFEM_ASSERT(fcheck.Norml2()<= 9e-11,
+                            "checking global average at each level " << fcheck.Norml2());
+#endif
 
                 p_loc_vec.AddElementVector(Rtmp_j,sig);
 
             }
 
+#ifdef MFEM_DEBUG
             Vector fcheck2(u_loc_vec.Size());
             fcheck2 = .0;
             B_fine->Mult(p_loc_vec, fcheck2);
             fcheck2-=rhs_l;
             MFEM_ASSERT(fcheck2.Norml2()<= 9e-11,
                         "checking global solution at each level " << fcheck2.Norml2());
-
+#endif
 
             // Final Solution ==
             if (l>0){
