@@ -15,7 +15,7 @@
 //#define ONLY_DIVFREEPART
 //#define K_IDENTITY
 
-#define PAULINA_CODE
+//#define PAULINA_CODE
 
 #define MYZEROTOL (1.0e-13)
 
@@ -44,7 +44,8 @@ public:
                    Array< SparseMatrix*> &Element_dofs_W,
                    HypreParMatrix * d_td_coarse_R,
                    HypreParMatrix * d_td_coarse_W,
-                   Vector &sigma, Array<int>& ess_dof_coarsestlvl_list
+                   Vector &sigma,
+                   Array<int>& ess_dof_coarsestlvl_list
                    )
     {
         StopWatch chrono;
@@ -128,21 +129,25 @@ public:
 
                 // 4. Creating matrices for the coarse problem:
                 SparseMatrix *P_WT2 = Transpose(*P_W[l-1]);
-                SparseMatrix *P_RT2 = Transpose(*P_R[l-1]);
+                SparseMatrix *P_RT2;
+                if (M_fine)
+                    P_RT2 = Transpose(*P_R[l-1]);
 
                 SparseMatrix *B_PR = Mult(*B_fine, *P_R[l-1]);
                 B_fine = Mult(*P_WT2, *B_PR);
 
-                SparseMatrix *M_PR = Mult(*M_fine, *P_R[l-1]);
-                M_fine = Mult(*P_RT2, *M_PR);
-
+                if (M_fine)
+                {
+                    SparseMatrix *M_PR = Mult(*M_fine, *P_R[l-1]);
+                    M_fine = Mult(*P_RT2, *M_PR);
+                }
             }
 
             //5. Setting for the coarse problem
             DenseMatrix sub_M;
             DenseMatrix sub_B;
             DenseMatrix sub_BT;
-            DenseMatrix invBB;
+//            DenseMatrix invBB;
 
             Vector sub_F;
             Vector sub_G;
@@ -161,19 +166,21 @@ public:
                 Array<int> Wtmp_j(AE_W->GetRowColumns(e), AE_W->RowSize(e));
 
                 // Setting size of Dense Matrices
-                sub_M.SetSize(Rtmp_j.Size());
+                if (M_fine)
+                    sub_M.SetSize(Rtmp_j.Size());
                 sub_B.SetSize(Wtmp_j.Size(),Rtmp_j.Size());
                 sub_BT.SetSize(Rtmp_j.Size(),Wtmp_j.Size());
-                sub_G.SetSize(Rtmp_j.Size());
-                sub_F.SetSize(Wtmp_j.Size());
+//                sub_G.SetSize(Rtmp_j.Size());
+//                sub_F.SetSize(Wtmp_j.Size());
 
                 // Obtaining submatrices:
-                M_fine->GetSubMatrix(Rtmp_j,Rtmp_j, sub_M);
+                if (M_fine)
+                    M_fine->GetSubMatrix(Rtmp_j,Rtmp_j, sub_M);
                 B_fine->GetSubMatrix(Wtmp_j,Rtmp_j, sub_B);
                 sub_BT.Transpose(sub_B);
 
-                sub_G  = .0;
-                sub_F  = .0;
+//                sub_G  = .0;
+//                sub_F  = .0;
 
                 rhs_l.GetSubVector(Wtmp_j, sub_F);
 
@@ -231,7 +238,6 @@ public:
 
         }
 
-
         // The coarse problem::
 
         SparseMatrix *M_coarse;
@@ -242,103 +248,138 @@ public:
         P_W[ref_levels-1]->MultTranspose(rhs_l, FF_coarse );
 
         SparseMatrix *P_WT2 = Transpose(*P_W[ref_levels-1]);
-        SparseMatrix *P_RT2 = Transpose(*P_R[ref_levels-1]);
+        SparseMatrix *P_RT2;
+        if (M_fine)
+            P_RT2 = Transpose(*P_R[ref_levels-1]);
 
         SparseMatrix *B_PR = Mult(*B_fine, *P_R[ref_levels-1]);
         B_coarse = Mult(*P_WT2, *B_PR);
 
         B_coarse->EliminateCols(ess_dof_coarsestlvl_list);
 
-        SparseMatrix *M_PR = Mult(*M_fine, *P_R[ref_levels-1]);
+        if (M_fine)
+        {
+            SparseMatrix *M_PR = Mult(*M_fine, *P_R[ref_levels-1]);
 
-        M_coarse =  Mult(*P_RT2, *M_PR);
-        //std::cout << "M_coarse size = " << M_coarse->Height() << "\n";
-        for ( int k = 0; k < ess_dof_coarsestlvl_list.Size(); ++k)
-            if (ess_dof_coarsestlvl_list[k] !=0)
-                M_coarse->EliminateRowCol(k);
+            M_coarse =  Mult(*P_RT2, *M_PR);
+            //std::cout << "M_coarse size = " << M_coarse->Height() << "\n";
+            for ( int k = 0; k < ess_dof_coarsestlvl_list.Size(); ++k)
+                if (ess_dof_coarsestlvl_list[k] !=0)
+                    M_coarse->EliminateRowCol(k);
+        }
 
         Vector sig_c(B_coarse->Width());
 
-        auto d_td_M = d_td_coarse_R->LeftDiagMult(*M_coarse);
-        HypreParMatrix *d_td_T = d_td_coarse_R->Transpose();
-
-        HypreParMatrix *M_Global = ParMult(d_td_T, d_td_M);
-
         auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
-        HypreParMatrix *BT = B_Global->Transpose();
-
         Vector Truesig_c(B_Global->Width());
 
-        Array<int> block_offsets(3); // number of variables + 1
-        block_offsets[0] = 0;
-        block_offsets[1] = M_Global->Width();
-        block_offsets[2] = B_Global->Height();
-        block_offsets.PartialSum();
+        if (M_fine)
+        {
+            auto d_td_M = d_td_coarse_R->LeftDiagMult(*M_coarse);
+            HypreParMatrix *d_td_T = d_td_coarse_R->Transpose();
 
-        BlockOperator coarseMatrix(block_offsets);
-        coarseMatrix.SetBlock(0,0, M_Global);
-        coarseMatrix.SetBlock(0,1, BT);
-        coarseMatrix.SetBlock(1,0, B_Global);
+            HypreParMatrix *M_Global = ParMult(d_td_T, d_td_M);
+            HypreParMatrix *BT = B_Global->Transpose();
 
+            Array<int> block_offsets(3); // number of variables + 1
+            block_offsets[0] = 0;
+            block_offsets[1] = M_Global->Width();
+            block_offsets[2] = B_Global->Height();
+            block_offsets.PartialSum();
 
-        BlockVector trueX(block_offsets), trueRhs(block_offsets);
-        trueRhs =0;
-        trueRhs.GetBlock(1)= FF_coarse;
-
-
-        // 9. Construct the operators for preconditioner
-        //
-        //                 P = [ diag(M)         0         ]
-        //                     [  0       B diag(M)^-1 B^T ]
-        //
-        //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
-        //     pressure Schur Complement
-
-        HypreParMatrix *MinvBt = B_Global->Transpose();
-        HypreParVector *Md = new HypreParVector(MPI_COMM_WORLD, M_Global->GetGlobalNumRows(),
-                                                M_Global->GetRowStarts());
-        M_Global->GetDiag(*Md);
-
-        MinvBt->InvScaleRows(*Md);
-        HypreParMatrix *S = ParMult(B_Global, MinvBt);
-
-        //HypreSolver *invM, *invS;
-        auto invM = new HypreDiagScale(*M_Global);
-        auto invS = new HypreBoomerAMG(*S);
-        invS->SetPrintLevel(0);
-        invM->iterative_mode = false;
-        invS->iterative_mode = false;
-
-        BlockDiagonalPreconditioner *darcyPr = new BlockDiagonalPreconditioner(
-                    block_offsets);
-        darcyPr->SetDiagonalBlock(0, invM);
-        darcyPr->SetDiagonalBlock(1, invS);
-
-        // 12. Solve the linear system with MINRES.
-        //     Check the norm of the unpreconditioned residual.
-
-        int maxIter(50000);
-        double rtol(1.e-18);
-        double atol(1.e-18);
+            BlockOperator coarseMatrix(block_offsets);
+            coarseMatrix.SetBlock(0,0, M_Global);
+            coarseMatrix.SetBlock(0,1, BT);
+            coarseMatrix.SetBlock(1,0, B_Global);
 
 
-        MINRESSolver solver(MPI_COMM_WORLD);
-        solver.SetAbsTol(atol);
-        solver.SetRelTol(rtol);
-        solver.SetMaxIter(maxIter);
-        solver.SetOperator(coarseMatrix);
-        solver.SetPreconditioner(*darcyPr);
-        solver.SetPrintLevel(0);
-        trueX = 0.0;
-        solver.Mult(trueRhs, trueX);
-        chrono.Stop();
+            BlockVector trueX(block_offsets), trueRhs(block_offsets);
+            trueRhs =0;
+            trueRhs.GetBlock(1)= FF_coarse;
 
-        //cout << "CG converged in " << solver.GetNumIterations() << " iterations" <<endl;
-//        cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+            // 9. Construct the operators for preconditioner
+            //
+            //                 P = [ diag(M)         0         ]
+            //                     [  0       B diag(M)^-1 B^T ]
+            //
+            //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
+            //     pressure Schur Complement
 
-        Truesig_c = trueX.GetBlock(0);
+            HypreParMatrix *MinvBt = B_Global->Transpose();
+            HypreParVector *Md = new HypreParVector(MPI_COMM_WORLD, M_Global->GetGlobalNumRows(),
+                                                    M_Global->GetRowStarts());
+            M_Global->GetDiag(*Md);
+
+            MinvBt->InvScaleRows(*Md);
+            HypreParMatrix *S = ParMult(B_Global, MinvBt);
+
+            //HypreSolver *invM, *invS;
+            auto invM = new HypreDiagScale(*M_Global);
+            auto invS = new HypreBoomerAMG(*S);
+            invS->SetPrintLevel(0);
+            invM->iterative_mode = false;
+            invS->iterative_mode = false;
+
+            BlockDiagonalPreconditioner *darcyPr = new BlockDiagonalPreconditioner(
+                        block_offsets);
+            darcyPr->SetDiagonalBlock(0, invM);
+            darcyPr->SetDiagonalBlock(1, invS);
+
+            // 12. Solve the linear system with MINRES.
+            //     Check the norm of the unpreconditioned residual.
+
+            int maxIter(50000);
+            double rtol(1.e-16);
+            double atol(1.e-16);
+
+            MINRESSolver solver(MPI_COMM_WORLD);
+            solver.SetAbsTol(atol);
+            solver.SetRelTol(rtol);
+            solver.SetMaxIter(maxIter);
+            solver.SetOperator(coarseMatrix);
+            solver.SetPreconditioner(*darcyPr);
+            solver.SetPrintLevel(0);
+            trueX = 0.0;
+            solver.Mult(trueRhs, trueX);
+            chrono.Stop();
+
+//            cout << "MINRES converged in " << solver.GetNumIterations() << " iterations" <<endl;
+//            cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+            Truesig_c = trueX.GetBlock(0);
+        }
+        else
+        {
+            int maxIter(50000);
+            double rtol(1.e-16);
+            double atol(1.e-16);
+
+            HypreParMatrix *MinvBt = B_Global->Transpose();
+            HypreParMatrix *S = ParMult(B_Global, MinvBt);
+
+            auto invS = new HypreBoomerAMG(*S);
+            invS->SetPrintLevel(0);
+            invS->iterative_mode = false;
+
+            Vector tmp_c(B_Global->Height());
+            tmp_c = 0.0;
+
+            CGSolver solver(MPI_COMM_WORLD);
+            solver.SetAbsTol(atol);
+            solver.SetRelTol(rtol);
+            solver.SetMaxIter(maxIter);
+            solver.SetOperator(*S);
+            solver.SetPreconditioner(*invS);
+            solver.SetPrintLevel(0);
+            solver.Mult(FF_coarse, tmp_c);
+            chrono.Stop();
+
+//            cout << "CG converged in " << solver.GetNumIterations() << " iterations" <<endl;
+//            cout << "CG solver took " << chrono.RealTime() << "s. \n";
+            MinvBt->Mult(tmp_c, Truesig_c);
+        }
 
         d_td_coarse_R->Mult(Truesig_c,sig_c);
+
         for (int k = ref_levels-1; k>=0; k--){
 
             vec1.SetSize(P_R[k]->Height());
@@ -445,13 +486,16 @@ public:
     void Local_problem(const DenseMatrix &sub_M,  DenseMatrix &sub_B, Vector &Sub_G, Vector &sub_F, Vector &sigma){
         // Returns sigma local
 
-        DenseMatrixInverse invM_loc(sub_M);
+
         DenseMatrix sub_BT(sub_B.Width(), sub_B.Height());
         sub_BT.Transpose(sub_B);
 
-        DenseMatrix invM_BT(sub_B.Width());
-        invM_loc.Mult(sub_BT,invM_BT);
-
+        DenseMatrix invM_BT;
+        if (sub_M.Size() > 0)
+        {
+            DenseMatrixInverse invM_loc(sub_M);
+            invM_loc.Mult(sub_BT,invM_BT);
+        }
 
         /* Solving the local problem:
                   *
@@ -463,31 +507,35 @@ public:
               * B M^{-1} B^t (-u) = F
               */
 
-        DenseMatrix B_invM_BT;
-        B_invM_BT = 0.0;
-        B_invM_BT.SetSize(sub_B.Height());
+        DenseMatrix B_invM_BT(sub_B.Height());
 
-        Mult(sub_B, invM_BT, B_invM_BT);
+        if (sub_M.Size() > 0)
+            Mult(sub_B, invM_BT, B_invM_BT);
+        else
+            Mult(sub_B, sub_BT, B_invM_BT);
 
-        Vector one(sub_B.Height());
-        one = 0.0;
-        one[0] =1;
+//        Vector one(sub_B.Height());
+//        one = 0.0;
+//        one[0] =1;
         B_invM_BT.SetRow(0,0);
         B_invM_BT.SetCol(0,0);
-        B_invM_BT.SetCol(0,one);
-        B_invM_BT(0,0)=1;
+//        B_invM_BT.SetCol(0,one);
+        B_invM_BT(0,0)=1.;
 
 
         DenseMatrixInverse inv_BinvMBT(B_invM_BT);
 
-        Vector invMG(sub_M.Size());
-        invM_loc.Mult(Sub_G,invMG);
+//        Vector invMG(sub_M.Size());
+//        invM_loc.Mult(Sub_G,invMG);
 
         sub_F[0] = 0;
         Vector uu(sub_B.Height());
         inv_BinvMBT.Mult(sub_F, uu);
-        invM_BT.Mult(uu,sigma);
-        sigma += invMG;
+        if (sub_M.Size() > 0)
+            invM_BT.Mult(uu,sigma);
+        else
+            sub_BT.Mult(uu,sigma);
+//        sigma += invMG;
     }
 
 };
@@ -1395,6 +1443,8 @@ int main(int argc, char *argv[])
     bool withS = true;
     bool blockedversion = true;
 
+    bool useM_in_divpart = false;
+
     // solver options
     int prec_option = 0;        // defines whether to use preconditioner or not, and which one
     bool prec_is_MG;
@@ -1432,6 +1482,8 @@ int main(int argc, char *argv[])
                    "Enable or disable GLVis visualization.");
     args.AddOption(&prec_option, "-precopt", "--prec-option",
                    "Preconditioner choice.");
+    args.AddOption(&useM_in_divpart, "-useM", "--useM", "-no-useM", "--no-useM",
+                   "Whether to use M to compute a partilar solution");
 
     args.Parse();
     if (!args.Good())
@@ -1853,24 +1905,28 @@ int main(int argc, char *argv[])
 
         // Define the coefficients, analytical solution, and rhs of the PDE.
         ConstantCoefficient k(1.0);
-        //FunctionCoefficient fcoeff(fFun);
+//        FunctionCoefficient fcoeff(fFun);
 
-
-        ParBilinearForm *mVarf(new ParBilinearForm(R_space));
-        mVarf->AddDomainIntegrator(new VectorFEMassIntegrator(k));
-        mVarf->Assemble();
-        mVarf->Finalize();
-        SparseMatrix &M_fine(mVarf->SpMat());
+        SparseMatrix *M_local;
+        if (useM_in_divpart)
+        {
+            ParBilinearForm *mVarf(new ParBilinearForm(R_space));
+            mVarf->AddDomainIntegrator(new VectorFEMassIntegrator(k));
+            mVarf->Assemble();
+            mVarf->Finalize();
+            SparseMatrix &M_fine(mVarf->SpMat());
+            M_local = &M_fine;
+        }
+        else
+        {
+            M_local = NULL;
+        }
 
         ParMixedBilinearForm *bVarf(new ParMixedBilinearForm(R_space, W_space));
         bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
         bVarf->Assemble();
         bVarf->Finalize();
         SparseMatrix &B_fine = bVarf->SpMat();
-
-        SparseMatrix *M_local = &M_fine;
-
-
         SparseMatrix *B_local = &B_fine;
 
         //Right hand size
@@ -1899,7 +1955,8 @@ int main(int argc, char *argv[])
                       Element_dofs_W,
                       d_td_coarse_R,
                       d_td_coarse_W,
-                      sigmahat_pau, ess_dof_coarsestlvl_list);
+                      sigmahat_pau,
+                      ess_dof_coarsestlvl_list);
 
 #ifdef MFEM_DEBUG
         Vector sth(F_fine.Size());
