@@ -495,6 +495,139 @@ public:
 
 #endif
 
+
+// Geometric Multigrid
+class Multigrid : public Solver
+{
+public:
+    Multigrid(HypreParMatrix &Operator,
+              const Array<HypreParMatrix*> &P,
+              Solver *CoarsePrec=NULL)
+        :
+          Solver(Operator.GetNumRows()),
+          P_(P),
+          Operators_(P.Size()+1),
+          Smoothers_(Operators_.Size()),
+          current_level(Operators_.Size()-1),
+          correction(Operators_.Size()),
+          residual(Operators_.Size()),
+          CoarseSolver(NULL),
+          CoarsePrec_(CoarsePrec)
+    {
+        Operators_.Last() = &Operator;
+        for (int l = Operators_.Size()-1; l > 0; l--)
+        {
+            // Two steps RAP
+            unique_ptr<HypreParMatrix> PT( P[l-1]->Transpose() );
+            unique_ptr<HypreParMatrix> AP( ParMult(Operators_[l], P[l-1]) );
+            Operators_[l-1] = ParMult(PT.get(), AP.get());
+            Operators_[l-1]->CopyRowStarts();
+        }
+
+        for (int l = 0; l < Operators_.Size(); l++)
+        {
+            Smoothers_[l] = new HypreSmoother(*Operators_[l]);
+            correction[l] = new Vector(Operators_[l]->GetNumRows());
+            residual[l] = new Vector(Operators_[l]->GetNumRows());
+        }
+
+        if (CoarsePrec)
+        {
+            CoarseSolver = new CGSolver(Operators_[0]->GetComm());
+            CoarseSolver->SetRelTol(1e-8);
+            CoarseSolver->SetMaxIter(50);
+            CoarseSolver->SetPrintLevel(0);
+            CoarseSolver->SetOperator(*Operators_[0]);
+            CoarseSolver->SetPreconditioner(*CoarsePrec);
+        }
+    }
+
+    virtual void Mult(const Vector & x, Vector & y) const;
+
+    virtual void SetOperator(const Operator &op) { }
+
+    ~Multigrid()
+    {
+        for (int l = 0; l < Operators_.Size(); l++)
+        {
+            delete Smoothers_[l];
+            delete correction[l];
+            delete residual[l];
+        }
+    }
+
+private:
+    void MG_Cycle() const;
+
+    const Array<HypreParMatrix*> &P_;
+
+    Array<HypreParMatrix*> Operators_;
+    Array<HypreSmoother*> Smoothers_;
+
+    mutable int current_level;
+
+    mutable Array<Vector*> correction;
+    mutable Array<Vector*> residual;
+
+    mutable Vector res_aux;
+    mutable Vector cor_cor;
+    mutable Vector cor_aux;
+
+    CGSolver *CoarseSolver;
+    Solver *CoarsePrec_;
+};
+
+void Multigrid::Mult(const Vector & x, Vector & y) const
+{
+    *residual.Last() = x;
+    correction.Last()->SetDataAndSize(y.GetData(), y.Size());
+    MG_Cycle();
+}
+
+void Multigrid::MG_Cycle() const
+{
+    // PreSmoothing
+    const HypreParMatrix& Operator_l = *Operators_[current_level];
+    const HypreSmoother& Smoother_l = *Smoothers_[current_level];
+
+    Vector& residual_l = *residual[current_level];
+    Vector& correction_l = *correction[current_level];
+
+    Smoother_l.Mult(residual_l, correction_l);
+    Operator_l.Mult(-1.0, correction_l, 1.0, residual_l);
+
+    // Coarse grid correction
+    if (current_level > 0)
+    {
+        const HypreParMatrix& P_l = *P_[current_level-1];
+
+        P_l.MultTranspose(residual_l, *residual[current_level-1]);
+
+        current_level--;
+        MG_Cycle();
+        current_level++;
+
+        cor_cor.SetSize(residual_l.Size());
+        P_l.Mult(*correction[current_level-1], cor_cor);
+        correction_l += cor_cor;
+        Operator_l.Mult(-1.0, cor_cor, 1.0, residual_l);
+    }
+    else
+    {
+        cor_cor.SetSize(residual_l.Size());
+        if (CoarseSolver)
+        {
+            CoarseSolver->Mult(residual_l, cor_cor);
+            correction_l += cor_cor;
+            Operator_l.Mult(-1.0, cor_cor, 1.0, residual_l);
+        }
+    }
+
+    // PostSmoothing
+    Smoother_l.Mult(residual_l, cor_cor);
+    correction_l += cor_cor;
+}
+
 class VectorcurlDomainLFIntegrator : public LinearFormIntegrator
 {
     DenseMatrix curlshape;
@@ -1434,15 +1567,6 @@ int main(int argc, char *argv[])
 
     Array<int> ess_bdrU(pmesh->bdr_attributes.Max());
 
-#ifdef PAULINA_CODE
-    if (!withDiv && verbose)
-        std::cout << "Paulina's code cannot be used withut withDiv flag \n";
-
-    int ref_levels = par_ref_levels;
-
-    ParFiniteElementSpace *coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
-    ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
-
     FiniteElementCollection *hdivfree_coll;
     ParFiniteElementSpace *C_space;
 
@@ -1489,6 +1613,20 @@ int main(int argc, char *argv[])
         }
     } // end of initialization of div-free f.e. space in 4D
 
+    // For geometric multigrid
+    ParFiniteElementSpace *coarseC_space;
+    if (prec_is_MG)
+        coarseC_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
+
+#ifdef PAULINA_CODE
+    if (!withDiv && verbose)
+        std::cout << "Paulina's code cannot be used withut withDiv flag \n";
+
+    int ref_levels = par_ref_levels;
+
+    ParFiniteElementSpace *coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
+    ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+
     // Input to the algorithm::
 
     Array< SparseMatrix*> P_W(ref_levels);
@@ -1509,6 +1647,8 @@ int main(int argc, char *argv[])
 
     DivPart divp;
 
+    Array<HypreParMatrix*> P_C(ref_levels);
+
     for (int l = 0; l < ref_levels+1; l++){
         if (l > 0){
             //W_space->Update();
@@ -1523,7 +1663,23 @@ int main(int argc, char *argv[])
                 //ess_dof_list.Print();
             }
 
+            if (prec_is_MG)
+                coarseC_space->Update();
+
             pmesh->UniformRefinement();
+
+            C_space->Update();
+            if (prec_is_MG)
+            {
+                auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
+                auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                unique_ptr<SparseMatrix>RP_C_local(
+                            Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
+                P_C[l-1] = d_td_coarse_C->LeftDiagMult(
+                            *RP_C_local, C_space->GetTrueDofOffsets());
+                P_C[l-1]->CopyColStarts();
+                P_C[l-1]->CopyRowStarts();
+            }
 
             P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
             P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
@@ -2005,10 +2161,20 @@ int main(int argc, char *argv[])
         {
             if (prec_is_MG)
             {
-                if (verbose)
-                    cout << "MG prec is not implemented" << endl;
-                MPI_Finalize();
-                return 0;
+                if (withS) // case of block system
+                {
+                    prec = new BlockDiagonalPreconditioner(block_trueOffsets);
+                    Operator * precU = new Multigrid(*A, P_C);
+                    Operator * precS = new HypreBoomerAMG(*C);
+                    ((HypreBoomerAMG*)precS)->SetPrintLevel(0);
+
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
+                }
+                else // only equation in div-free subspace
+                {
+                    mfem_error("MG is not implemented when withS = false");
+                }
 
                 //int formcurl = 1; // for H(curl)
                 //prec = new MG3dPrec(&Amat, nlevels, coarsenfactor, pmesh.get(), formcurl, feorder, C_space, ess_tdof_listU, verbose);
