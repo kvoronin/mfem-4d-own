@@ -15,7 +15,7 @@
 //#define ONLY_DIVFREEPART
 //#define K_IDENTITY
 
-//#define PAULINA_CODE
+#define PAULINA_CODE
 
 #define MYZEROTOL (1.0e-13)
 
@@ -48,9 +48,9 @@ public:
                    Array<int>& ess_dof_coarsestlvl_list
                    )
     {
-        StopWatch chrono;
+//        StopWatch chrono;
 
-        Vector sol_p_c2f;
+//        Vector sol_p_c2f;
         Vector vec1;
 
         Vector rhs_l;
@@ -61,8 +61,8 @@ public:
         Vector total_sig(P_R[0]->Height());
         total_sig = .0;
 
-        chrono.Clear();
-        chrono.Start();
+//        chrono.Clear();
+//        chrono.Start();
 
         for (int l=0; l < ref_levels; l++)
         {
@@ -341,7 +341,7 @@ public:
             solver.SetPrintLevel(0);
             trueX = 0.0;
             solver.Mult(trueRhs, trueX);
-            chrono.Stop();
+//            chrono.Stop();
 
 //            cout << "MINRES converged in " << solver.GetNumIterations() << " iterations" <<endl;
 //            cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
@@ -371,7 +371,7 @@ public:
             solver.SetPreconditioner(*invS);
             solver.SetPrintLevel(0);
             solver.Mult(FF_coarse, tmp_c);
-            chrono.Stop();
+//            chrono.Stop();
 
 //            cout << "CG converged in " << solver.GetNumIterations() << " iterations" <<endl;
 //            cout << "CG solver took " << chrono.RealTime() << "s. \n";
