@@ -181,7 +181,7 @@ public:
                 Vector sig(Rtmp_j.Size());
 
                 MFEM_ASSERT(sub_F.Sum()<= 9e-11,
-                            "checking global average at each level " << sub_F.Sum());
+                            "checking local average at each level " << sub_F.Sum());
 
 #ifdef MFEM_DEBUG
                 Vector sub_FF = sub_F;
@@ -197,7 +197,7 @@ public:
                 sub_B.Mult(sig, fcheck);
                 fcheck-=sub_FF;
                 MFEM_ASSERT(fcheck.Norml2()<= 9e-11,
-                            "checking global average at each level " << fcheck.Norml2());
+                            "checking local residual norm at each level " << fcheck.Norml2());
 #endif
 
                 p_loc_vec.AddElementVector(Rtmp_j,sig);
