@@ -334,7 +334,7 @@ public:
         chrono.Stop();
 
         //cout << "CG converged in " << solver.GetNumIterations() << " iterations" <<endl;
-        cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+//        cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
 
         Truesig_c = trueX.GetBlock(0);
 
@@ -1901,13 +1901,12 @@ int main(int argc, char *argv[])
                       d_td_coarse_W,
                       sigmahat_pau, ess_dof_coarsestlvl_list);
 
-
+#ifdef MFEM_DEBUG
         Vector sth(F_fine.Size());
-
         bVarf->SpMat().Mult(sigmahat_pau, sth);
         sth -= F_fine;
-
-        cout<< "final check " << sth.Norml2() <<endl;
+        MFEM_ASSERT(sth.Norml2()<1e-8, "The particular solution does not satisfy the divergence constraint");
+#endif
 
         *Sigmahat = sigmahat_pau;
 #else
