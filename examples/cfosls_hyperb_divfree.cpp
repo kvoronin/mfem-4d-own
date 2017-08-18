@@ -542,6 +542,247 @@ public:
 
 #endif
 
+// Monolithic Geometric Multigrid
+class MonolithicMultigrid : public Solver
+{
+private:
+    class BlockSmoother : public BlockOperator
+    {
+    public:
+        BlockSmoother(BlockOperator &Op)
+            :
+              BlockOperator(Op.RowOffsets()),
+              A01((HypreParMatrix&)Op.GetBlock(0,1)),
+              A10((HypreParMatrix&)Op.GetBlock(1,0)),
+              offsets(Op.RowOffsets())
+        {
+            HypreParMatrix &A00 = (HypreParMatrix&)Op.GetBlock(0,0);
+            HypreParMatrix &A11 = (HypreParMatrix&)Op.GetBlock(1,1);
+
+            B00 = new HypreSmoother(A00);
+            B11 = new HypreSmoother(A11);
+
+            tmp01.SetSize(A00.Width());
+            tmp02.SetSize(A00.Width());
+            tmp1.SetSize(A11.Width());
+        }
+
+        virtual void Mult(const Vector & x, Vector & y) const
+        {
+            yblock.Update(y.GetData(), offsets);
+            xblock.Update(x.GetData(), offsets);
+
+            yblock.GetBlock(0) = 0.0;
+            B00->Mult(xblock.GetBlock(0), yblock.GetBlock(0));
+
+            tmp1 = xblock.GetBlock(1);
+            A10.Mult(-1.0, yblock.GetBlock(0), 1.0, tmp1);
+            B11->Mult(tmp1, yblock.GetBlock(1));
+        }
+
+        virtual void MultTranspose(const Vector & x, Vector & y) const
+        {
+            yblock.Update(y.GetData(), offsets);
+            xblock.Update(x.GetData(), offsets);
+
+            yblock.GetBlock(1) = 0.0;
+            B11->Mult(xblock.GetBlock(1), yblock.GetBlock(1));
+
+            tmp01 = xblock.GetBlock(0);
+            A01.Mult(-1.0, yblock.GetBlock(1), 1.0, tmp01);
+            B00->Mult(tmp01, yblock.GetBlock(0));
+        }
+
+        virtual void SetOperator(const Operator &op) { }
+
+        ~BlockSmoother()
+        {
+            delete B00;
+            delete B11;
+            delete S;
+        }
+
+    private:
+        HypreSmoother *B00;
+        HypreSmoother *B11;
+        HypreParMatrix &A01;
+        HypreParMatrix &A10;
+        HypreParMatrix *S;
+
+        const Array<int> &offsets;
+        mutable BlockVector xblock;
+        mutable BlockVector yblock;
+        mutable Vector tmp01;
+        mutable Vector tmp02;
+        mutable Vector tmp1;
+    };
+
+public:
+    MonolithicMultigrid(BlockOperator &Operator,
+                        const Array<BlockOperator*> &P,
+                        Solver *CoarsePrec=NULL)
+        :
+          Solver(Operator.RowOffsets().Last()),
+          P_(P),
+          Operators_(P.Size()+1),
+          Smoothers_(Operators_.Size()),
+          current_level(Operators_.Size()-1),
+          correction(Operators_.Size()),
+          residual(Operators_.Size()),
+          CoarseSolver(NULL),
+          CoarsePrec_(CoarsePrec)
+    {
+        Operators_.Last() = &Operator;
+
+        for (int l = Operators_.Size()-1; l >= 0; l--)
+        {
+            Array<int>& Offsets = Operators_[l]->RowOffsets();
+            correction[l] = new Vector(Offsets.Last());
+            residual[l] = new Vector(Offsets.Last());
+
+            HypreParMatrix &A00 = (HypreParMatrix&)Operators_[l]->GetBlock(0,0);
+            HypreParMatrix &A11 = (HypreParMatrix&)Operators_[l]->GetBlock(1,1);
+            HypreParMatrix &A01 = (HypreParMatrix&)Operators_[l]->GetBlock(0,1);
+
+            // Define smoothers
+            Smoothers_[l] = new BlockSmoother(*Operators_[l]);
+
+            // Define coarser level operators - two steps RAP (or P^T A P)
+            if (l > 0)
+            {
+                HypreParMatrix& P0 = (HypreParMatrix&)P[l-1]->GetBlock(0,0);
+                HypreParMatrix& P1 = (HypreParMatrix&)P[l-1]->GetBlock(1,1);
+
+                unique_ptr<HypreParMatrix> P0T(P0.Transpose());
+                unique_ptr<HypreParMatrix> P1T(P1.Transpose());
+
+                unique_ptr<HypreParMatrix> A00P0( ParMult(&A00, &P0) );
+                unique_ptr<HypreParMatrix> A11P1( ParMult(&A11, &P1) );
+                unique_ptr<HypreParMatrix> A01P1( ParMult(&A01, &P1) );
+
+                HypreParMatrix *A00_c(ParMult(P0T.get(), A00P0.get()));
+                A00_c->CopyRowStarts();
+                HypreParMatrix *A11_c(ParMult(P1T.get(), A11P1.get()));
+                A11_c->CopyRowStarts();
+                HypreParMatrix *A01_c(ParMult(P0T.get(), A01P1.get()));
+                A01_c->CopyRowStarts();
+                HypreParMatrix *A10_c(A01_c->Transpose());
+
+                Operators_[l-1] = new BlockOperator(P[l-1]->ColOffsets());
+                Operators_[l-1]->SetBlock(0, 0, A00_c);
+                Operators_[l-1]->SetBlock(0, 1, A01_c);
+                Operators_[l-1]->SetBlock(1, 0, A10_c);
+                Operators_[l-1]->SetBlock(1, 1, A11_c);
+                Operators_[l-1]->owns_blocks = 1;
+            }
+        }
+
+        if (CoarsePrec)
+        {
+            CoarseSolver = new CGSolver(
+                        ((HypreParMatrix&)Operator.GetBlock(0,0)).GetComm() );
+            CoarseSolver->SetRelTol(1e-8);
+            CoarseSolver->SetMaxIter(50);
+            CoarseSolver->SetPrintLevel(0);
+            CoarseSolver->SetOperator(*Operators_[0]);
+            CoarseSolver->SetPreconditioner(*CoarsePrec);
+        }
+    }
+
+    virtual void Mult(const Vector & x, Vector & y) const;
+
+    virtual void SetOperator(const Operator &op) { }
+
+    ~MonolithicMultigrid()
+    {
+        for (int l = 0; l < Operators_.Size(); l++)
+        {
+            delete Smoothers_[l];
+            delete correction[l];
+            delete residual[l];
+        }
+    }
+
+private:
+    void MG_Cycle() const;
+
+    const Array<BlockOperator*> &P_;
+
+    Array<BlockOperator*> Operators_;
+    Array<BlockSmoother*> Smoothers_;
+
+    mutable int current_level;
+
+    mutable Array<Vector*> correction;
+    mutable Array<Vector*> residual;
+
+    mutable Vector res_aux;
+    mutable Vector cor_cor;
+    mutable Vector cor_aux;
+
+    CGSolver *CoarseSolver;
+    Solver *CoarsePrec_;
+};
+
+void MonolithicMultigrid::Mult(const Vector & x, Vector & y) const
+{
+    *residual.Last() = x;
+    correction.Last()->SetDataAndSize(y.GetData(), y.Size());
+    MG_Cycle();
+}
+
+void MonolithicMultigrid::MG_Cycle() const
+{
+    // PreSmoothing
+    const BlockOperator& Operator_l = *Operators_[current_level];
+    const BlockSmoother& Smoother_l = *Smoothers_[current_level];
+
+    Vector& residual_l = *residual[current_level];
+    Vector& correction_l = *correction[current_level];
+    Vector help(residual_l.Size());
+    help = 0.0;
+
+    Smoother_l.Mult(residual_l, correction_l);
+
+//    Operator_l.Mult(-1.0, correction_l, 1.0, residual_l);
+    Operator_l.Mult(correction_l, help);
+    residual_l -= help;
+
+    // Coarse grid correction
+    if (current_level > 0)
+    {
+        const BlockOperator& P_l = *P_[current_level-1];
+
+        P_l.MultTranspose(residual_l, *residual[current_level-1]);
+
+        current_level--;
+        MG_Cycle();
+        current_level++;
+
+        cor_cor.SetSize(residual_l.Size());
+        P_l.Mult(*correction[current_level-1], cor_cor);
+        correction_l += cor_cor;
+//        Operator_l.Mult(-1.0, cor_cor, 1.0, residual_l);
+        Operator_l.Mult(cor_cor, help);
+        residual_l -= help;
+    }
+    else
+    {
+        cor_cor.SetSize(residual_l.Size());
+        if (CoarseSolver)
+        {
+            CoarseSolver->Mult(residual_l, cor_cor);
+            correction_l += cor_cor;
+//            Operator_l.Mult(-1.0, cor_cor, 1.0, residual_l);
+            Operator_l.Mult(cor_cor, help);
+            residual_l -= help;
+        }
+    }
+
+    // PostSmoothing
+    Smoother_l.MultTranspose(residual_l, cor_cor);
+    correction_l += cor_cor;
+}
 
 // Geometric Multigrid
 class Multigrid : public Solver
@@ -1442,6 +1683,7 @@ int main(int argc, char *argv[])
     bool withDiv = true;
     bool withS = true;
     bool blockedversion = true;
+    bool monolithicMG = false;
 
     bool useM_in_divpart = false;
 
@@ -1533,6 +1775,11 @@ int main(int argc, char *argv[])
         with_prec = true;
         prec_is_MG = true;
         break;
+    case 3: // block MG
+        with_prec = true;
+        prec_is_MG = true;
+        monolithicMG = true;
+        break;
     default: // no preconditioner (default)
         with_prec = false;
         prec_is_MG = false;
@@ -1602,6 +1849,8 @@ int main(int argc, char *argv[])
     ParFiniteElementSpace *R_space;
     FiniteElementCollection *l2_coll;
     ParFiniteElementSpace *W_space;
+    FiniteElementCollection *h1_coll;
+    ParFiniteElementSpace *H_space;
 
     if (dim == 4)
         hdiv_coll = new RT0_4DFECollection;
@@ -1614,6 +1863,12 @@ int main(int argc, char *argv[])
     {
         l2_coll = new L2_FECollection(feorder, nDimensions);
         W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+    }
+
+    if (withS)
+    {
+        h1_coll = new H1_FECollection(feorder+1, nDimensions);
+        H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
     }
 
     Array<int> ess_bdrU(pmesh->bdr_attributes.Max());
@@ -1670,6 +1925,11 @@ int main(int argc, char *argv[])
     if (prec_is_MG)
         coarseC_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
 
+    Array<HypreParMatrix*> P_H(par_ref_levels);
+    ParFiniteElementSpace *coarseH_space;
+    if (prec_is_MG)
+        coarseH_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
+
 #ifdef PAULINA_CODE
     if (!withDiv && verbose)
         std::cout << "Paulina's code cannot be used withut withDiv flag \n";
@@ -1716,6 +1976,9 @@ int main(int argc, char *argv[])
             if (prec_is_MG)
                 coarseC_space->Update();
 
+            if (prec_is_MG)
+                coarseH_space->Update();
+
             pmesh->UniformRefinement();
 
             C_space->Update();
@@ -1729,6 +1992,22 @@ int main(int argc, char *argv[])
                             *RP_C_local, C_space->GetTrueDofOffsets());
                 P_C[l-1]->CopyColStarts();
                 P_C[l-1]->CopyRowStarts();
+            }
+
+            if (withS)
+            {
+                H_space->Update();
+                if (prec_is_MG)
+                {
+                    auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
+                    auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+                    unique_ptr<SparseMatrix>RP_H_local(
+                                Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
+                    P_H[l-1] = d_td_coarse_H->LeftDiagMult(
+                                *RP_H_local, H_space->GetTrueDofOffsets());
+                    P_H[l-1]->CopyColStarts();
+                    P_H[l-1]->CopyRowStarts();
+                }
             }
 
             P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
@@ -1760,6 +2039,8 @@ int main(int argc, char *argv[])
         pmesh->UniformRefinement();
         if (withDiv)
             W_space->Update();
+        if (withS)
+            H_space->Update();
         R_space->Update();
 
         C_space->Update();
@@ -1791,14 +2072,6 @@ int main(int argc, char *argv[])
     Vector X, B;
     ParBilinearForm *Ablock;
     ParLinearForm *ffform;
-
-    FiniteElementCollection *h1_coll;
-    ParFiniteElementSpace *H_space;
-    if (withS)
-    {
-        h1_coll = new H1_FECollection(feorder+1, nDimensions);
-        H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
-    }
 
     int numblocks = 1;
     if (withS)
@@ -2231,6 +2504,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     Solver *prec;
+    Array<BlockOperator*> P;
     if (with_prec)
     {
         if(dim<=3)
@@ -2239,13 +2513,34 @@ int main(int argc, char *argv[])
             {
                 if (withS) // case of block system
                 {
-                    prec = new BlockDiagonalPreconditioner(block_trueOffsets);
-                    Operator * precU = new Multigrid(*A, P_C);
-                    Operator * precS = new HypreBoomerAMG(*C);
-                    ((HypreBoomerAMG*)precS)->SetPrintLevel(0);
+                    if (monolithicMG)
+                    {
+                        P.SetSize(P_C.Size());
 
-                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
-                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
+                        for (int l = 0; l < P.Size(); l++)
+                        {
+                            auto offsets_f  = new Array<int>(3);
+                            auto offsets_c  = new Array<int>(3);
+                            (*offsets_f)[0] = (*offsets_c)[0] = 0;
+                            (*offsets_f)[1] = P_C[l]->Height();
+                            (*offsets_c)[1] = P_C[l]->Width();
+                            (*offsets_f)[2] = (*offsets_f)[1] + P_H[l]->Height();
+                            (*offsets_c)[2] = (*offsets_c)[1] + P_H[l]->Width();
+
+                            P[l] = new BlockOperator(*offsets_f, *offsets_c);
+                            P[l]->SetBlock(0, 0, P_C[l]);
+                            P[l]->SetBlock(1, 1, P_H[l]);
+                        }
+                        prec = new MonolithicMultigrid(*MainOp, P);
+                    }
+                    else
+                    {
+                        prec = new BlockDiagonalPreconditioner(block_trueOffsets);
+                        Operator * precU = new Multigrid(*A, P_C);
+                        Operator * precS = new Multigrid(*C, P_H);
+                        ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
+                        ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
+                    }
                 }
                 else // only equation in div-free subspace
                 {
