@@ -1184,10 +1184,10 @@ int main(int argc, char *argv[])
        std::cout << "***********************************************************\n";
     }
 
-    BlockVector xblks(block_offsets), rhsblks(block_offsets);
+    BlockVector xblks(block_offsets);//, rhsblks(block_offsets);
     BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
     xblks = 0.0;
-    rhsblks = 0.0;
+    //rhsblks = 0.0;
     trueX = 0.0;
     trueRhs = 0.0;
 
@@ -1381,8 +1381,8 @@ int main(int argc, char *argv[])
     *rhside_Hdiv = 0.0;
 //    ParGridFunction* rhside_Hcurl = new ParGridFunction(C_space); //  rhside for the first eqn in div-free system
 //    *rhside_Hcurl = 0.0;
-//    ParGridFunction* rhside_H1 = new ParGridFunction(H_space);    // rhside for the second eqn in div-free system
-//    *rhside_H1 = 0.0;
+    ParGridFunction* rhside_H1 = new ParGridFunction(H_space);    // rhside for the second eqn in div-free system
+    *rhside_H1 = 0.0;
 
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
@@ -1426,7 +1426,7 @@ int main(int argc, char *argv[])
     // integrates ((-q, grad_x q)^T, (-p, grad_x p)^T)
     Cblock->AddDomainIntegrator(new PAUVectorFEMassIntegrator2);
     Cblock->Assemble();
-    Cblock->EliminateEssentialBC(ess_bdrS, xblks.GetBlock(1), rhsblks.GetBlock(1));
+    Cblock->EliminateEssentialBC(ess_bdrS, xblks.GetBlock(1), *rhside_H1);
     Cblock->Finalize();
     HypreParMatrix * C = Cblock->ParallelAssemble();
 
@@ -1445,64 +1445,24 @@ int main(int argc, char *argv[])
 
     // additional temporary vectors on true dofs required for various matvec
     Vector tempHdiv_true(R_space->TrueVSize());
-    Vector tempHcurl_true(C_space->TrueVSize());
-    Vector BTsigmahat(H_space->TrueVSize());
-    Vector Msigmahat(R_space->TrueVSize());
+    Vector temp2Hdiv_true(R_space->TrueVSize());
 
-    // taking something to rhs for Hcurl eqn from inhomog. BC for S  via off-diagonal block
-    tempHdiv_true = 0.0;
-    rhside_Hdiv->ParallelProject(tempHdiv_true);
+    // assembling local rhs vectors from inhomog. boundary conditions
+    rhside_H1->ParallelAssemble(trueRhs.GetBlock(1));
+    rhside_Hdiv->ParallelAssemble(tempHdiv_true);
     CurlT_dop->Mult(tempHdiv_true, trueRhs.GetBlock(0));
-    //CurlT_dop->Mult(*rhside_Hdiv, *rhside_Hcurl); // incorrect in parallel case
-//    rhside_Hcurl->Distribute(tempHcurl_true);
 
-    // subtracting part from sigmahat
-
-
-    // if not using M in this term
-    //ParGridFunction* CurlTsigmahat = new ParGridFunction(C_space);
-    //CurlT_dop->Mult(*Sigmahat, *CurlTsigmahat);
-    //*rhside_Hcurl -= *CurlTsigmahat;
-
-    // trying to use Curl operator instead
-
-//    ParGridFunction* Msigmahat = new ParGridFunction(R_space);
-//    ParGridFunction* CurlTMsigmahat = new ParGridFunction(C_space);
-
-    tempHdiv_true = 0.0;
+    // subtracting from Hcurl rhs a part from Sigmahat
     Sigmahat->ParallelProject(tempHdiv_true);
-    Msigmahat = 0.0;
-    M->Mult(tempHdiv_true, Msigmahat);
+    M->Mult(tempHdiv_true, temp2Hdiv_true);
+    //CurlT_dop->Mult(temp2Hdiv_true, tempHcurl_true);
+    //trueRhs.GetBlock(0) -= tempHcurl_true;
+    CurlT_dop->Mult(-1.0, temp2Hdiv_true, 1.0, trueRhs.GetBlock(0));
 
-//    Msigmahat->SetFromTrueDofs(temp2Hdiv_true);
-//    tempHdiv_true = 0.0;
-//    Msigmahat->ParallelProject(tempHdiv_true);
-    tempHcurl_true = 0.0;
-    CurlT_dop->Mult(Msigmahat, tempHcurl_true);
-//    CurlTMsigmahat->Distribute(tempHcurl_true);
-    trueRhs.GetBlock(0) -= tempHcurl_true;
-
-    /*
-    M->Mult(*Sigmahat, *Msigmahat);
-    CurlT_dop->Mult(*Msigmahat, *CurlTMsigmahat); // incorrect in parallel case
-    *rhside_Hcurl -= *CurlTMsigmahat;
-    * */
-
-//    ParGridFunction* BTsigmahat = new ParGridFunction(H_space);
-    //BT->Mult(*Sigmahat, *BTsigmahat); // incorrect, requires vectors on true dofs
-//    tempHdiv_true = 0.0;
-//    Sigmahat->ParallelProject(tempHdiv_true);
-    BTsigmahat = 0.0;
-    BT->Mult(tempHdiv_true, BTsigmahat);
-//    BTsigmahat->Distribute(tempH1_true);
-
-    // subtracting part from sigmahat
-    trueRhs.GetBlock(1) -= BTsigmahat;
-
-    // assembling righthand side for div-free system on true dofs
-
-//    rhside_Hcurl->ParallelProject(trueRhs.GetBlock(0));
-//    rhside_H1->ParallelProject(trueRhs.GetBlock(1));
+    // subtracting from H1 rhs a part from Sigmahat
+    //BT->Mult(tempHdiv_true, tempH1_true);
+    //trueRhs.GetBlock(1) -= tempH1_true;
+    BT->Mult(-1.0, tempHdiv_true, 1.0, trueRhs.GetBlock(1));
 
     // setting block operator of the system
     MainOp->SetBlock(0,0, A);
