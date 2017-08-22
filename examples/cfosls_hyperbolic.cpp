@@ -1515,7 +1515,7 @@ int main(int argc, char *argv[])
    }
 
    {
-       auto *hcurl_coll = new L2_FECollection(feorder, dim);
+       auto *hcurl_coll = new ND_FECollection(feorder+1, dim);
        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
 
        DiscreteLinearOperator Grad(H_space, N_space);
@@ -1537,6 +1537,45 @@ int main(int argc, char *argv[])
 
        delete hcurl_coll;
        delete N_space;
+   }
+
+   // Check value of functional and mass conservation
+   {
+       double localFunctional = -2.0*(trueX.GetBlock(1)*trueRhs.GetBlock(1));
+
+       trueX.GetBlock(2) = 0.0;
+       trueRhs = 0.0;;
+       CFOSLSop->Mult(trueX, trueRhs);
+       localFunctional += trueX*(trueRhs);
+
+       double globalFunctional;
+       MPI_Reduce(&localFunctional, &globalFunctional, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+       {
+           cout << "|| sigma_h - L(S_h) ||^2 + || div_h (bS_h) - f ||^2 = " << globalFunctional+norm_div*norm_div<< "\n";
+           cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+           cout << "Relative Energy Error = " << sqrt(globalFunctional+norm_div*norm_div)/norm_div<< "\n";
+       }
+
+       ParLinearForm massform(W_space);
+       massform.AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalardivsigma)));
+       massform.Assemble();
+
+       double mass_loc = massform.Norml1();
+       double mass;
+       MPI_Reduce(&mass_loc, &mass, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+           cout << "Sum of local mass = " << mass<< "\n";
+
+       trueRhs.GetBlock(2) -= massform;
+       double mass_loss_loc = trueRhs.GetBlock(2).Norml1();
+       double mass_loss;
+       MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+           cout << "Sum of local mass loss = " << mass_loss<< "\n";
    }
 
 
