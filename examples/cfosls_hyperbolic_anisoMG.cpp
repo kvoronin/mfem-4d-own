@@ -536,7 +536,7 @@ int main(int argc, char *argv[])
     int par_ref_levels  = 3;
 
     // solver options
-    int prec_option = 0; // 1: monolithic MG  2: block diagonal MG
+    int prec_option = 2; // 2: block diagonal MG   3: monolithic MG
 
     bool aniso_refine = true;
 
@@ -556,7 +556,7 @@ int main(int argc, char *argv[])
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
     args.AddOption(&prec_option, "-precopt", "--prec-option",
-                   "Preconditioner choice.");
+                   "Preconditioner choice: 2: block diagonal MG   3: monolithic MG.");
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -845,7 +845,7 @@ int main(int argc, char *argv[])
 
    Solver *prec;
    Array<BlockOperator*> P;
-   if (prec_option)
+   if (prec_option==2)
    {
        P.SetSize(P_C.Size());
 
@@ -867,9 +867,7 @@ int main(int argc, char *argv[])
    }
    else
    {
-//       HypreDiagScale * invCMC = new HypreDiagScale(*CMC);
-//       HypreBoomerAMG * invX = new HypreBoomerAMG(*X);
-//       invX->SetPrintLevel(0);
+       MFEM_ASSERT(prec_option == 3, "prec_option can either be 2 or 3");
        Multigrid * invCMC = new Multigrid(*CMC, P_C);
        Multigrid * invX = new Multigrid(*X, P_H);
 
