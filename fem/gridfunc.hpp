@@ -344,20 +344,6 @@ public:
    /// Destroys grid function.
    virtual ~GridFunction() { Destroy(); }
 
-   // forvideo = true -> all points have the same time coordinate = 0, which is good for visualizing via ParaView
-   // forvideo = false -> all points are written with the actual time coordinate which corresponds to the considered time moment
-   void ComputeSlices(double t0, int Nmoments, double deltat, int myid, bool forvideo);
-   void computeSliceCellValues (int elind, std::vector<std::vector<double> > & pvec,
-                          std::vector<std::vector<double> > & ipoints, std::vector<int>& edgemarkers,
-                          std::vector<std::vector<double> >& cellpnts, std::vector<int>& elvertslocal, int & nip, int & vertex_count,
-                                std::vector<double> & vertvalueslocal);
-   // forvideo = true -> all points have the same time coordinate = 0, which is good for visualizing via ParaView
-   // forvideo = false -> all points are written with the actual time coordinate which corresponds to the considered time moment
-   void outputSliceGridFuncVTK ( std::stringstream& fname, std::vector<std::vector<double> > & ipoints,
-                                   std::list<int> &celltypes, int cellstructsize, std::list<std::vector<int> > &elvrtindices,
-                                   //std::list<std::vector<double> > & cellvertvalues);
-                                   std::list<double > & cellvalues, bool forvideo);
-
 };
 
 // definitions are in mesh/mesh.cpp

@@ -914,11 +914,11 @@ bool ParNCMesh::PruneTree(int elem)
 
 void ParNCMesh::Prune()
 {
-   if (!Iso && Dim == 3)
-   {
-      MFEM_WARNING("Can't prune 3D aniso meshes yet.");
-      return;
-   }
+//   if (!Iso && Dim == 3)
+//   {
+//      MFEM_WARNING("Can't prune 3D aniso meshes yet.");
+//      return;
+//   }
 
    UpdateLayers();
 
@@ -945,14 +945,14 @@ void ParNCMesh::Prune()
 
 void ParNCMesh::Refine(const Array<Refinement> &refinements)
 {
-   for (int i = 0; i < refinements.Size(); i++)
-   {
-      const Refinement &ref = refinements[i];
-      MFEM_VERIFY(ref.ref_type == 7 || Dim < 3,
-                  "anisotropic parallel refinement not supported yet in 3D.");
-   }
-   MFEM_VERIFY(Iso || Dim < 3,
-               "parallel refinement of 3D aniso meshes not supported yet.");
+//   for (int i = 0; i < refinements.Size(); i++)
+//   {
+//      const Refinement &ref = refinements[i];
+//      MFEM_VERIFY(ref.ref_type == 7 || Dim < 3,
+//                  "anisotropic parallel refinement not supported yet in 3D.");
+//   }
+//   MFEM_VERIFY(Iso || Dim < 3,
+//               "parallel refinement of 3D aniso meshes not supported yet.");
 
    NeighborRefinementMessage::Map send_ref;
 

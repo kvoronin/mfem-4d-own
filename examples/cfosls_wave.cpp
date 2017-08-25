@@ -420,8 +420,8 @@ public:
 
     int GetDim() {return dim;}
     int GetNumSol() {return numsol;}
-    int SetDim(int Dim) { dim = Dim;}
-    int SetNumSol(int NumSol) { numsol = NumSol;}
+    void SetDim(int Dim) { dim = Dim;}
+    void SetNumSol(int NumSol) { numsol = NumSol;}
     bool CheckTestConfig();
 
     ~Wave_test () {}
@@ -572,7 +572,7 @@ int main(int argc, char *argv[])
     */
 
     const char *formulation = "cfosls";      // "cfosls" or "fosls"
-    bool with_divdiv = true;                // should be true for fosls and can be false for cfosls
+    bool with_divdiv = false;                // should be true for fosls and can be false for cfosls
     bool use_ADS = false;                    // works only in 3D and for with_divdiv = true
 
     const char *mesh_file = "../data/cube_3d_fine.mesh";
@@ -698,7 +698,7 @@ int main(int argc, char *argv[])
 
     //DEFAULTED LINEAR SOLVER OPTIONS
     int max_num_iter = 150000;
-    double rtol = 1e-14;
+    double rtol = 1e-12;
     double atol = 1e-14;
 
     Mesh *mesh = NULL;
@@ -998,6 +998,7 @@ int main(int argc, char *argv[])
     // 8.5 some additional parelag stuff which is used for coarse lagrange
     // multiplier implementation at the matrix level
 
+//    HypreParMatrix * pPT;
     //-----------------------
 
     // 9. Define the parallel grid function and parallel linear forms, solution
@@ -1177,10 +1178,12 @@ int main(int argc, char *argv[])
     //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
     //     pressure Schur Complement.
     if (verbose)
+    {
         if (use_ADS == true)
             cout << "Using ADS (+ I) preconditioner for sigma (and lagrange multiplier)" << endl;
         else
             cout << "Using Diag(A) (and D Diag^(-1)(A) Dt) preconditioner for sigma (and lagrange multiplier)" << endl;
+    }
 
     chrono.Clear();
     chrono.Start();
@@ -1403,69 +1406,131 @@ int main(int argc, char *argv[])
                   << err_S/norm_S  << "\n";
     }
 
+    {
+        auto *hcurl_coll = new ND_FECollection(feorder+1, dim);
+        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+
+        DiscreteLinearOperator Grad(H_space, N_space);
+        Grad.AddDomainInterpolator(new GradientInterpolator());
+        ParGridFunction GradS(N_space);
+        Grad.Assemble();
+        Grad.Mult(*S, GradS);
+
+        VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+        double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+        double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+        if (verbose)
+        {
+            std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                         err_GradS / norm_GradS << "\n";
+            std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                         sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+        }
+
+        delete hcurl_coll;
+        delete N_space;
+    }
+
+    // Check value of functional and mass conservation
+    {
+        trueX->GetBlock(2) = 0.0;
+        *trueRhs = 0.0;;
+        CFOSLSop->Mult(*trueX, *trueRhs);
+        double localFunctional = (*trueX)*(*trueRhs);
+        double globalFunctional;
+        MPI_Reduce(&localFunctional, &globalFunctional, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+        {
+            cout << "|| sigma_h - L(S_h) ||^2 = " << globalFunctional<< "\n";
+            cout << "|| div_h sigma_h - f ||^2 = " << err_div*err_div  << "\n";
+            cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+            cout << "Relative Energy Error = " << sqrt(globalFunctional+err_div*err_div)/norm_div<< "\n";
+        }
+
+        ParLinearForm massform(W_space);
+        massform.AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalardivsigma)));
+        massform.Assemble();
+
+        double mass_loc = massform.Norml1();
+        double mass;
+        MPI_Reduce(&mass_loc, &mass, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass = " << mass<< "\n";
+
+        trueRhs->GetBlock(2) -= massform;
+        double mass_loss_loc = trueRhs->GetBlock(2).Norml1();
+        double mass_loss;
+        MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass loss = " << mass_loss<< "\n";
+    }
+
     // Computing error in mesh norms
 
-    if (verbose)
-        cout << "Computing mesh norms" << endl;
+//    if (verbose)
+//        cout << "Computing mesh norms" << endl;
 
-    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
-    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
-    HypreParVector * sigmapv = sigma->ParallelAssemble();
-    Vector * sigmav = sigmapv->GlobalVector();
-    *sigmav -= *sigma_exactv;
+//    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
+//    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
+//    HypreParVector * sigmapv = sigma->ParallelAssemble();
+//    Vector * sigmav = sigmapv->GlobalVector();
+//    *sigmav -= *sigma_exactv;
 
-    double sigma_meshnorm = (*sigma_exactv)*(*sigma_exactv);
-    double sigma_mesherror = (*sigmav) * (*sigmav);
-    if(verbose)
-        cout << "|| sigma_h - sigma_ex ||_h / || sigma_ex ||_h = "
-                        << sqrt(sigma_mesherror) / sqrt(sigma_meshnorm) << endl;
+//    double sigma_meshnorm = (*sigma_exactv)*(*sigma_exactv);
+//    double sigma_mesherror = (*sigmav) * (*sigmav);
+//    if(verbose)
+//        cout << "|| sigma_h - sigma_ex ||_h / || sigma_ex ||_h = "
+//                        << sqrt(sigma_mesherror) / sqrt(sigma_meshnorm) << endl;
 
-    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
-    Vector * S_exactv = S_exactpv->GlobalVector();
-    HypreParVector * Spv = S->ParallelAssemble();
-    Vector * Sv = Spv->GlobalVector();
-    *Sv -= *S_exactv;
+//    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
+//    Vector * S_exactv = S_exactpv->GlobalVector();
+//    HypreParVector * Spv = S->ParallelAssemble();
+//    Vector * Sv = Spv->GlobalVector();
+//    *Sv -= *S_exactv;
 
-    double S_meshnorm = (*S_exactv)*(*S_exactv);
-    double S_mesherror = (*Sv) * (*Sv);
-    if(verbose)
-        cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
-                        << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
+//    double S_meshnorm = (*S_exactv)*(*S_exactv);
+//    double S_mesherror = (*Sv) * (*Sv);
+//    if(verbose)
+//        cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
+//                        << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
 
 
-    BilinearForm *m = new BilinearForm(R_space);
-    m->AddDomainIntegrator(new DivDivIntegrator);
-    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
-    m->Assemble(); m->Finalize();
-    SparseMatrix E = m->SpMat();
-    Vector Asigma(sigmav->Size());
-    E.Mult(*sigma_exactv,Asigma);
-    double weighted_norm = (*sigma_exactv)*Asigma;
+//    BilinearForm *m = new BilinearForm(R_space);
+//    m->AddDomainIntegrator(new DivDivIntegrator);
+//    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
+//    m->Assemble(); m->Finalize();
+//    SparseMatrix E = m->SpMat();
+//    Vector Asigma(sigmav->Size());
+//    E.Mult(*sigma_exactv,Asigma);
+//    double weighted_norm = (*sigma_exactv)*Asigma;
 
-    Vector Ae(sigmav->Size());
-    E.Mult(*sigmav,Ae);
-    double weighted_error = (*sigmav)*Ae;
+//    Vector Ae(sigmav->Size());
+//    E.Mult(*sigmav,Ae);
+//    double weighted_error = (*sigmav)*Ae;
 
-    //if(verbose)
-        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
-                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-    if(verbose)
-        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
-                        sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-    if (verbose)
-        cout << "Computing projection errors" << endl;
+//    //if(verbose)
+//        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
+//                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
+//    if(verbose)
+//        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
+//                        sqrt(weighted_error)/sqrt(weighted_norm) << endl;
+//    if (verbose)
+//        cout << "Computing projection errors" << endl;
 
-    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
+//    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
-    if(verbose)
-        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
-                        << projection_error_sigma / norm_sigma << endl;
+//    if(verbose)
+//        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
+//                        << projection_error_sigma / norm_sigma << endl;
 
-    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
+//    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
-    if(verbose)
-        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
-                        << projection_error_S / norm_S << endl;
+//    if(verbose)
+//        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
+//                        << projection_error_S / norm_S << endl;
 
     if (visualization)
     {
@@ -1726,7 +1791,7 @@ double uFun_ex_dt2(const Vector & xt)
 {
     double xi(xt(0));
     double yi(xt(1));
-    double zi(0.0);
+//    double zi(0.0);
 
     if (xt.Size() == 3)
     {
@@ -1748,7 +1813,7 @@ double uFun_ex_dtlaplace(const Vector & xt)
 {
     double xi(xt(0));
     double yi(xt(1));
-    double zi(0.0);
+//    double zi(0.0);
     double t(xt(xt.Size() - 1));
     //return (-(xt.Size()-1) * PI * PI) *uFun_ex(xt);
     //return (-(xt.Size()-1) * M_PI * M_PI) *sin(M_PI*xi)*sin(M_PI*yi);         // for t * sin x * sin y
@@ -1760,7 +1825,7 @@ void uFun_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z(0.0);
+//    double z(0.0);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
@@ -1807,7 +1872,7 @@ void uFun_ex_dtgradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z(0.0);
+//    double z(0.0);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
@@ -2065,7 +2130,7 @@ double uFun4_ex_dt2(const Vector & xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(2);
+//    double t = xt(2);
 
     return 16.0 * x * (x - 1) * y * (y - 1) * 2.0;
 }
@@ -2208,7 +2273,7 @@ double uFun5_ex_dt2(const Vector & xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(2);
+//    double t = xt(2);
 
     return 16.0 * x * x * (x - 1) * (x - 1) * y * y * (y - 1) * (y - 1) * 2.0;
 }

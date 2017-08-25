@@ -461,6 +461,8 @@ double FunctionCoefficientExtra::Eval(ElementTransformation & T,
    {
       return ((*Function)(transip, parameters, nparams));
    }
+   mfem_error("FunctionCoefficientExtra::Eval: 'Function' is missing!");
+   return 0;
 }
 }
 
@@ -814,7 +816,7 @@ int main(int argc, char *argv[])
     int numsol          = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 3;
 
     /*
     int generate_frombase   = 0;
@@ -1120,7 +1122,7 @@ int main(int argc, char *argv[])
     }
 
     if (dim == 4)
-        MFEM_ASSERT(order==0, "Only lowest order elements are support in 4D!");
+        MFEM_ASSERT(feorder==0, "Only lowest order elements are support in 4D!");
     FiniteElementCollection *h1_coll;
     if (dim == 4)
     {
@@ -1189,11 +1191,12 @@ int main(int argc, char *argv[])
     BlockVector x(block_offsets), rhs(block_offsets);
     BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
     x = 0.0;
+    rhs = 0.0;
     trueX = 0.0;
     trueRhs = 0.0;
 
    // 8. Define the coefficients, analytical solution, and rhs of the PDE.
-   ConstantCoefficient one(1.0);
+//   ConstantCoefficient one(1.0);
    ConstantCoefficient zero(.0);
 
    Transport_test Mytest(nDimensions,numsol);
@@ -1203,9 +1206,9 @@ int main(int argc, char *argv[])
    //----------------------------------------------------------
 
    // for sigma essential bdr's are in=mposed everywhere except top t = t_final
-   Array<int> ess_bdr(pmesh->bdr_attributes.Max());
-   ess_bdr = 1;
-   ess_bdr[pmesh->bdr_attributes.Max()-1] = 0;
+//   Array<int> ess_bdr(pmesh->bdr_attributes.Max());
+//   ess_bdr = 1;
+//   ess_bdr[pmesh->bdr_attributes.Max()-1] = 0;
    //ess_bdr = 0;
    //ess_bdr[0] = 1; // t = 0
    //ess_bdr[1] = 1; // lateral boundary in case of 3 bdr attributes
@@ -1256,7 +1259,7 @@ int main(int argc, char *argv[])
 //    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(mass_k));
    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
    Ablock->Assemble();
-   Ablock->EliminateEssentialBC(ess_bdr,x.GetBlock(0),*fform);
+//   Ablock->EliminateEssentialBC(ess_bdr,x.GetBlock(0),*fform);
    Ablock->Finalize();
    A = Ablock->ParallelAssemble();
 
@@ -1283,14 +1286,14 @@ int main(int argc, char *argv[])
 //---------------
 
    Vector et(dim); et = 0.; et(dim-1) = 1.0;
-   VectorConstantCoefficient bt(et);
+//   VectorConstantCoefficient bt(et);
    ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, H_space));
    HypreParMatrix *B;
    //Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(bFun));
    Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
 //    Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(bt));
    Bblock->Assemble();
-   Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *qform);
+//   Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *qform);
    Bblock->EliminateTestDofs(ess_bdrS);
    Bblock->Finalize();
    B = Bblock->ParallelAssemble();
@@ -1308,7 +1311,7 @@ int main(int argc, char *argv[])
       ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
       Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
       Dblock->Assemble();
-      Dblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *gform);;
+//      Dblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *gform);;
       Dblock->Finalize();
       D = Dblock->ParallelAssemble();
       DT = D->Transpose();
@@ -1425,13 +1428,13 @@ int main(int argc, char *argv[])
    ParGridFunction *sigma_exact = new ParGridFunction(R_space);
    //sigma_exact->ProjectCoefficient(sigmacoeff);
    sigma_exact->ProjectCoefficient(*(Mytest.sigma));
-   HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
-   Vector * sigma_exactv = sigma_exactpv->GlobalVector();
+//   HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
+//   Vector * sigma_exactv = sigma_exactpv->GlobalVector();
 
    ParGridFunction *S_exact = new ParGridFunction(H_space);
    S_exact->ProjectCoefficient(*(Mytest.scalaru));
-   HypreParVector * S_exactpv = S_exact->ParallelAssemble();
-   Vector * S_exactv = S_exactpv->GlobalVector();
+//   HypreParVector * S_exactpv = S_exact->ParallelAssemble();
+//   Vector * S_exactv = S_exactpv->GlobalVector();
 
 
    // adding back the term from nonhomogeneous initial condition
@@ -1510,6 +1513,71 @@ int main(int argc, char *argv[])
        std::cout << "|| S_h - S_ex || / || S_ex || = " <<
                     err_S / norm_S << "\n";
    }
+
+   {
+       auto *hcurl_coll = new ND_FECollection(feorder+1, dim);
+       auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+
+       DiscreteLinearOperator Grad(H_space, N_space);
+       Grad.AddDomainInterpolator(new GradientInterpolator());
+       ParGridFunction GradS(N_space);
+       Grad.Assemble();
+       Grad.Mult(*S, GradS);
+
+       VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+       double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+       double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+       if (verbose)
+       {
+           std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                        err_GradS / norm_GradS << "\n";
+           std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                        sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+       }
+
+       delete hcurl_coll;
+       delete N_space;
+   }
+
+   // Check value of functional and mass conservation
+   {
+       double localFunctional = -2.0*(trueX.GetBlock(1)*trueRhs.GetBlock(1));
+
+       trueX.GetBlock(2) = 0.0;
+       trueRhs = 0.0;;
+       CFOSLSop->Mult(trueX, trueRhs);
+       localFunctional += trueX*(trueRhs);
+
+       double globalFunctional;
+       MPI_Reduce(&localFunctional, &globalFunctional, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+       {
+           cout << "|| sigma_h - L(S_h) ||^2 + || div_h (bS_h) - f ||^2 = " << globalFunctional+norm_div*norm_div<< "\n";
+           cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+           cout << "Relative Energy Error = " << sqrt(globalFunctional+norm_div*norm_div)/norm_div<< "\n";
+       }
+
+       ParLinearForm massform(W_space);
+       massform.AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalardivsigma)));
+       massform.Assemble();
+
+       double mass_loc = massform.Norml1();
+       double mass;
+       MPI_Reduce(&mass_loc, &mass, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+           cout << "Sum of local mass = " << mass<< "\n";
+
+       trueRhs.GetBlock(2) -= massform;
+       double mass_loss_loc = trueRhs.GetBlock(2).Norml1();
+       double mass_loss;
+       MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
+                  MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+       if (verbose)
+           cout << "Sum of local mass loss = " << mass_loss<< "\n";
+   }
+
 
    /*
    if (verbose)
@@ -1651,7 +1719,7 @@ void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda)
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 void bbTTemplate(const Vector& xt, DenseMatrix& bbT)
 {
-    int nDimensions = xt.Size();
+//    int nDimensions = xt.Size();
     Vector b;
     bvecfunc(xt,b);
     MultVVt(b, bbT);
@@ -1862,7 +1930,7 @@ double bFundiv_ex(const Vector& xt)
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
     if (xt.Size() == 4)
         return 2*M_PI * cos(x*2*M_PI)*cos(y*M_PI) + M_PI * cos(y*M_PI)*cos(x*M_PI) + 2*M_PI * sin(2*z*M_PI);
     if (xt.Size() == 3)
@@ -2061,9 +2129,9 @@ double uFun5_ex(const Vector& xt)
 
 double uFun5_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
     return 0.0;
 }
 
@@ -2071,7 +2139,7 @@ void uFun5_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2090,9 +2158,9 @@ double uFun6_ex(const Vector& xt)
 
 double uFun6_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2100,7 +2168,7 @@ void uFun6_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2144,9 +2212,9 @@ double uFunCylinder_ex_dt(const Vector& xt)
 
 void uFunCylinder_ex_gradx(const Vector& xt, Vector& gradx )
 {
-    double x = xt(0);
-    double y = xt(1);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2166,10 +2234,10 @@ double uFun66_ex(const Vector& xt)
 
 double uFun66_ex_dt(const Vector& xt)
 {
-    double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double x = xt(0);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
     return -10.0 * uFun6_ex(xt);
 }
 
@@ -2178,7 +2246,7 @@ void uFun66_ex_gradx(const Vector& xt, Vector& gradx )
     double x = xt(0);
     double y = xt(1);
     double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);
 
@@ -2192,9 +2260,9 @@ void Hdivtest_fun(const Vector& xt, Vector& out )
     out.SetSize(xt.Size());
 
     double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
 
     out(0) = x;
     out(1) = 0.0;
@@ -2206,9 +2274,9 @@ void Hdivtest_fun(const Vector& xt, Vector& out )
 double L2test_fun(const Vector& xt)
 {
     double x = xt(0);
-    double y = xt(1);
-    double z = xt(2);
-    double t = xt(xt.Size()-1);
+//    double y = xt(1);
+//    double z = xt(2);
+//    double t = xt(xt.Size()-1);
 
     return x;
 }
@@ -2226,7 +2294,7 @@ double uFun10_ex_dt(const Vector& xt)
 {
     double x = xt(0);
     double y = xt(1);
-    double z = xt(2);
+//    double z = xt(2);
     double t = xt(xt.Size()-1);
     return (cos(t)*exp(t) + sin(t)*exp(t)) * x * y;
 }
@@ -2235,7 +2303,7 @@ void uFun10_ex_gradx(const Vector& xt, Vector& gradx )
 {
     double x = xt(0);
     double y = xt(1);
-    double z = xt(2);
+//    double z = xt(2);
     double t = xt(xt.Size()-1);
 
     gradx.SetSize(xt.Size() - 1);

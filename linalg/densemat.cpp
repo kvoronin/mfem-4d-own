@@ -1702,7 +1702,7 @@ inline void GetScalingFactor(const double &d_max, double &mult)
 
 double DenseMatrix::CalcSingularvalue(const int i) const
 {
-   MFEM_ASSERT(Height() == Width() && Height() > 0 && Height() < 4,
+   MFEM_ASSERT(Height() == Width() && Height() > 0 && Height() < 5,
                "The matrix must be square and sized 1, 2, or 3 to compute the singular values."
                << "  Height() = " << Height()
                << ", Width() = " << Width());
@@ -2981,7 +2981,7 @@ void AddMult(const DenseMatrix &b, const DenseMatrix &c, DenseMatrix &a)
 void CalcAdjugate(const DenseMatrix &a, DenseMatrix &adja)
 {
 #ifdef MFEM_DEBUG
-   if (a.Width() > a.Height() || a.Width() < 1 || a.Height() > 3)
+   if (a.Width() > a.Height() || a.Width() < 1 || a.Height() > 4)
    {
       mfem_error("CalcAdjugate(...)");
    }
@@ -3092,7 +3092,7 @@ void CalcAdjugateTranspose(const DenseMatrix &a, DenseMatrix &adjat)
 {
 #ifdef MFEM_DEBUG
    if (a.Height() != a.Width() || adjat.Height() != adjat.Width() ||
-       a.Width() != adjat.Width() || a.Width() < 1 || a.Width() > 3)
+       a.Width() != adjat.Width() || a.Width() < 1 || a.Width() > 4)
    {
       mfem_error("CalcAdjugateTranspose(...)");
    }
@@ -3132,7 +3132,7 @@ void CalcAdjugateTranspose(const DenseMatrix &a, DenseMatrix &adjat)
 
 void CalcInverse(const DenseMatrix &a, DenseMatrix &inva)
 {
-   MFEM_ASSERT(a.Width() <= a.Height() && a.Width() >= 1 && a.Height() <= 3, "");
+   MFEM_ASSERT(a.Width() <= a.Height() && a.Width() >= 1 && a.Height() <= 4, "");
    MFEM_ASSERT(inva.Height() == a.Width(), "incorrect dimensions");
    MFEM_ASSERT(inva.Width() == a.Height(), "incorrect dimensions");
 
@@ -3223,7 +3223,7 @@ void CalcInverseTranspose(const DenseMatrix &a, DenseMatrix &inva)
 {
 #ifdef MFEM_DEBUG
    if ( (a.Width() != a.Height()) || ( (a.Height()!= 1) && (a.Height()!= 2)
-                                       && (a.Height()!= 3) ) )
+                                       && (a.Height()!= 3) && (a.Height()!= 4)) )
    {
       mfem_error("CalcInverseTranspose(...)");
    }
@@ -3267,7 +3267,8 @@ void CalcInverseTranspose(const DenseMatrix &a, DenseMatrix &inva)
 void CalcOrtho(const DenseMatrix &J, Vector &n)
 {
    MFEM_ASSERT( ((J.Height() == 2 && J.Width() == 1)
-                 || (J.Height() == 3 && J.Width() == 2))
+                 || (J.Height() == 3 && J.Width() == 2)
+                 || (J.Height() == 4 && J.Width() == 3))
                 && (J.Height() == n.Size()),
                 "Matrix must be 3x2 or 2x1, "
                 << "and the Vector must be sized with the rows. "
