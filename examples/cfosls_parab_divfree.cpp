@@ -768,6 +768,8 @@ int main(int argc, char *argv[])
     int ser_ref_levels  = 1;
     int par_ref_levels  = 2;
 
+    bool aniso_refine = false;
+
     bool withDiv = true;
     bool with_multilevel = true;
     //bool withS = true;
@@ -818,6 +820,9 @@ int main(int argc, char *argv[])
                    "Enable or disable multilevel algorithm for finding a particular solution.");
     args.AddOption(&useM_in_divpart, "-useM", "--useM", "-no-useM", "--no-useM",
                    "Whether to use M to compute a partilar solution");
+    args.AddOption(&aniso_refine, "-aniso", "--aniso-refine", "-iso",
+                   "--iso-refine",
+                   "Using anisotropic or isotropic refinement.");
 
     args.Parse();
     if (!args.Good())
@@ -898,21 +903,21 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-        if (verbose)
-            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-        ifstream imesh(mesh_file);
-        if (!imesh)
-        {
-            std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-            MPI_Finalize();
-            return -2;
-        }
-        else
-        {
-            mesh = new Mesh(imesh, 1, 1);
-            imesh.close();
-        }
-
+//        if (verbose)
+//            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+//        ifstream imesh(mesh_file);
+//        if (!imesh)
+//        {
+//            std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+//            MPI_Finalize();
+//            return -2;
+//        }
+//        else
+//        {
+//            mesh = new Mesh(imesh, 1, 1);
+//            imesh.close();
+//        }
+        mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
     }
     else //if nDimensions is not 3 or 4
     {
@@ -924,8 +929,29 @@ int main(int argc, char *argv[])
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
-        for (int l = 0; l < ser_ref_levels; l++)
-            mesh->UniformRefinement();
+        if (aniso_refine)
+        {
+            // for anisotropic refinement, the serial mesh need at least one
+            // serial refine to turn the mesh into a nonconforming mesh
+            MFEM_ASSERT(ser_ref_levels > 0, "need ser_ref_levels > 0 for aniso_refine");
+
+            for (int l = 0; l < ser_ref_levels-1; l++)
+                mesh->UniformRefinement();
+
+            Array<Refinement> refs(mesh->GetNE());
+            for (int i = 0; i < mesh->GetNE(); i++)
+            {
+                refs[i] = Refinement(i, 7);
+            }
+            mesh->GeneralRefinement(refs, -1, -1);
+
+            par_ref_levels *= 2;
+        }
+        else
+        {
+            for (int l = 0; l < ser_ref_levels; l++)
+                mesh->UniformRefinement();
+        }
 
         if (verbose)
             cout << "Creating parmesh(" << nDimensions <<
@@ -1049,36 +1075,58 @@ int main(int argc, char *argv[])
                 if (prec_is_MG)
                     coarseH_space->Update();
 
-                pmesh->UniformRefinement();
+                if (aniso_refine)
+                {
+                    Array<Refinement> refs(pmesh->GetNE());
+                    if (l < par_ref_levels/2+1)
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 4);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 3);
+                    }
+                    pmesh->GeneralRefinement(refs, -1, -1);
+                }
+                else
+                {
+                    pmesh->UniformRefinement();
+                }
 
                 C_space->Update();
                 if (prec_is_MG)
                 {
                     auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
-                    auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                    auto P_C_loc_tmp = (SparseMatrix *)C_space->GetUpdateOperator();
+                    auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
                     unique_ptr<SparseMatrix>RP_C_local(
                                 Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
                     P_C[l-1] = d_td_coarse_C->LeftDiagMult(
                                 *RP_C_local, C_space->GetTrueDofOffsets());
                     P_C[l-1]->CopyColStarts();
                     P_C[l-1]->CopyRowStarts();
+                    delete P_C_local;
                 }
 
                 H_space->Update();
                 if (prec_is_MG)
                 {
                     auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
-                    auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+                    auto P_H_loc_tmp = (SparseMatrix *)H_space->GetUpdateOperator();
+                    auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                     unique_ptr<SparseMatrix>RP_H_local(
                                 Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
                     P_H[l-1] = d_td_coarse_H->LeftDiagMult(
                                 *RP_H_local, H_space->GetTrueDofOffsets());
                     P_H[l-1]->CopyColStarts();
                     P_H[l-1]->CopyRowStarts();
+                    delete P_H_local;
                 }
 
-                P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
-                P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
+                P_W_local = (SparseMatrix *)W_space->GetUpdateOperator();
+                P_R_local = (SparseMatrix *)R_space->GetUpdateOperator();
 
                 SparseMatrix* R_Element_to_dofs1 = new SparseMatrix();
                 SparseMatrix* W_Element_to_dofs1 = new SparseMatrix();
@@ -1108,7 +1156,26 @@ int main(int argc, char *argv[])
             if (prec_is_MG)
                 coarseH_space->Update();
 
-            pmesh->UniformRefinement();
+            if (aniso_refine)
+            {
+                Array<Refinement> refs(pmesh->GetNE());
+                if (l < par_ref_levels/2)
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 4);
+                }
+                else
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 3);
+                }
+                pmesh->GeneralRefinement(refs, -1, -1);
+            }
+            else
+            {
+                pmesh->UniformRefinement();
+            }
+
             if (withDiv)
                 W_space->Update();
             R_space->Update();
@@ -1118,25 +1185,29 @@ int main(int argc, char *argv[])
             if (prec_is_MG)
             {
                 auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
-                auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                auto P_C_loc_tmp = (SparseMatrix *)C_space->GetUpdateOperator();
+                auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
                 unique_ptr<SparseMatrix>RP_C_local(
                             Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
                 P_C[l] = d_td_coarse_C->LeftDiagMult(
                             *RP_C_local, C_space->GetTrueDofOffsets());
                 P_C[l]->CopyColStarts();
                 P_C[l]->CopyRowStarts();
+                delete P_C_local;
             }
 
             if (prec_is_MG)
             {
                 auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
-                auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+                auto P_H_loc_tmp = (SparseMatrix *)H_space->GetUpdateOperator();
+                auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                 unique_ptr<SparseMatrix>RP_H_local(
                             Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
                 P_H[l] = d_td_coarse_H->LeftDiagMult(
                             *RP_H_local, H_space->GetTrueDofOffsets());
                 P_H[l]->CopyColStarts();
                 P_H[l]->CopyRowStarts();
+                delete P_H_local;
             }
         } // end of loop over mesh levels
     } // end of else (not a multilevel algo)
@@ -1222,7 +1293,8 @@ int main(int argc, char *argv[])
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
     }
 
-
+    chrono.Clear();
+    chrono.Start();
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
     if (withDiv)
     {
@@ -1326,14 +1398,15 @@ int main(int argc, char *argv[])
             invBBT->SetPrintLevel(0);
 
             mfem::CGSolver solver(comm);
-            solver.SetPrintLevel(1);
+            solver.SetPrintLevel(0);
             solver.SetMaxIter(70000);
-            solver.SetRelTol(1.0e-16);
-            solver.SetAbsTol(1.0e-16);
+            solver.SetRelTol(1.0e-12);
+            solver.SetAbsTol(1.0e-14);
             solver.SetPreconditioner(*invBBT);
             solver.SetOperator(*BBT);
 
             Vector * Temphat = new Vector(W_space->TrueVSize());
+            *Temphat = 0.0;
             solver.Mult(*Rhs, *Temphat);
 
             Vector * Temp = new Vector(R_space->TrueVSize());
@@ -1350,6 +1423,8 @@ int main(int argc, char *argv[])
             std::cout << "Using exact sigma minus curl of a given function from H(curl,0) as a particular solution \n";
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
+    if (verbose)
+        cout<<"Particular solution found in "<< chrono.RealTime() <<" seconds.\n";
     // in either way now Sigmahat is a function from H(div) s.t. div Sigmahat = div sigma = f
 
     MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
@@ -1898,9 +1973,9 @@ int main(int argc, char *argv[])
         W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
     }
 
-    DiscreteLinearOperator Grad(H_space, W_space);
+    DiscreteLinearOperator Grad(H_space, C_space);
     Grad.AddDomainInterpolator(new GradientInterpolator());
-    ParGridFunction GradS(W_space);
+    ParGridFunction GradS(C_space);
     Grad.Assemble();
     Grad.Mult(*S, GradS);
 
