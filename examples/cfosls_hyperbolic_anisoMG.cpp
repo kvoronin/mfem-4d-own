@@ -30,13 +30,10 @@
 #include"cfosls_testsuite.hpp"
 #include"divfree_solver_tools.hpp"
 
-//#include "elag.hpp"
-
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
 using namespace mfem;
-//using namespace parelag;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
@@ -641,14 +638,7 @@ int main(int argc, char *argv[])
     double rtol = 1e-12;
     double atol = 1e-14;
 
-    shared_ptr<ParMesh> pmesh;
-    Array<int> N(3);
-    N = 2;
-//    for (int l = 0; l < par_ref_levels; l++)
-//        for (int i = 0; i < N.Size(); i++)
-//            N[i] *= 2;
-
-    auto mesh = make_unique<Mesh>(N[0], N[1], N[2], Element::HEXAHEDRON, 1);
+    auto mesh = make_unique<Mesh>(2, 2, 2, Element::HEXAHEDRON, 1);
 
     // Do a general refine and turn the mesh into nonconforming mesh
     Array<Refinement> refs;
@@ -657,7 +647,7 @@ int main(int argc, char *argv[])
         refs.Append(Refinement(i, 7));
     }
     mesh->GeneralRefinement(refs, -1, -1);
-    pmesh = make_shared<ParMesh>(comm, *mesh);
+    auto pmesh = make_shared<ParMesh>(comm, *mesh);
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
@@ -687,11 +677,15 @@ int main(int argc, char *argv[])
         if (aniso_refine)
         {
             Array<Refinement> refs;
-            for (int i = 0; i < pmesh->GetNE(); i++)
+
+            if (l < par_ref_levels/2)
             {
-                if (l < par_ref_levels/2)
+                for (int i = 0; i < pmesh->GetNE(); i++)
                     refs.Append(Refinement(i, 3));
-                else
+            }
+            else
+            {
+                for (int i = 0; i < pmesh->GetNE(); i++)
                     refs.Append(Refinement(i, 4));
             }
             pmesh->GeneralRefinement(refs, -1, -1);
@@ -705,7 +699,8 @@ int main(int argc, char *argv[])
         R_space->Update();
 
         auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
-        auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+        auto P_C_local_tmp = (SparseMatrix*)C_space->GetUpdateOperator();
+        auto P_C_local = RemoveZeroEntries(*P_C_local_tmp);
         unique_ptr<SparseMatrix>RP_C_local(
                     Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
         P_C[l] = d_td_coarse_C->LeftDiagMult(
@@ -714,7 +709,8 @@ int main(int argc, char *argv[])
         P_C[l]->CopyRowStarts();
 
         auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
-        auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+        auto P_H_local_tmp = (SparseMatrix *)H_space->GetUpdateOperator();
+        auto P_H_local = RemoveZeroEntries(*P_H_local_tmp);
         unique_ptr<SparseMatrix>RP_H_local(
                     Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
         P_H[l] = d_td_coarse_H->LeftDiagMult(

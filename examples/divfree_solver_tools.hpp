@@ -885,3 +885,38 @@ void Multigrid::MG_Cycle() const
     Smoother_l.Mult(residual_l, cor_cor);
     correction_l += cor_cor;
 }
+
+SparseMatrix * RemoveZeroEntries(const SparseMatrix& in)
+{
+    int * I = in.GetI();
+    int * J = in.GetJ();
+    double * Data = in.GetData();
+    double * End = Data+in.NumNonZeroElems();
+
+    int nnz = 0;
+    for (double * data_ptr = Data; data_ptr != End; data_ptr++)
+    {
+        if (*data_ptr != 0)
+            nnz++;
+    }
+
+    int * outI = new int[in.Height()+1];
+    int * outJ = new int[nnz];
+    double * outData = new double[nnz];
+    nnz = 0;
+    for (int i = 0; i < in.Height(); i++)
+    {
+        outI[i] = nnz;
+        for (int j = I[i]; j < I[i+1]; j++)
+        {
+            if (Data[j] !=0)
+            {
+                outJ[nnz] = J[j];
+                outData[nnz++] = Data[j];
+            }
+        }
+    }
+    outI[in.Height()] = nnz;
+
+    return new SparseMatrix(outI, outJ, outData, in.Height(), in.Width());
+}
