@@ -61,6 +61,8 @@ public:
    virtual void MarkEdge(const DSTable &v_to_v, const int *length)
    { MFEM_ABORT("PENTATOPE:: MarkEdge not implemented"); }
 
+   /// Calculate point matrix corresponding to a chain of transformations.
+   static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
 
    /// Return element's type.
    virtual int GetType() const { return Element::PENTATOPE; }

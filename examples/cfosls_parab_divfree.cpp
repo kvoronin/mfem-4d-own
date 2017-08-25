@@ -572,6 +572,11 @@ void curlE_exact(const Vector &x, Vector &curlE);
 void f_exact(const Vector &, Vector &);
 double freq = 1.0, kappa;
 
+// 4d test from Martin's example
+void E_exactMat_vec(const Vector &x, Vector &E);
+void E_exactMat(const Vector &, DenseMatrix &);
+void f_exactMat(const Vector &, DenseMatrix &);
+
 template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     double divsigmaTemplate(const Vector& xt);
 
@@ -968,10 +973,8 @@ int main(int argc, char *argv[])
     }
     else // dim == 4
     {
-        if (verbose)
-            std::cout << "4D case is not implemented yet \n";
-        MPI_Finalize();
-        return 0;
+        hdivfree_coll = new DivSkew1_4DFECollection;
+        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
     } // end of initialization of div-free f.e. space in 4D
 
 
@@ -1145,6 +1148,47 @@ int main(int argc, char *argv[])
     //if(dim==3) pmesh->ReorientTetMesh();
 
     pmesh->PrintInfo(std::cout); if(verbose) cout << "\n";
+
+    if (dim == 4)
+    {
+        // testing ProjectCoefficient
+        VectorFunctionCoefficient * divfreepartcoeff = new
+                VectorFunctionCoefficient(6, E_exactMat_vec);
+        //VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
+        ParGridFunction *u_exact = new ParGridFunction(C_space);
+        u_exact->ProjectCoefficient(*divfreepartcoeff);//(*(Mytest.divfreepart));
+
+
+        if (verbose)
+            std::cout << "ProjectCoefficient is ok with vectors from DivSkew \n";
+        //u_exact->Print();
+
+        // checking projection error computation
+        int order_quad = 2*(feorder+1) + 1;//max(2, 2*feorder+1);
+        const IntegrationRule *irs[Geometry::NumGeom];
+        for (int i=0; i < Geometry::NumGeom; ++i)
+        {
+            irs[i] = &(IntRules.Get(i, order_quad));
+        }
+
+        double norm_u = ComputeGlobalLpNorm(2, *divfreepartcoeff, *pmesh, irs);
+        double projection_error_u = u_exact->ComputeL2Error(*divfreepartcoeff, irs);
+
+        if(verbose)
+        {
+            std::cout << "|| u_ex - Pi_h u_ex || = " << projection_error_u << "\n";
+            if ( norm_u > MYZEROTOL )
+                std::cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << "\n";
+            else
+                std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
+        }
+
+        if (verbose)
+            std::cout << "4D case is not implemented yet \n";
+        MPI_Finalize();
+        return 0;
+
+    }
 
     Heat_test_divfree Mytest(nDimensions, numsol, numcurl);
 
@@ -2518,4 +2562,91 @@ void vminusone_exact(const Vector &x, Vector &vminusone)
 {
     vminusone.SetSize(x.Size());
     vminusone = -1.0;
+}
+
+
+
+void E_exactMat_vec(const Vector &x, Vector &E)
+{
+    int dim = x.Size();
+
+    if (dim==4)
+    {
+        E.SetSize(6);
+
+        double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+                s3 = sin(M_PI*x(3));
+        double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+                c3 = cos(M_PI*x(3));
+
+        E(0) =  c0*c1*s2*s3;
+        E(1) = -c0*s1*c2*s3;
+        E(2) =  c0*s1*s2*c3;
+        E(3) =  s0*c1*c2*s3;
+        E(4) = -s0*c1*s2*c3;
+        E(5) =  s0*s1*c2*c3;
+    }
+}
+
+void E_exactMat(const Vector &x, DenseMatrix &E)
+{
+    int dim = x.Size();
+
+    E.SetSize(dim*dim);
+
+    if (dim==4)
+    {
+        Vector vecE;
+        E_exactMat_vec(x, vecE);
+
+        E = 0.0;
+
+        E(0,1) = vecE(0);
+        E(0,2) = vecE(1);
+        E(0,3) = vecE(2);
+        E(1,2) = vecE(3);
+        E(1,3) = vecE(4);
+        E(2,3) = vecE(5);
+
+        E(1,0) =  -E(0,1);
+        E(2,0) =  -E(0,2);
+        E(3,0) =  -E(0,3);
+        E(2,1) =  -E(1,2);
+        E(3,1) =  -E(1,3);
+        E(3,2) =  -E(2,3);
+    }
+}
+
+
+
+//f_exact = E + 0.5 * P( curl DivSkew E ), where P is the 4d permutation operator
+void f_exactMat(const Vector &x, DenseMatrix &f)
+{
+    int dim = x.Size();
+
+    f.SetSize(dim,dim);
+
+    if (dim==4)
+    {
+        f = 0.0;
+
+        double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+                s3 = sin(M_PI*x(3));
+        double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+                c3 = cos(M_PI*x(3));
+
+        f(0,1) =  (1.0 + 1.0  * M_PI*M_PI)*c0*c1*s2*s3;
+        f(0,2) = -(1.0 + 0.0  * M_PI*M_PI)*c0*s1*c2*s3;
+        f(0,3) =  (1.0 + 1.0  * M_PI*M_PI)*c0*s1*s2*c3;
+        f(1,2) =  (1.0 - 1.0  * M_PI*M_PI)*s0*c1*c2*s3;
+        f(1,3) = -(1.0 + 0.0  * M_PI*M_PI)*s0*c1*s2*c3;
+        f(2,3) =  (1.0 + 1.0  * M_PI*M_PI)*s0*s1*c2*c3;
+
+        f(1,0) =  -f(0,1);
+        f(2,0) =  -f(0,2);
+        f(3,0) =  -f(0,3);
+        f(2,1) =  -f(1,2);
+        f(3,1) =  -f(1,3);
+        f(3,2) =  -f(2,3);
+    }
 }

@@ -7996,7 +7996,7 @@ const CoarseFineTransformations& Mesh::GetRefinementTransforms()
    if (!CoarseFineTr.point_matrices.SizeK())
    {
       if (BaseGeom == Geometry::TRIANGLE ||
-          BaseGeom == Geometry::TETRAHEDRON)
+          BaseGeom == Geometry::TETRAHEDRON || BaseGeom == Geometry::PENTATOPE)
       {
          std::map<unsigned, int> mat_no;
          mat_no[0] = 1; // identity
@@ -8026,9 +8026,13 @@ const CoarseFineTransformations& Mesh::GetRefinementTransforms()
             {
                Triangle::GetPointMatrix(it->first, pmats(it->second-1));
             }
-            else
+            else if (BaseGeom == Geometry::TETRAHEDRON)
             {
                Tetrahedron::GetPointMatrix(it->first, pmats(it->second-1));
+            }
+            else // PENTATOPE case
+            {
+               Pentatope::GetPointMatrix(it->first, pmats(it->second-1));
             }
          }
       }
