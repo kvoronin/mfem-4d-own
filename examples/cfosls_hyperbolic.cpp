@@ -1054,23 +1054,28 @@ int main(int argc, char *argv[])
         else
         */ // not generating from a lower dimensional mesh
         {
-            if (verbose)
-                cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-            ifstream imesh(mesh_file);
-            if (!imesh)
+            if (nDimensions == 4)
             {
-                 std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-                 MPI_Finalize();
-                 return -2;
+                if (verbose)
+                    cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+                ifstream imesh(mesh_file);
+                if (!imesh)
+                {
+                    std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+                    MPI_Finalize();
+                    return -2;
+                }
+                else
+                {
+                    mesh = new Mesh(imesh, 1, 1);
+                    imesh.close();
+                }
             }
             else
             {
-                mesh = new Mesh(imesh, 1, 1);
-                imesh.close();
+                mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
             }
-
         }
-
     }
     else //if nDimensions is no 3 or 4
     {
