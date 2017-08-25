@@ -27,16 +27,16 @@
 #include <iomanip>
 #include <list>
 
-#include"/Users/lee1029/Codes/tmp/mfem-cfosls/mfem-4d-own/examples/cfosls_testsuite.hpp"
-#include"/Users/lee1029/Codes/tmp/mfem-cfosls/mfem-4d-own/examples/divfree_solver_tools.hpp"
+#include"cfosls_testsuite.hpp"
+#include"divfree_solver_tools.hpp"
 
-#include "elag.hpp"
+//#include "elag.hpp"
 
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
 using namespace mfem;
-using namespace parelag;
+//using namespace parelag;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
@@ -586,6 +586,8 @@ int main(int argc, char *argv[])
     // solver options
     int prec_option = 0; // 1: monolithic MG  2: block diagonal MG
 
+    bool aniso_refine = false;
+
     int feorder = 0;
 
     if (verbose)
@@ -606,6 +608,9 @@ int main(int argc, char *argv[])
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
+    args.AddOption(&aniso_refine, "-aniso", "--aniso-refine", "-iso",
+                   "--iso-refine",
+                   "Using anisotropic or isotropic refinement.");
 
     args.Parse();
     if (!args.Good())
@@ -639,109 +644,20 @@ int main(int argc, char *argv[])
     shared_ptr<ParMesh> pmesh;
     Array<int> N(3);
     N = 2;
-    for (int l = 0; l < par_ref_levels; l++)
-        for (int i = 0; i < N.Size(); i++)
-            N[i] *= 2;
+//    for (int l = 0; l < par_ref_levels; l++)
+//        for (int i = 0; i < N.Size(); i++)
+//            N[i] *= 2;
 
     auto mesh = make_unique<Mesh>(N[0], N[1], N[2], Element::HEXAHEDRON, 1);
 
-    // Forming agglomeration in spatial and time domain
-    int nLevels = 2*par_ref_levels+1;
-    std::vector<Array<LogicalCartesian>> parallel_ijk(nLevels);
-
-    // Setup ijk (Cartesian) indices on the fine grid
-    Array<LogicalCartesian> serial_ijk(mesh->GetNE());
-    CartesianIJK::SetupCartesianIJK(
-                *mesh, N, CartesianIJK::XYZ, serial_ijk);
-
-    int Nproc[3] = {(int)sqrt(num_procs), (int)sqrt(num_procs), 1};
-    Array<int> domain_partitioning(
-                mesh->CartesianPartitioning(Nproc), mesh->GetNE());
-    pmesh = make_shared<ParMesh>(comm, *mesh, domain_partitioning);
-
-    // Distribute the serial ijk indices to parallel
-    parallel_ijk[0].SetSize(pmesh->GetNE());
-    Distribute(comm, serial_ijk, domain_partitioning, parallel_ijk[0]);
-
-    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
-
-    chrono.Clear();
-    chrono.Start();
-    std::vector<shared_ptr<AgglomeratedTopology>> topology(nLevels);
-    topology[0] = make_shared<AgglomeratedTopology>(pmesh, nDimensions);
-
-    Array<int> coarseningratio(3);
-    coarseningratio = 1;
-    coarseningratio.Last() = 2;
-    LogicalPartitioner partitioner;
-    CoarsenLogicalCartesianOperator timeCoarseningOp(coarseningratio);
-    constexpr auto at_elem = AgglomeratedTopology::ELEMENT;
-    for(int ilevel = 0; ilevel < par_ref_levels; ++ilevel)
+    // Do a general refine and turn the mesh into nonconforming mesh
+    Array<Refinement> refs;
+    for (int i = 0; i < mesh->GetNE(); i++)
     {
-        Array<int> partitioning(
-            topology[ilevel]->GetNumberLocalEntities(at_elem));
-
-        // Generate partitioning
-        partitioner.Partition<LogicalCartesian,CoarsenLogicalCartesianOperator>(
-            *(topology[ilevel]->LocalElementElementTable()),
-            parallel_ijk[ilevel], timeCoarseningOp, partitioning);
-
-        // Construct coarse agglomerated topology based on partitioning
-        topology[ilevel+1] =
-            topology[ilevel]->CoarsenLocalPartitioning(partitioning, 0, 0);
-
-        // Setup ijk logical indices for use on the next level
-        partitioner.ComputeCoarseLogical<LogicalCartesian,CoarsenLogicalCartesianOperator>(
-            timeCoarseningOp, topology[ilevel]->AEntityEntity(at_elem),
-            parallel_ijk[ilevel], parallel_ijk[ilevel+1]);
+        refs.Append(Refinement(i, 7));
     }
-
-    coarseningratio = 2;
-    coarseningratio.Last() = 1;
-    CoarsenLogicalCartesianOperator spaceCoarseningOp(coarseningratio);
-    for(int ilevel = par_ref_levels; ilevel < 2*par_ref_levels; ++ilevel)
-    {
-        Array<int> partitioning(
-            topology[ilevel]->GetNumberLocalEntities(at_elem));
-
-        // Generate partitioning
-        partitioner.Partition<LogicalCartesian,CoarsenLogicalCartesianOperator>(
-            *(topology[ilevel]->LocalElementElementTable()),
-            parallel_ijk[ilevel], spaceCoarseningOp, partitioning);
-
-        // Construct coarse agglomerated topology based on partitioning
-        topology[ilevel+1] =
-            topology[ilevel]->CoarsenLocalPartitioning(partitioning, 0, 0);
-
-        // Setup ijk logical indices for use on the next level
-        partitioner.ComputeCoarseLogical<LogicalCartesian,CoarsenLogicalCartesianOperator>(
-            spaceCoarseningOp, topology[ilevel]->AEntityEntity(at_elem),
-            parallel_ijk[ilevel], parallel_ijk[ilevel+1]);
-    }
-    if(myid == 0)
-        std::cout<<"Timing ELEM_AGG: Mesh Agglomeration done in "
-                 << chrono.RealTime() << " seconds.\n";
-
-    std::vector<shared_ptr<DeRhamSequence>> sequence(topology.size());
-    sequence[0] = make_shared<DeRhamSequence3D_FE>(
-            topology[0], pmesh.get(), feorder);
-    sequence[0]->FemSequence()->SetUpscalingTargets(nDimensions, -1);
-
-    chrono.Clear();
-    chrono.Start();
-    vector<unique_ptr<HypreParMatrix>> P_C_tmp(nLevels-1), P_H_tmp(nLevels-1);
-    Array<HypreParMatrix*> P_C(nLevels-1), P_H(nLevels-1);
-    for(int i(0); i < nLevels-1; ++i)
-    {
-        sequence[i+1] = sequence[i]->Coarsen();
-        P_C_tmp[i] = sequence[i]->ComputeTrueP(1);
-        P_C[nLevels-2-i] = P_C_tmp[i].get();
-        P_H_tmp[i] = sequence[i]->ComputeTrueP(0);
-        P_H[nLevels-2-i] = P_H_tmp[i].get();
-    }
-    if(myid == 0)
-        std::cout<<"Timing ELEM_AGG: Coarsening done in " << chrono.RealTime()
-                 << " seconds.\n";
+    mesh->GeneralRefinement(refs, -1, -1);
+    pmesh = make_shared<ParMesh>(comm, *mesh);
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
@@ -756,6 +672,56 @@ int main(int argc, char *argv[])
     auto R_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
     auto H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
     auto W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+
+    if (aniso_refine)
+        par_ref_levels *= 2;
+
+    Array<HypreParMatrix*> P_C(par_ref_levels), P_H(par_ref_levels);
+    auto coarseC_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+    auto coarseH_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
+    for (int l = 0; l < par_ref_levels; l++)
+    {
+        coarseC_space->Update();
+        coarseH_space->Update();
+
+        if (aniso_refine)
+        {
+            Array<Refinement> refs;
+            for (int i = 0; i < pmesh->GetNE(); i++)
+            {
+                if (l < par_ref_levels/2)
+                    refs.Append(Refinement(i, 3));
+                else
+                    refs.Append(Refinement(i, 4));
+            }
+            pmesh->GeneralRefinement(refs, -1, -1);
+        }
+        else
+        {
+            pmesh->UniformRefinement();
+        }
+
+        W_space->Update();
+        R_space->Update();
+
+        auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
+        auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+        unique_ptr<SparseMatrix>RP_C_local(
+                    Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
+        P_C[l] = d_td_coarse_C->LeftDiagMult(
+                    *RP_C_local, C_space->GetTrueDofOffsets());
+        P_C[l]->CopyColStarts();
+        P_C[l]->CopyRowStarts();
+
+        auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
+        auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+        unique_ptr<SparseMatrix>RP_H_local(
+                    Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
+        P_H[l] = d_td_coarse_H->LeftDiagMult(
+                    *RP_H_local, H_space->GetTrueDofOffsets());
+        P_H[l]->CopyColStarts();
+        P_H[l]->CopyRowStarts();
+    }
 
     HYPRE_Int dimR = R_space->GlobalTrueVSize();
     HYPRE_Int dimH = H_space->GlobalTrueVSize();
