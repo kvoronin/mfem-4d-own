@@ -400,51 +400,6 @@ void GradDomainLFIntegrator::AssembleRHSElementVect(
 //------------------
 //********* END OF NEW BilinearForm and LinearForm integrators FOR CFOSLS 4D (used only for heat equation, so can be deleted)
 
-namespace mfem
-{
-
-/// class for function coefficient with parameters
-class FunctionCoefficientExtra : public Coefficient
-{
-private:
-    double * parameters;
-    int nparams;
-
-protected:
-   double (*Function)(const Vector &, double *, const int&);
-
-public:
-   /// Define a time-independent coefficient from a C-function
-   FunctionCoefficientExtra(double (*f)(const Vector &, double *, const int&), double * Parameters, int Nparams)
-   {
-      Function = f;
-      nparams = Nparams;
-      parameters = new double[nparams];
-      for ( int i = 0; i < nparams; ++i)
-          parameters[i] = Parameters[i];
-   }
-
-   /// Evaluate coefficient
-   virtual double Eval(ElementTransformation &T,
-                       const IntegrationPoint &ip);
-};
-
-double FunctionCoefficientExtra::Eval(ElementTransformation & T,
-                                 const IntegrationPoint & ip)
-{
-   double x[3];
-   Vector transip(x, 3);
-
-   T.Transform(ip, transip);
-
-   if (Function)
-   {
-      return ((*Function)(transip, parameters, nparams));
-   }
-   mfem_error("FunctionCoefficientExtra::Eval: 'Function' is missing!");
-   return 0;
-}
-}
 
 template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
     void sigmaTemplate(const Vector& xt, Vector& sigma);
@@ -583,7 +538,7 @@ int main(int argc, char *argv[])
     // solver options
     int prec_option = 0; // 1: monolithic MG  2: block diagonal MG
 
-    bool aniso_refine = false;
+    bool aniso_refine = true;
 
     int feorder = 0;
 
@@ -638,7 +593,7 @@ int main(int argc, char *argv[])
     double rtol = 1e-12;
     double atol = 1e-14;
 
-    auto mesh = make_unique<Mesh>(2, 2, 2, Element::HEXAHEDRON, 1);
+    auto mesh = make_shared<Mesh>(2, 2, 2, Element::HEXAHEDRON, 1);
 
     // Do a general refine and turn the mesh into nonconforming mesh
     Array<Refinement> refs;
