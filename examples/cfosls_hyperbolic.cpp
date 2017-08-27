@@ -1520,7 +1520,11 @@ int main(int argc, char *argv[])
    }
 
    {
-       auto *hcurl_coll = new ND_FECollection(feorder+1, dim);
+       FiniteElementCollection * hcurl_coll;
+       if(dim==4)
+           hcurl_coll = new ND1_4DFECollection;
+       else
+           hcurl_coll = new ND_FECollection(feorder+1, dim);
        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
 
        DiscreteLinearOperator Grad(H_space, N_space);

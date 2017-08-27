@@ -596,10 +596,10 @@ int main(int argc, char *argv[])
     auto mesh = make_shared<Mesh>(2, 2, 2, Element::HEXAHEDRON, 1);
 
     // Do a general refine and turn the mesh into nonconforming mesh
-    Array<Refinement> refs;
+    Array<Refinement> refs(mesh->GetNE());
     for (int i = 0; i < mesh->GetNE(); i++)
     {
-        refs.Append(Refinement(i, 7));
+        refs[i] = Refinement(i, 7);
     }
     mesh->GeneralRefinement(refs, -1, -1);
     auto pmesh = make_shared<ParMesh>(comm, *mesh);
@@ -631,17 +631,16 @@ int main(int argc, char *argv[])
 
         if (aniso_refine)
         {
-            Array<Refinement> refs;
-
+            Array<Refinement> refs(pmesh->GetNE());
             if (l < par_ref_levels/2)
             {
                 for (int i = 0; i < pmesh->GetNE(); i++)
-                    refs.Append(Refinement(i, 3));
+                    refs[i] = Refinement(i, 3);
             }
             else
             {
                 for (int i = 0; i < pmesh->GetNE(); i++)
-                    refs.Append(Refinement(i, 4));
+                    refs[i] = Refinement(i, 4);
             }
             pmesh->GeneralRefinement(refs, -1, -1);
         }
