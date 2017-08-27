@@ -974,8 +974,8 @@ int main(int argc, char *argv[])
                 divp.Elem2Dofs(*R_space, *R_Element_to_dofs1);
                 divp.Elem2Dofs(*W_space, *W_Element_to_dofs1);
 
-                P_W[ref_levels -l] = new SparseMatrix ( *P_W_local);
-                P_R[ref_levels -l] = new SparseMatrix ( *P_R_local);
+                P_W[ref_levels -l] = RemoveZeroEntries(*P_W_local);
+                P_R[ref_levels -l] = RemoveZeroEntries(*P_R_local);
 
                 Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
@@ -1165,6 +1165,7 @@ int main(int argc, char *argv[])
             bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
             bVarf->Assemble();
             bVarf->Finalize();
+            Bdiv = bVarf->ParallelAssemble();
             SparseMatrix &B_fine = bVarf->SpMat();
             SparseMatrix *B_local = &B_fine;
 
@@ -1172,17 +1173,11 @@ int main(int argc, char *argv[])
             Vector F_fine(P_W[0]->Height());
             Vector G_fine(P_R[0]->Height());
 
+            gform = new ParLinearForm(W_space);
+            gform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+            gform->Assemble();
 
-            ParLinearForm gform(R_space);
-            gform.Update();
-            gform.Assemble();
-
-            ParLinearForm fform(W_space);
-            fform.Update();
-            fform.AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
-            fform.Assemble();
-
-            F_fine = fform;
+            F_fine = *gform;
             G_fine = .0;
 
             divp.div_part(ref_levels,
@@ -1199,7 +1194,7 @@ int main(int argc, char *argv[])
 
     #ifdef MFEM_DEBUG
             Vector sth(F_fine.Size());
-            bVarf->SpMat().Mult(sigmahat_pau, sth);
+            B_fine.Mult(sigmahat_pau, sth);
             sth -= F_fine;
             MFEM_ASSERT(sth.Norml2()<1e-8, "The particular solution does not satisfy the divergence constraint");
     #endif

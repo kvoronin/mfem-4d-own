@@ -247,7 +247,14 @@ public:
 
         Vector sig_c(B_coarse->Width());
 
-        auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
+//        auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
+        HypreParMatrix B_tmp(d_td_coarse_W->GetComm(),
+                             d_td_coarse_W->GetGlobalNumRows(),
+                             d_td_coarse_R->GetGlobalNumRows(),
+                             d_td_coarse_W->GetRowStarts(),
+                             d_td_coarse_R->GetRowStarts(), B_coarse);
+        auto B_Global = RAP(d_td_coarse_W, &B_tmp, d_td_coarse_R);
+
         Vector Truesig_c(B_Global->Width());
 
         if (M_fine)
