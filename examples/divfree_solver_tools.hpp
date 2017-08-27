@@ -536,8 +536,7 @@ private:
             B00 = new HypreSmoother(A00);
             B11 = new HypreSmoother(A11);
 
-            tmp01.SetSize(A00.Width());
-            tmp02.SetSize(A00.Width());
+            tmp0.SetSize(A00.Width());
             tmp1.SetSize(A11.Width());
         }
 
@@ -562,9 +561,9 @@ private:
             yblock.GetBlock(1) = 0.0;
             B11->Mult(xblock.GetBlock(1), yblock.GetBlock(1));
 
-            tmp01 = xblock.GetBlock(0);
-            A01.Mult(-1.0, yblock.GetBlock(1), 1.0, tmp01);
-            B00->Mult(tmp01, yblock.GetBlock(0));
+            tmp0 = xblock.GetBlock(0);
+            A01.Mult(-1.0, yblock.GetBlock(1), 1.0, tmp0);
+            B00->Mult(tmp0, yblock.GetBlock(0));
         }
 
         virtual void SetOperator(const Operator &op) { }
@@ -586,8 +585,7 @@ private:
         const Array<int> &offsets;
         mutable BlockVector xblock;
         mutable BlockVector yblock;
-        mutable Vector tmp01;
-        mutable Vector tmp02;
+        mutable Vector tmp0;
         mutable Vector tmp1;
     };
 

@@ -965,12 +965,9 @@ int main(int argc, char *argv[])
    }
 
    {
-       auto *hcurl_coll = new ND_FECollection(feorder+1, dim);
-       auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
-
-       DiscreteLinearOperator Grad(H_space, N_space);
+       DiscreteLinearOperator Grad(H_space, C_space);
        Grad.AddDomainInterpolator(new GradientInterpolator());
-       ParGridFunction GradS(N_space);
+       ParGridFunction GradS(C_space);
        Grad.Assemble();
        Grad.Mult(*S, GradS);
 
@@ -985,9 +982,6 @@ int main(int argc, char *argv[])
                         sqrt(err_S*err_S + err_GradS*err_GradS) /
                         sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
        }
-
-       delete hcurl_coll;
-       delete N_space;
    }
 
    // Check value of functional and mass conservation

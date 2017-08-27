@@ -1134,6 +1134,8 @@ int main(int argc, char *argv[])
 
 
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
+    ParLinearForm *gform;
+    HypreParMatrix *Bdiv;
     if (withDiv)
     {
         if (with_multilevel)
@@ -1208,9 +1210,8 @@ int main(int argc, char *argv[])
             if (verbose)
                 std::cout << "Solving Poisson problem for finding a particular solution \n";
             ParGridFunction *sigma_exact;
-            ParLinearForm *gform(new ParLinearForm);
             ParMixedBilinearForm *Bblock;
-            HypreParMatrix *Bdiv, *BdivT;
+            HypreParMatrix *BdivT;
             HypreParMatrix *BBT;
             HypreParVector *Rhs;
 
@@ -1823,6 +1824,59 @@ int main(int argc, char *argv[])
                      err_GradS / norm_GradS << "\n";
         std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
                      sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+    }
+
+    // Check value of functional and mass conservation
+    {
+        Vector trueSigma(R_space->TrueVSize());
+        trueSigma = 0.0;
+        sigma->ParallelProject(trueSigma);
+
+        Vector MtrueSigma(R_space->TrueVSize());
+        MtrueSigma = 0.0;
+        M->Mult(trueSigma, MtrueSigma);
+        double localFunctional = trueSigma*MtrueSigma;
+
+        Vector GtrueSigma(H_space->TrueVSize());
+        GtrueSigma = 0.0;
+        BT->Mult(trueSigma, GtrueSigma);
+        localFunctional += 2.0*(trueX.GetBlock(1)*GtrueSigma);
+
+        Vector XtrueS(H_space->TrueVSize());
+        XtrueS = 0.0;
+        C->Mult(trueX.GetBlock(1), XtrueS);
+        localFunctional += trueX.GetBlock(1)*XtrueS;
+
+        double globalFunctional;
+        MPI_Reduce(&localFunctional, &globalFunctional, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+        {
+            cout << "|| sigma_h - L(S_h) ||^2 + || div_h sigma_h - f ||^2 = "
+                 << globalFunctional+err_div*err_div<< "\n";
+            cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+            cout << "Relative Energy Error = "
+                 << sqrt(globalFunctional+err_div*err_div)/norm_div<< "\n";
+        }
+
+        auto trueRhs_part = gform->ParallelAssemble();
+        double mass_loc = trueRhs_part->Norml1();
+        double mass;
+        MPI_Reduce(&mass_loc, &mass, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass = " << mass<< "\n";
+
+        Vector DtrueSigma(W_space->TrueVSize());
+        DtrueSigma = 0.0;
+        Bdiv->Mult(trueSigma, DtrueSigma);
+        DtrueSigma -= *trueRhs_part;
+        double mass_loss_loc = DtrueSigma.Norml1();
+        double mass_loss;
+        MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass loss = " << mass_loss<< "\n";
     }
 
     if (verbose)
