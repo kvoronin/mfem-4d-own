@@ -903,21 +903,27 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-//        if (verbose)
-//            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-//        ifstream imesh(mesh_file);
-//        if (!imesh)
-//        {
-//            std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-//            MPI_Finalize();
-//            return -2;
-//        }
-//        else
-//        {
-//            mesh = new Mesh(imesh, 1, 1);
-//            imesh.close();
-//        }
-        mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
+        if (nDimensions == 4)
+        {
+            if (verbose)
+                cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+            ifstream imesh(mesh_file);
+            if (!imesh)
+            {
+                std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+                MPI_Finalize();
+                return -2;
+            }
+            else
+            {
+                mesh = new Mesh(imesh, 1, 1);
+                imesh.close();
+            }
+        }
+        else
+        {
+            mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
+        }
     }
     else //if nDimensions is not 3 or 4
     {
@@ -931,7 +937,7 @@ int main(int argc, char *argv[])
     {
         if (aniso_refine)
         {
-            // for anisotropic refinement, the serial mesh need at least one
+            // for anisotropic refinement, the serial mesh needs at least one
             // serial refine to turn the mesh into a nonconforming mesh
             MFEM_ASSERT(ser_ref_levels > 0, "need ser_ref_levels > 0 for aniso_refine");
 
