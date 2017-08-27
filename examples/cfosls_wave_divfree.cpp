@@ -1132,7 +1132,8 @@ int main(int argc, char *argv[])
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
     }
 
-
+    chrono.Clear();
+    chrono.Start();
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
     ParLinearForm *gform;
     HypreParMatrix *Bdiv;
@@ -1262,6 +1263,8 @@ int main(int argc, char *argv[])
             std::cout << "Using exact sigma minus curl of a given function from H(curl,0) as a particular solution \n";
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
+    if (verbose)
+        cout<<"Particular solution found in "<< chrono.RealTime() <<" seconds.\n";
     // in either way now Sigmahat is a function from H(div) s.t. div Sigmahat = div sigma = f
 
     MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
@@ -1655,6 +1658,8 @@ int main(int argc, char *argv[])
     else
         if (verbose)
             cout << "Using no preconditioner" << endl << flush;
+    if (verbose)
+        std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
 
     IterativeSolver * solver;
     solver = new CGSolver(comm);

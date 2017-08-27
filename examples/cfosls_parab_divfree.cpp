@@ -1826,6 +1826,8 @@ int main(int argc, char *argv[])
     else
         if (verbose)
             cout << "Using no preconditioner" << endl << flush;
+    if (verbose)
+        std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
 
     IterativeSolver * solver;
     solver = new CGSolver(comm);

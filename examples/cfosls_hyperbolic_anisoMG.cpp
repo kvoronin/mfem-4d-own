@@ -845,7 +845,7 @@ int main(int argc, char *argv[])
 
    Solver *prec;
    Array<BlockOperator*> P;
-   if (prec_option==2)
+   if (prec_option==3)
    {
        P.SetSize(P_C.Size());
 
@@ -867,7 +867,7 @@ int main(int argc, char *argv[])
    }
    else
    {
-       MFEM_ASSERT(prec_option == 3, "prec_option can either be 2 or 3");
+       MFEM_ASSERT(prec_option == 2, "prec_option can either be 2 or 3");
        Multigrid * invCMC = new Multigrid(*CMC, P_C);
        Multigrid * invX = new Multigrid(*X, P_H);
 
