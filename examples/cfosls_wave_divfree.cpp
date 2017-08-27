@@ -584,7 +584,7 @@ Wave_test_divfree::Wave_test_divfree (int Dim, int NumSol, int NumCurl)
 int main(int argc, char *argv[])
 {
     int num_procs, myid;
-    bool visualization = 1;
+    bool visualization = 0;
 
     // 1. Initialize MPI
     MPI_Init(&argc, &argv);
