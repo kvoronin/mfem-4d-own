@@ -31,7 +31,7 @@ public:
 
    typedef Geometry::Constants<Geometry::PENTATOPE> geom_p;
 
-   Pentatope() : Element(Geometry::PENTATOPE) { transform = 0; };
+   Pentatope() : Element(Geometry::PENTATOPE) { transform = 0; }
 
    /// Constructs pentatope by specifying the indices and the attribute.
    Pentatope(const int *ind, int attr = 1);

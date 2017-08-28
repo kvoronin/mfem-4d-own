@@ -85,33 +85,6 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
    std::cout << "Implementation of Pentatope::GetPointMatrix() is not ready \n";
    ;
    return;
-
-   /* The transformations and orientations here match the six cases in
-      Mesh::Bisection for tetrahedra. */
-   while (n)
-   {
-#define ASGN(a, b) (a[0] = b[0], a[1] = b[1], a[2] = b[2], a[3] = b[3])
-#define SWAP(a, b) for (int i = 0; i < 4; i++) { std::swap(a[i], b[i]); }
-#define AVG(a, b, c) for (int i = 0; i < 4; i++) { a[i] = (b[i]+c[i])*0.5; }
-
-      /*
-       * copied from tetrahedral case, i.e. Tetrahedron::GetPointMatrix
-      double e[3];
-      AVG(e, a, b);
-      switch (chain[--n])
-      {
-         case 0: ASGN(b, c); ASGN(c, d); break;
-         case 1: ASGN(a, c); ASGN(c, d); break;
-         case 2: ASGN(b, a); ASGN(a, d); break;
-         case 3: ASGN(a, b); ASGN(b, d); break;
-         case 4: SWAP(a, c); ASGN(b, d); break;
-         case 5: SWAP(b, c); ASGN(a, d); break;
-         default:
-            MFEM_ABORT("Invalid transform.");
-      }
-      ASGN(d, e);
-      */
-   }
 }
 
 Element *Pentatope::Duplicate(Mesh *m) const
