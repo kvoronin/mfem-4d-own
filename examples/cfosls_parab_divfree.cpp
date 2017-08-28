@@ -768,7 +768,8 @@ int main(int argc, char *argv[])
     int ser_ref_levels  = 1;
     int par_ref_levels  = 2;
 
-    bool aniso_refine = false;
+    bool aniso_refine = true;
+    bool refine_t_first = true;
 
     bool withDiv = true;
     bool with_multilevel = true;
@@ -823,6 +824,9 @@ int main(int argc, char *argv[])
     args.AddOption(&aniso_refine, "-aniso", "--aniso-refine", "-iso",
                    "--iso-refine",
                    "Using anisotropic or isotropic refinement.");
+    args.AddOption(&refine_t_first, "-refine-t-first", "--refine-time-first",
+                   "-refine-x-first", "--refine-space-first",
+                   "Refine time or space first in anisotropic refinement.");
 
     args.Parse();
     if (!args.Good())
@@ -1082,7 +1086,7 @@ int main(int argc, char *argv[])
                 if (prec_is_MG)
                     coarseH_space->Update();
 
-                if (aniso_refine)
+                if (aniso_refine && refine_t_first)
                 {
                     Array<Refinement> refs(pmesh->GetNE());
                     if (l < par_ref_levels/2+1)
@@ -1094,6 +1098,21 @@ int main(int argc, char *argv[])
                     {
                         for (int i = 0; i < pmesh->GetNE(); i++)
                             refs[i] = Refinement(i, 3);
+                    }
+                    pmesh->GeneralRefinement(refs, -1, -1);
+                }
+                else if (aniso_refine && !refine_t_first)
+                {
+                    Array<Refinement> refs(pmesh->GetNE());
+                    if (l < par_ref_levels/2+1)
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 3);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 4);
                     }
                     pmesh->GeneralRefinement(refs, -1, -1);
                 }
@@ -1163,7 +1182,7 @@ int main(int argc, char *argv[])
             if (prec_is_MG)
                 coarseH_space->Update();
 
-            if (aniso_refine)
+            if (aniso_refine && refine_t_first)
             {
                 Array<Refinement> refs(pmesh->GetNE());
                 if (l < par_ref_levels/2)
@@ -1175,6 +1194,21 @@ int main(int argc, char *argv[])
                 {
                     for (int i = 0; i < pmesh->GetNE(); i++)
                         refs[i] = Refinement(i, 3);
+                }
+                pmesh->GeneralRefinement(refs, -1, -1);
+            }
+            else if (aniso_refine && !refine_t_first)
+            {
+                Array<Refinement> refs(pmesh->GetNE());
+                if (l < par_ref_levels/2)
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 3);
+                }
+                else
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 4);
                 }
                 pmesh->GeneralRefinement(refs, -1, -1);
             }
