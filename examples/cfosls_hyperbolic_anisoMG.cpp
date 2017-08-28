@@ -624,6 +624,9 @@ int main(int argc, char *argv[])
     Array<HypreParMatrix*> P_C(par_ref_levels), P_H(par_ref_levels);
     auto coarseC_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
     auto coarseH_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
+
+    chrono.Clear();
+    chrono.Start();
     for (int l = 0; l < par_ref_levels; l++)
     {
         coarseC_space->Update();
@@ -672,6 +675,8 @@ int main(int argc, char *argv[])
         P_H[l]->CopyColStarts();
         P_H[l]->CopyRowStarts();
     }
+    if (verbose)
+        cout<<"MG hierarchy constructed in "<< chrono.RealTime() <<" seconds.\n";
 
     HYPRE_Int dimR = R_space->GlobalTrueVSize();
     HYPRE_Int dimH = H_space->GlobalTrueVSize();

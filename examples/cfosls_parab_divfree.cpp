@@ -1048,7 +1048,8 @@ int main(int argc, char *argv[])
     Array<int> ess_dof_coarsestlvl_list;
     DivPart divp;
 
-
+    chrono.Clear();
+    chrono.Start();
     if (with_multilevel)
     {
         if (verbose)
@@ -1217,7 +1218,8 @@ int main(int argc, char *argv[])
             }
         } // end of loop over mesh levels
     } // end of else (not a multilevel algo)
-
+    if (verbose)
+        cout<<"MG hierarchy constructed in "<< chrono.RealTime() <<" seconds.\n";
 
     //if(dim==3) pmesh->ReorientTetMesh();
 

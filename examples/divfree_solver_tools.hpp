@@ -313,8 +313,8 @@ public:
             //     Check the norm of the unpreconditioned residual.
 
             int maxIter(50000);
-            double rtol(1.e-16);
-            double atol(1.e-16);
+            double rtol(1.e-12);
+            double atol(1.e-14);
 
             MINRESSolver solver(MPI_COMM_WORLD);
             solver.SetAbsTol(atol);
@@ -334,8 +334,8 @@ public:
         else
         {
             int maxIter(50000);
-            double rtol(1.e-16);
-            double atol(1.e-16);
+            double rtol(1.e-12);
+            double atol(1.e-14);
 
             HypreParMatrix *MinvBt = B_Global->Transpose();
             HypreParMatrix *S = ParMult(B_Global, MinvBt);

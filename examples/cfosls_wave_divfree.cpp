@@ -882,7 +882,8 @@ int main(int argc, char *argv[])
     Array<int> ess_dof_coarsestlvl_list;
     DivPart divp;
 
-
+    chrono.Clear();
+    chrono.Start();
     if (with_multilevel)
     {
         if (verbose)
@@ -1051,6 +1052,8 @@ int main(int argc, char *argv[])
             }
         } // end of loop over mesh levels
     } // end of else (not a multilevel algo)
+    if (verbose)
+        cout<<"MG hierarchy constructed in "<< chrono.RealTime() <<" seconds.\n";
 
     //if(dim==3) pmesh->ReorientTetMesh();
 
@@ -1221,12 +1224,13 @@ int main(int argc, char *argv[])
             Bblock = new ParMixedBilinearForm(R_space, W_space);
             Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
             Bblock->Assemble();
-            Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact, *gform);
-
             Bblock->Finalize();
             Bdiv = Bblock->ParallelAssemble();
-            BdivT = Bdiv->Transpose();
-            BBT = ParMult(Bdiv, BdivT);
+
+            Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact, *gform);
+            auto Bdiv_withBC = Bblock->ParallelAssemble();
+            BdivT = Bdiv_withBC->Transpose();
+            BBT = ParMult(Bdiv_withBC, BdivT);
             Rhs = gform->ParallelAssemble();
 
             HypreBoomerAMG * invBBT = new HypreBoomerAMG(*BBT);
