@@ -3,6 +3,8 @@
 using namespace mfem;
 using std::unique_ptr;
 
+#define DEBUG4D
+
 class DivPart
 {
 
@@ -34,6 +36,11 @@ public:
         Vector comp;
         Vector F_coarse;
 
+#ifdef DEBUG4D
+        Vector vec2;
+        Vector total_rhside(P_W[0]->Height());
+        Vector rhside;
+#endif
 
         Vector total_sig(P_R[0]->Height());
         total_sig = .0;
@@ -136,6 +143,10 @@ public:
             u_loc_vec =0.0;
             p_loc_vec =0.0;
 
+#ifdef DEBUG4D
+            Vector rhs_loc_vec(AE_W->Width());
+            rhs_loc_vec = 0.0;
+#endif
 
             for( int e = 0; e < AE_R->Height(); e++){
 
@@ -210,10 +221,23 @@ public:
 
             total_sig +=p_loc_vec;
 
+#ifdef DEBUG4D
+            if (l>0){
+                for (int k = l-1; k>=0; k--){
+
+                    vec2.SetSize(P_W[k]->Height());
+                    P_W[k]->Mult(rhs_loc_vec, vec2);
+                    rhs_loc_vec = vec2;
+                }
+            }
+
+            total_rhside += rhs_loc_vec;
+#endif
+
             MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
                         "checking global solution added" << total_sig.Norml2());
 
-        }
+        } // end of loop over levels
 
         // The coarse problem::
 
@@ -246,6 +270,10 @@ public:
         }
 
         Vector sig_c(B_coarse->Width());
+
+#ifdef DEBUG4D
+        Vector rhs_c;
+#endif
 
         auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
         Vector Truesig_c(B_Global->Width());
@@ -369,6 +397,24 @@ public:
         total_sig+=sig_c;
         sigma.SetSize(total_sig.Size());
         sigma = total_sig;
+
+#ifdef DEBUG4D
+        rhs_c = FF_coarse;
+        for (int k = ref_levels-1; k>=0; k--){
+
+            vec2.SetSize(P_W[k]->Height());
+            P_W[k]->Mult(rhs_c, vec2);
+            rhs_c.SetSize(P_W[k]->Height());
+            rhs_c = vec2;
+        }
+        total_rhside += rhs_c;
+        rhside.SetSize(total_rhside.Size());
+        rhside = total_rhside;
+
+        rhside -= F_fine;
+
+        std::cout << "|| f - sum over all f in the algo || = " << rhside.Norml2() / sqrt(rhside.Size()) << "\n";
+#endif
     }
 
     void Dofs_AE(SparseMatrix &Element_Dofs, const SparseMatrix &Element_Element_coarse, SparseMatrix &Dofs_Ae)

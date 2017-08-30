@@ -7674,6 +7674,10 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    const int *ei;
    Vertex V;
 
+   // now it is the element to be refined. later we will replace its vertices
+   // by the vertices of one of subpentatopes
+   Pentatope *penta0 = (Pentatope*) elements[i];
+
    bool swapped = swappedElements[i];
 
    int *v = elements[i]->GetVertices();
@@ -7700,11 +7704,179 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
 
    int attr = elements[i]->GetAttribute();
 
-   // w[0] = v[0]; w[1] = v_new[0]; w[2] = v_new[1]; w[3] = v_new[2]; w[4] = v_new[3]; elements.Append(new Pentatope(w, attr));
-   // w[0] = v[1]; w[1] = v_new[0]; w[2] = v_new[4]; w[3] = v_new[5]; w[4] = v_new[6]; elements.Append(new Pentatope(w, attr));
-   // w[0] = v[2]; w[1] = v_new[1]; w[2] = v_new[4]; w[3] = v_new[7]; w[4] = v_new[8]; elements.Append(new Pentatope(w, attr));
-   // w[0] = v[3]; w[1] = v_new[2]; w[2] = v_new[5]; w[3] = v_new[7]; w[4] = v_new[9]; elements.Append(new Pentatope(w, attr));
-   // w[0] = v[4]; w[1] = v_new[3]; w[2] = v_new[6]; w[3] = v_new[8]; w[4] = v_new[9]; elements.Append(new Pentatope(w, attr));
+   // getting the already existing sequence of transforms before adding the new one for each new pentatope
+   unsigned code = penta0->GetTransform();
+
+   // new Pentatopes
+   // transforms should match its usage in GetPointMatrices
+   // and Bisection if it will be implemented for pentatopes
+
+   bool mySwaped;
+   w[0] = v[0];     w[1] = v_new[0]; w[2] = v_new[1]; w[3] = v_new[2];
+   w[4] = v_new[3]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta1 = new Pentatope(w,attr);
+   elements.Append(penta1);
+   penta1->ResetTransform(code);
+   penta1->PushTransform(1);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[0]; w[1] = v[1];     w[2] = v_new[4]; w[3] = v_new[5];
+   w[4] = v_new[6]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta2 = new Pentatope(w,attr);
+   elements.Append(penta2);
+   penta2->ResetTransform(code);
+   penta2->PushTransform(2);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v[2];     w[3] = v_new[7];
+   w[4] = v_new[8]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta3 = new Pentatope(w,attr);
+   elements.Append(penta3);
+   penta3->ResetTransform(code);
+   penta3->PushTransform(3);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[7]; w[3] = v[3];
+   w[4] = v_new[9]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta4 = new Pentatope(w,attr);
+   elements.Append(penta4);
+   penta4->ResetTransform(code);
+   penta4->PushTransform(4);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[3]; w[1] = v_new[6]; w[2] = v_new[8]; w[3] = v_new[9]; w[4] = v[4];
+   mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta5 = new Pentatope(w,attr);
+   elements.Append(penta5);
+   penta5->ResetTransform(code);
+   penta5->PushTransform(5);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[4]; w[3] = v_new[5];
+   w[4] = v_new[6]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta6 = new Pentatope(w,attr);
+   elements.Append(penta6);
+   penta6->ResetTransform(code);
+   penta6->PushTransform(6);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[2]; w[3] = v_new[5];
+   w[4] = v_new[6]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta7 = new Pentatope(w,attr);
+   elements.Append(penta7);
+   penta7->ResetTransform(code);
+   penta7->PushTransform(7);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[2]; w[3] = v_new[3];
+   w[4] = v_new[6]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta8 = new Pentatope(w,attr);
+   elements.Append(penta8);
+   penta8->ResetTransform(code);
+   penta8->PushTransform(8);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v_new[5]; w[3] = v_new[7];
+   w[4] = v_new[8]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta9 = new Pentatope(w,attr);
+   elements.Append(penta9);
+   penta9->ResetTransform(code);
+   penta9->PushTransform(9);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v_new[5]; w[3] = v_new[6];
+   w[4] = v_new[8]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta10 = new Pentatope(w,attr);
+   elements.Append(penta10);
+   penta10->ResetTransform(code);
+   penta10->PushTransform(10);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[5]; w[3] = v_new[7];
+   w[4] = v_new[8]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta11 = new Pentatope(w,attr);
+   elements.Append(penta11);
+   penta11->ResetTransform(code);
+   penta11->PushTransform(11);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[5]; w[3] = v_new[6];
+   w[4] = v_new[8]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta12 = new Pentatope(w,attr);
+   elements.Append(penta12);
+   penta12->ResetTransform(code);
+   penta12->PushTransform(12);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[3]; w[3] = v_new[6];
+   w[4] = v_new[8]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta13 = new Pentatope(w,attr);
+   elements.Append(penta13);
+   penta13->ResetTransform(code);
+   penta13->PushTransform(13);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[7]; w[3] = v_new[8];
+   w[4] = v_new[9]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta14 = new Pentatope(w,attr);
+   elements.Append(penta14);
+   penta14->ResetTransform(code);
+   penta14->PushTransform(14);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[6]; w[3] = v_new[8];
+   w[4] = v_new[9]; mySwaped = swapped;
+   if (mySwaped) { Swap(w); }
+   Pentatope * penta15 = new Pentatope(w,attr);
+   elements.Append(penta15);
+   penta15->ResetTransform(code);
+   penta15->PushTransform(15);
+   swappedElements.Append(mySwaped);
+
+   w[0] = v_new[2]; w[1] = v_new[3]; w[2] = v_new[6]; w[3] = v_new[8];
+   w[4] = v_new[9]; mySwaped = !swapped;
+   if (mySwaped) { Swap(w); }
+   penta0->SetVertices(w);
+   penta0->ResetTransform(code);
+   penta0->PushTransform(0);
+   //elements[i]->SetVertices(w);
+   swappedElements[i] = mySwaped;
+
+   // set parent indices
+   int coarse = FindCoarseElement(i);
+   CoarseFineTr.embeddings[i] = Embedding(coarse);
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+   CoarseFineTr.embeddings.Append(Embedding(coarse));
+
+   /*
+    * old, before adding transforms
 
    bool mySwaped;
    w[0] = v[0];     w[1] = v_new[0]; w[2] = v_new[1]; w[3] = v_new[2];
@@ -7774,6 +7946,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    w[4] = v_new[9]; mySwaped = !swapped;
    if (mySwaped) { Swap(w); } elements[i]->SetVertices(w);
    swappedElements[i] = mySwaped;
+   */
 
    // DenseMatrix J(4,4);
    // for(int k=0; k<16; k++)
@@ -7884,7 +8057,7 @@ void Mesh::UniformRefinement(int i, const DSTable &v_to_v,
       Triangle *tri0 = (Triangle*) elements[i];
       tri0->GetVertices(v);
 
-      // 1. Get the indeces for the new vertices in array v_new
+      // 1. Get the indices for the new vertices in array v_new
       bisect[0] = v_to_v(v[0],v[1]);
       bisect[1] = v_to_v(v[1],v[2]);
       bisect[2] = v_to_v(v[0],v[2]);
@@ -7919,7 +8092,7 @@ void Mesh::UniformRefinement(int i, const DSTable &v_to_v,
          }
       }
 
-      // 2. Set the node indeces for the new elements in v1, v2, v3 & v4 so that
+      // 2. Set the node indices for the new elements in v1, v2, v3 & v4 so that
       //    the edges marked for refinement be between the first two nodes.
       v1[0] =     v[0]; v1[1] = v_new[0]; v1[2] = v_new[2];
       v2[0] = v_new[0]; v2[1] =     v[1]; v2[2] = v_new[1];

@@ -58,8 +58,7 @@ public:
    /** Reorder the vertices so that the longest edge is from vertex 0
        to vertex 1. If called it should be once from the mesh constructor,
        because the order may be used later for setting the edges. **/
-   virtual void MarkEdge(const DSTable &v_to_v, const int *length)
-   { MFEM_ABORT("PENTATOPE:: MarkEdge not implemented"); }
+   virtual void MarkEdge(const DSTable &v_to_v, const int *length);
 
    /// Calculate point matrix corresponding to a chain of transformations.
    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
@@ -90,6 +89,10 @@ public:
 
    virtual void ResetTransform(int tr) { transform = tr; }
    virtual unsigned GetTransform() const { return transform; }
+
+   /// Add 'tr' to the current chain of coarse-fine transformations.
+   virtual void PushTransform(int tr)
+   { transform = (transform << 5) | (tr + 1); }
 
    virtual Element *Duplicate(Mesh *m) const;
 
