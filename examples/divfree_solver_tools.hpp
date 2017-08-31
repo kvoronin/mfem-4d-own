@@ -48,6 +48,9 @@ public:
 //        chrono.Clear();
 //        chrono.Start();
 
+        std::cout << "abs. norm of F_fine = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
+
+
         for (int l=0; l < ref_levels; l++)
         {
             // 1. Obtaining the relation Dofs_Coarse_Element
@@ -197,7 +200,12 @@ public:
 
                 p_loc_vec.AddElementVector(Rtmp_j,sig);
 
-            }
+#ifdef DEBUG4D
+                //rhs_loc_vec = rhs_l;
+                rhs_loc_vec.AddElementVector(Wtmp_j, sub_F);
+#endif
+
+            } // end fo loop over all elements at level l
 
 #ifdef MFEM_DEBUG
             Vector fcheck2(u_loc_vec.Size());
@@ -222,6 +230,7 @@ public:
             total_sig +=p_loc_vec;
 
 #ifdef DEBUG4D
+            std::cout << "abs. norm rhs_loc_vec at level = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
             if (l>0){
                 for (int k = l-1; k>=0; k--){
 
@@ -230,6 +239,7 @@ public:
                     rhs_loc_vec = vec2;
                 }
             }
+            std::cout << "abs. norm rhs_loc_vec after = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
 
             total_rhside += rhs_loc_vec;
 #endif
@@ -272,6 +282,7 @@ public:
         Vector sig_c(B_coarse->Width());
 
 #ifdef DEBUG4D
+        std::cout << "abs. norm of F_coarse = " << F_coarse.Norml2() / sqrt(F_coarse.Size()) << "\n";
         Vector rhs_c;
 #endif
 
@@ -399,6 +410,8 @@ public:
         sigma = total_sig;
 
 #ifdef DEBUG4D
+        std::cout << "abs. norm of FF_coarse = " << FF_coarse.Norml2() / sqrt(FF_coarse.Size()) << "\n";
+
         rhs_c = FF_coarse;
         for (int k = ref_levels-1; k>=0; k--){
 
@@ -408,8 +421,12 @@ public:
             rhs_c = vec2;
         }
         total_rhside += rhs_c;
-        rhside.SetSize(total_rhside.Size());
         rhside = total_rhside;
+
+        std::cout << "abs. norm of rhs_L = " << rhs_l.Norml2() / sqrt(rhs_l.Size()) << "\n";
+
+        //total_rhside += FF_coarse;
+        //rhside = total_rhside;
 
         rhside -= F_fine;
 

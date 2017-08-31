@@ -772,12 +772,12 @@ int main(int argc, char *argv[])
 
     bool verbose = (myid == 0);
 
-    int nDimensions     = 4;
+    int nDimensions     = 3;
     int numsol          = -34;
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     bool withDiv = true;
     bool with_multilevel = true;
