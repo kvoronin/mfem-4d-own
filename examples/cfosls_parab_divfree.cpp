@@ -777,7 +777,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
 
     bool withDiv = true;
     bool with_multilevel = true;
@@ -981,7 +981,6 @@ int main(int argc, char *argv[])
         hdivfree_coll = new DivSkew1_4DFECollection;
     } // end of initialization of div-free f.e. space in 4D
     C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
-
 
     FiniteElementCollection *h1_coll;
     ParFiniteElementSpace *H_space;

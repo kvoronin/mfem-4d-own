@@ -38,7 +38,8 @@ public:
 
 #ifdef DEBUG4D
         Vector vec2;
-        Vector total_rhside(P_W[0]->Height());
+        Vector total_rhside(P_W[0]->Height()); // at finest level
+        total_rhside = 0.0;
         Vector rhside;
 #endif
 
@@ -99,7 +100,14 @@ public:
             P_WTxP_W->GetDiag(Diag);
 
             for(int m=0; m < P_WTxP_W->Size(); m++)
+            {
+                //std::cout << "Diag(m) = " << Diag(m) << "\n";
                 invDiag(m) = comp(m)/Diag(m);
+            }
+
+            //std::cout << "Diag(100) = " << Diag(100);
+            //std::cout << "Diag(200) = " << Diag(200);
+            //std::cout << "Diag(300) = " << Diag(300);
 
 
             P_W[l]->Mult(invDiag,F_coarse);
@@ -205,7 +213,7 @@ public:
                 rhs_loc_vec.AddElementVector(Wtmp_j, sub_F);
 #endif
 
-            } // end fo loop over all elements at level l
+            } // end of loop over all elements at level l
 
 #ifdef MFEM_DEBUG
             Vector fcheck2(u_loc_vec.Size());
@@ -239,6 +247,44 @@ public:
                     rhs_loc_vec = vec2;
                 }
             }
+
+
+            /*
+            if (l == 0)
+            {
+                SparseMatrix * P_RT = Transpose(*P_R[0]);
+                SparseMatrix * P_RTxP_R = Mult(*P_RT,*P_R[0]);
+                Vector Diag(P_RTxP_R->Size());
+                P_RTxP_R->GetDiag(Diag);
+
+                for (int i = 0; i < rhs_loc_vec.Size(); ++i)
+                {
+                    std::cout << "Diag[i] = " << Diag[i] << "\n";
+                    rhs_loc_vec[i] *= 1.0 / Diag[0];
+                }
+            }
+
+            //rhs_loc_vec *= 0.25;
+            */
+
+
+
+            // maybe this is wrong for more than one level, multiplying rhside by the scaling factors from
+            // all the previous levels used
+            if (l > 0)
+            {
+                for (int k = 0; k<l; k++)
+                {
+                    SparseMatrix * P_WT = Transpose(*P_W[k]);
+                    SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[k]);
+                    Vector Diag(P_WTxP_W->Size());
+                    P_WTxP_W->GetDiag(Diag);
+
+                    for (int i = 0; i < rhs_loc_vec.Size(); ++i)
+                        rhs_loc_vec[i] *= 1.0 / Diag[0];
+                }
+            }
+
             std::cout << "abs. norm rhs_loc_vec after = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
 
             total_rhside += rhs_loc_vec;
@@ -257,6 +303,14 @@ public:
 
         rhs_l +=F_coarse;
         P_W[ref_levels-1]->MultTranspose(rhs_l, FF_coarse );
+
+#ifdef DEBUG4D
+        std::cout << "abs. norm of F_coarse = " << F_coarse.Norml2() / sqrt(F_coarse.Size()) << "\n";
+        std::cout << "abs. norm of rhs_L = " << rhs_l.Norml2() / sqrt(rhs_l.Size()) << "\n";
+        std::cout << "abs. norm of FF_coarse = " << FF_coarse.Norml2() / sqrt(FF_coarse.Size()) << "\n";
+        Vector rhs_c(P_W[0]->Height());
+        rhs_c = 0.0;
+#endif
 
         SparseMatrix *P_WT2 = Transpose(*P_W[ref_levels-1]);
         SparseMatrix *P_RT2;
@@ -280,11 +334,6 @@ public:
         }
 
         Vector sig_c(B_coarse->Width());
-
-#ifdef DEBUG4D
-        std::cout << "abs. norm of F_coarse = " << F_coarse.Norml2() / sqrt(F_coarse.Size()) << "\n";
-        Vector rhs_c;
-#endif
 
         auto B_Global = d_td_coarse_R->LeftDiagMult(*B_coarse,d_td_coarse_W->GetColStarts());
         Vector Truesig_c(B_Global->Width());
@@ -385,7 +434,7 @@ public:
             solver.SetMaxIter(maxIter);
             solver.SetOperator(*S);
             solver.SetPreconditioner(*invS);
-            solver.SetPrintLevel(0);
+            solver.SetPrintLevel(1);
             solver.Mult(FF_coarse, tmp_c);
 //            chrono.Stop();
 
@@ -410,9 +459,22 @@ public:
         sigma = total_sig;
 
 #ifdef DEBUG4D
-        std::cout << "abs. norm of FF_coarse = " << FF_coarse.Norml2() / sqrt(FF_coarse.Size()) << "\n";
+        std::cout << "abs. norm of total_rhside before adding coarsest level = " << total_rhside.Norml2() / sqrt(total_rhside.Size()) << "\n";
 
         rhs_c = FF_coarse;
+        // maybe this is wrong for more than one level
+        for (int k = 0; k< ref_levels; k++)
+        {
+            SparseMatrix * P_WT = Transpose(*P_W[k]);
+            SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[k]);
+            Vector Diag(P_WTxP_W->Size());
+            P_WTxP_W->GetDiag(Diag);
+
+            for (int i = 0; i < rhs_c.Size(); ++i)
+                rhs_c[i] *= 1.0 / Diag[0]; // dimensions mismatch so use Diag[[0]
+        }
+
+        //rhs_c *= 0.125 * 0.125;
         for (int k = ref_levels-1; k>=0; k--){
 
             vec2.SetSize(P_W[k]->Height());
@@ -420,17 +482,20 @@ public:
             rhs_c.SetSize(P_W[k]->Height());
             rhs_c = vec2;
         }
+
+        std::cout << "abs. norm of rhs_c = projected FF_coarse = " << rhs_c.Norml2() / sqrt(rhs_c.Size()) << "\n";
+
         total_rhside += rhs_c;
         rhside = total_rhside;
-
-        std::cout << "abs. norm of rhs_L = " << rhs_l.Norml2() / sqrt(rhs_l.Size()) << "\n";
 
         //total_rhside += FF_coarse;
         //rhside = total_rhside;
 
         rhside -= F_fine;
 
-        std::cout << "|| f - sum over all f in the algo || = " << rhside.Norml2() / sqrt(rhside.Size()) << "\n";
+        std::cout << "|| fine f - sum over all f in the algo || = " << rhside.Norml2() / sqrt(rhside.Size()) << "\n";
+        std::cout << "|| fine f || = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
+        std::cout << "ratio = " << rhside.Norml2() / F_fine.Norml2() << "\n";
 #endif
     }
 
