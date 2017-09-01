@@ -1068,7 +1068,7 @@ void FiniteElementSpace::Construct()
    if (mesh->Dimension() >= 4 && mesh->GetNE())
    {
       // Here we assume that all planars in the mesh have the same base
-      // geometry -- the base geometry of the 0-th face element.
+      // geometry -- the base geometry of the 0-th planar element.
       int pdof = fec->DofForGeometry(mesh->GetPlanarBaseGeometry(0));
       if (pdof > 0)
       {

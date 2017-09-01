@@ -772,7 +772,7 @@ int main(int argc, char *argv[])
 
     bool verbose = (myid == 0);
 
-    int nDimensions     = 3;
+    int nDimensions     = 4;
     int numsol          = -34;
     int numcurl         = 0;
 
@@ -780,12 +780,12 @@ int main(int argc, char *argv[])
     int par_ref_levels  = 1;
 
     bool withDiv = true;
-    bool with_multilevel = true;
+    bool with_multilevel = false;
     //bool withS = true;
     //bool blockedversion = true;
 
     // solver options
-    int prec_option = 0;        // defines whether to use preconditioner or not, and which one
+    int prec_option = 2;        // defines whether to use preconditioner or not, and which one
     bool prec_is_MG;
     bool monolithicMG = false;
 
@@ -1073,6 +1073,17 @@ int main(int argc, char *argv[])
                 pmesh->UniformRefinement();
 
                 P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
+                auto P_RT_local = Transpose(*P_R_local);
+                std::cout << "P_RT max norm = " << P_RT_local->MaxNorm() << "\n";
+                auto PtP = Mult(*P_RT_local, *P_R_local);
+                auto PPtP = Mult(*P_R_local, *PtP);
+                SparseMatrix * P_R_check = new SparseMatrix(*PPtP);
+                *P_R_check *= -1;
+                std::cout << "nnz of P_R = " << P_R_check->NumNonZeroElems() << "\n";
+                std::cout << "nnz of PPtP = " << PPtP->NumNonZeroElems() << "\n";
+                *P_R_check += *P_R_local;
+                std::cout << "norm of P_R P_R^T P_R - P_R = " << P_R_check->MaxNorm() << "\n";
+
                 P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
 
                 std::cout << "P_W_local max norm = " << P_W_local->MaxNorm() << "\n";

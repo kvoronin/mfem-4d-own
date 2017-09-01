@@ -8267,23 +8267,46 @@ void RT0PentFiniteElement::GetLocalInterpolation (
    CalcAdjugateTranspose (Trans.Jacobian(), Jinv);
    double vk[4];
    Vector xk(4);
+   //Vector temp(4);
+   //Vector ones(4);
+   //ones = 1.0;
 
+   I = 0.0;
    for (k = 0; k < 5; k++)
    {
       Trans.Transform (Nodes.IntPoint (k), xk);
       ip.x = xk[0]; ip.y = xk[1]; ip.z = xk[2]; ip.t = xk[3];
       CalcVShape (ip, vshape);
       //  vk = |J| J^{-t} nk
+      /*
       vk[0] = Jinv(0,0)*nk[k][0]+Jinv(0,1)*nk[k][1]+Jinv(0,2)*nk[k][2]+Jinv(0,3)*nk[k][3];
       vk[1] = Jinv(1,0)*nk[k][0]+Jinv(1,1)*nk[k][1]+Jinv(1,2)*nk[k][2]+Jinv(1,3)*nk[k][3];
       vk[2] = Jinv(2,0)*nk[k][0]+Jinv(2,1)*nk[k][1]+Jinv(2,2)*nk[k][2]+Jinv(2,3)*nk[k][3];
       vk[3] = Jinv(3,0)*nk[k][0]+Jinv(3,1)*nk[k][1]+Jinv(3,2)*nk[k][2]+Jinv(3,3)*nk[k][3];
+      */
+      Jinv.Mult(nk[k], vk);
+
+      /*
+       * wrong
+      vshape.Mult(vk, temp);
 
       for (j = 0; j < 5; j++)
-         if (fabs (I(k,j) = (vshape(j,0)*vk[0]+vshape(j,1)*vk[1]+vshape(j,2)*vk[2]+vshape(j,3)*vk[3])) < 1.0e-12)
+      {
+         I(k,j) = ones * temp;
+         if (fabs (I(k,j)) < 1.0e-12)
          {
              I(k,j) = 0.0;
          }
+      }
+      */
+      for (j = 0; j < 5; j++)
+      {
+         I(k,j) = vshape(j,0)*vk[0]+vshape(j,1)*vk[1]+vshape(j,2)*vk[2]+vshape(j,3)*vk[3];
+         if (fabs (I(k,j)) < 1.0e-12)
+         {
+             I(k,j) = 0.0;
+         }
+      }
    }
 }
 

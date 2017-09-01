@@ -41,6 +41,7 @@ public:
         Vector total_rhside(P_W[0]->Height()); // at finest level
         total_rhside = 0.0;
         Vector rhside;
+        SparseMatrix * B_input = B_fine;
 #endif
 
         Vector total_sig(P_R[0]->Height());
@@ -155,7 +156,7 @@ public:
             p_loc_vec =0.0;
 
 #ifdef DEBUG4D
-            Vector rhs_loc_vec(AE_W->Width());
+            Vector rhs_loc_vec(total_rhside.Size());
             rhs_loc_vec = 0.0;
 #endif
 
@@ -238,36 +239,18 @@ public:
             total_sig +=p_loc_vec;
 
 #ifdef DEBUG4D
+            rhs_loc_vec.SetSize(rhs_l.Size());
+            rhs_loc_vec = rhs_l;
             std::cout << "abs. norm rhs_loc_vec at level = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
             if (l>0){
                 for (int k = l-1; k>=0; k--){
 
                     vec2.SetSize(P_W[k]->Height());
                     P_W[k]->Mult(rhs_loc_vec, vec2);
+                    rhs_loc_vec.SetSize(vec2.Size());
                     rhs_loc_vec = vec2;
                 }
             }
-
-
-            /*
-            if (l == 0)
-            {
-                SparseMatrix * P_RT = Transpose(*P_R[0]);
-                SparseMatrix * P_RTxP_R = Mult(*P_RT,*P_R[0]);
-                Vector Diag(P_RTxP_R->Size());
-                P_RTxP_R->GetDiag(Diag);
-
-                for (int i = 0; i < rhs_loc_vec.Size(); ++i)
-                {
-                    std::cout << "Diag[i] = " << Diag[i] << "\n";
-                    rhs_loc_vec[i] *= 1.0 / Diag[0];
-                }
-            }
-
-            //rhs_loc_vec *= 0.25;
-            */
-
-
 
             // maybe this is wrong for more than one level, multiplying rhside by the scaling factors from
             // all the previous levels used
@@ -288,6 +271,14 @@ public:
             std::cout << "abs. norm rhs_loc_vec after = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
 
             total_rhside += rhs_loc_vec;
+
+            Vector residual_l(total_rhside.Size());
+            B_input->Mult(p_loc_vec, residual_l);
+            //for (int j = 0; j < 20; ++j)
+                //std::cout << "res_l[j] = " << residual_l[j] << ", rhs[i] = " << rhs_loc_vec[j] << ", ratio = " << residual_l[j] / rhs_loc_vec[j] << "\n";
+            residual_l -= rhs_loc_vec;
+            std::cout << "|| residual_l || = " << residual_l.Norml2() / sqrt(residual_l.Size()) << "\n";
+
 #endif
 
             MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
@@ -445,6 +436,12 @@ public:
 
         d_td_coarse_R->Mult(Truesig_c,sig_c);
 
+#ifdef DEBUG4D
+        Vector residual_c_coarse(FF_coarse.Size());
+        B_Global->Mult(sig_c, residual_c_coarse);
+        residual_c_coarse -= FF_coarse;
+        std::cout << "|| residual_c on coarse level || = " << residual_c_coarse.Norml2() / sqrt(residual_c_coarse.Size()) << "\n";
+#endif
         for (int k = ref_levels-1; k>=0; k--){
 
             vec1.SetSize(P_R[k]->Height());
@@ -474,7 +471,6 @@ public:
                 rhs_c[i] *= 1.0 / Diag[0]; // dimensions mismatch so use Diag[[0]
         }
 
-        //rhs_c *= 0.125 * 0.125;
         for (int k = ref_levels-1; k>=0; k--){
 
             vec2.SetSize(P_W[k]->Height());
@@ -484,6 +480,15 @@ public:
         }
 
         std::cout << "abs. norm of rhs_c = projected FF_coarse = " << rhs_c.Norml2() / sqrt(rhs_c.Size()) << "\n";
+
+        Vector residual_c(total_rhside.Size());
+        B_input->Mult(sig_c, residual_c);
+        for (int j = 0; j < 20; ++j)
+            std::cout << "res_c[j] = " << residual_c[j] << ", rhs_c[i] = " << rhs_c[j] << ", ratio = " << residual_c[j] / rhs_c[j] << "\n";
+        residual_c -= rhs_c;
+        std::cout << "|| residual_c || = " << residual_c.Norml2() / sqrt(residual_c.Size()) << "\n";
+
+
 
         total_rhside += rhs_c;
         rhside = total_rhside;
@@ -496,6 +501,11 @@ public:
         std::cout << "|| fine f - sum over all f in the algo || = " << rhside.Norml2() / sqrt(rhside.Size()) << "\n";
         std::cout << "|| fine f || = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
         std::cout << "ratio = " << rhside.Norml2() / F_fine.Norml2() << "\n";
+
+        Vector total_residual(rhside.Size());
+        B_input->Mult(sigma, total_residual);
+        total_residual -= F_fine;
+        std::cout << "|| total_residual || = " << total_residual.Norml2() / sqrt(total_residual.Size()) << "\n";
 #endif
     }
 

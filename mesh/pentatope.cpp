@@ -60,7 +60,7 @@ void Pentatope::SetVertices(const int *ind)
    }
 }
 
-// static method
+// static method, doesn't take into account the "swapped" parameter for now
 void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
 {
    double *a = &pm(0,0), *b = &pm(0,1), *c = &pm(0,2), *d = &pm(0,3), *e = &pm(0,4);
@@ -102,21 +102,27 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
             AVG(mid1, a, d); AVG(mid2, a, e); AVG(mid3, b, e); AVG(mid4, c, e); AVG(mid5,d,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
          case 1:
-            AVG(b, a, b); AVG(c, a, c); AVG(d, a, d); AVG(e, a, e); break;
+            AVG(b, a, b); AVG(c, a, c); AVG(d, a, d); AVG(e, a, e);
+            /*SWAP(a,b);*/ break;
          case 2:
-            AVG(a, a, b); AVG(c, b, c); AVG(d, b, d); AVG(e, b, e); break;
+            AVG(a, a, b); AVG(c, b, c); AVG(d, b, d); AVG(e, b, e);
+            /*SWAP(a,b);*/ break;
          case 3:
-            AVG(a, c, a); AVG(b, c, b); AVG(d, c, d); AVG(e, c, e); break;
+            AVG(a, c, a); AVG(b, c, b); AVG(d, c, d); AVG(e, c, e);
+            /*SWAP(a,b);*/ break;
          case 4:
-            AVG(a, d, a); AVG(b, d, b); AVG(c, d, c); AVG(e, d, e); break;
+            AVG(a, d, a); AVG(b, d, b); AVG(c, d, c); AVG(e, d, e);
+            /*SWAP(a,b);*/ break;
          case 5:
-            AVG(a, e, a); AVG(b, e, b); AVG(c, e, c); AVG(d, e, d); break;
+            AVG(a, e, a); AVG(b, e, b); AVG(c, e, c); AVG(d, e, d);
+            /*SWAP(a,b);*/ break;
          case 6:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, b, c); AVG(mid4, b, d); AVG(mid5,b,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
          case 7:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, a, d); AVG(mid4, b, d); AVG(mid5,b,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            /*SWAP(a,b);*/ break;
          case 8:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, a, d); AVG(mid4, a, e); AVG(mid5,b,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
@@ -125,29 +131,51 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
          case 10:
             AVG(mid1, a, c); AVG(mid2, b, c); AVG(mid3, b, d); AVG(mid4, b, e); AVG(mid5,c,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            /*SWAP(a,b);*/ break;
          case 11:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, b, d); AVG(mid4, c, d); AVG(mid5,c,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            /*SWAP(a,b);*/ break;
          case 12:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, b, d); AVG(mid4, b, e); AVG(mid5,c,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
          case 13:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, a, e); AVG(mid4, b, e); AVG(mid5,c,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            /*SWAP(a,b);*/ break;
          case 14:
             AVG(mid1, a, d); AVG(mid2, b, d); AVG(mid3, c, d); AVG(mid4, c, e); AVG(mid5,d,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
          case 15:
             AVG(mid1, a, d); AVG(mid2, b, d); AVG(mid3, b, e); AVG(mid4, c, e); AVG(mid5,d,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
-         case 16:
-            MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
-         case 17:
-            MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            /*SWAP(a,b);*/ break;
+         //case 16:
+            //MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
+         //case 17:
+            //MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
          default:
             MFEM_ABORT("Invalid transform.");
       }
+   }
+
+   DenseMatrix Volume(4,4);
+   for (int i = 0; i < 4; i++)
+   {
+       for (int j = 0; j < 4; ++j)
+       {
+           Volume(i,j) = pm(i,j+1) - pm(i,j);
+       }
+   }
+   if (Volume.Det() < 0)
+   {
+       std::cout << "negative \n";
+   }
+   else
+   {
+       //SWAP(a,b); // doesn't help
+       std::cout << "positive \n";
    }
 
    return;
