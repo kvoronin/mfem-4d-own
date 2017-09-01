@@ -488,6 +488,20 @@ public:
         residual_c -= rhs_c;
         std::cout << "|| residual_c || = " << residual_c.Norml2() / sqrt(residual_c.Size()) << "\n";
 
+        // only for 2-level case
+        if (ref_levels == 1)
+        {
+            Vector Bsig_c(total_rhside.Size());
+            B_input->Mult(sig_c, Bsig_c);
+            Vector PWTBsig_c(P_W[0]->Width());
+            P_W[0]->MultTranspose(Bsig_c, PWTBsig_c);
+
+            Vector PWTrhs_c(P_W[0]->Width());
+            P_W[0]->MultTranspose(rhs_c, PWTrhs_c);
+            PWTBsig_c -= PWTrhs_c;
+
+            std::cout << "|| P_w^T residual_c || = " << PWTBsig_c.Norml2() / sqrt(PWTBsig_c.Size()) << "\n";
+        }
 
 
         total_rhside += rhs_c;

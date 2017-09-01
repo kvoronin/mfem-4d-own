@@ -780,7 +780,7 @@ int main(int argc, char *argv[])
     int par_ref_levels  = 1;
 
     bool withDiv = true;
-    bool with_multilevel = false;
+    bool with_multilevel = true;
     //bool withS = true;
     //bool blockedversion = true;
 
@@ -1073,6 +1073,7 @@ int main(int argc, char *argv[])
                 pmesh->UniformRefinement();
 
                 P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
+                std::cout << "P_R_local max norm = " << P_R_local->MaxNorm() << "\n";
                 auto P_RT_local = Transpose(*P_R_local);
                 std::cout << "P_RT max norm = " << P_RT_local->MaxNorm() << "\n";
                 auto PtP = Mult(*P_RT_local, *P_R_local);
@@ -1086,8 +1087,10 @@ int main(int argc, char *argv[])
 
                 P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
 
+
                 std::cout << "P_W_local max norm = " << P_W_local->MaxNorm() << "\n";
-                std::cout << "P_R_local max norm = " << P_R_local->MaxNorm() << "\n";
+                auto P_WT_local = Transpose(*P_W_local);
+                std::cout << "P_WT max norm = " << P_WT_local->MaxNorm() << "\n";
 
                 C_space->Update();
                 if (prec_is_MG)

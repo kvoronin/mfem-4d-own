@@ -75,10 +75,12 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
    //std::cout << "transform = " << transform << "\n";
 
    int chain[12], n = 0;
+   bool swapped[12];
    while (transform)
    {
       chain[n++] = (transform & 31) - 1;
-      transform >>= 5;
+      swapped[n-1] = (transform / 32 == 1);
+      transform >>= 6;
    }
 
    //std::cout << "n = " << n << "\n";
@@ -100,61 +102,79 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
       {
          case 0:
             AVG(mid1, a, d); AVG(mid2, a, e); AVG(mid3, b, e); AVG(mid4, c, e); AVG(mid5,d,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 1:
             AVG(b, a, b); AVG(c, a, c); AVG(d, a, d); AVG(e, a, e);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 2:
             AVG(a, a, b); AVG(c, b, c); AVG(d, b, d); AVG(e, b, e);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 3:
             AVG(a, c, a); AVG(b, c, b); AVG(d, c, d); AVG(e, c, e);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 4:
             AVG(a, d, a); AVG(b, d, b); AVG(c, d, c); AVG(e, d, e);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 5:
             AVG(a, e, a); AVG(b, e, b); AVG(c, e, c); AVG(d, e, d);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 6:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, b, c); AVG(mid4, b, d); AVG(mid5,b,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 7:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, a, d); AVG(mid4, b, d); AVG(mid5,b,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 8:
             AVG(mid1, a, b); AVG(mid2, a, c); AVG(mid3, a, d); AVG(mid4, a, e); AVG(mid5,b,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 9:
             AVG(mid1, a, c); AVG(mid2, b, c); AVG(mid3, b, d); AVG(mid4, c, d); AVG(mid5,c,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 10:
             AVG(mid1, a, c); AVG(mid2, b, c); AVG(mid3, b, d); AVG(mid4, b, e); AVG(mid5,c,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 11:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, b, d); AVG(mid4, c, d); AVG(mid5,c,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 12:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, b, d); AVG(mid4, b, e); AVG(mid5,c,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 13:
             AVG(mid1, a, c); AVG(mid2, a, d); AVG(mid3, a, e); AVG(mid4, b, e); AVG(mid5,c,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
-            /*SWAP(a,b);*/ break;
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 14:
             AVG(mid1, a, d); AVG(mid2, b, d); AVG(mid3, c, d); AVG(mid4, c, e); AVG(mid5,d,e);
-            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5); break;
+            ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          case 15:
             AVG(mid1, a, d); AVG(mid2, b, d); AVG(mid3, b, e); AVG(mid4, c, e); AVG(mid5,d,e);
             ASGN(a, mid1); ASGN(b,mid2); ASGN(c,mid3); ASGN(d,mid4); ASGN(e,mid5);
-            /*SWAP(a,b);*/ break;
-         //case 16:
-            //MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
-         //case 17:
-            //MFEM_ABORT("This case was reserved for Bisection for pentatopes but wasn't implemented \n");
+            if (swapped[n+1]) SWAP(a,b);
+            break;
          default:
             MFEM_ABORT("Invalid transform.");
       }

@@ -92,7 +92,7 @@ public:
 
    /// Add 'tr' to the current chain of coarse-fine transformations.
    virtual void PushTransform(int tr)
-   { transform = (transform << 5) | (tr + 1); }
+   { transform = (transform << 6) | (tr + 1); }
 
    virtual Element *Duplicate(Mesh *m) const;
 

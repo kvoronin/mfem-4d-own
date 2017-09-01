@@ -8286,19 +8286,6 @@ void RT0PentFiniteElement::GetLocalInterpolation (
       */
       Jinv.Mult(nk[k], vk);
 
-      /*
-       * wrong
-      vshape.Mult(vk, temp);
-
-      for (j = 0; j < 5; j++)
-      {
-         I(k,j) = ones * temp;
-         if (fabs (I(k,j)) < 1.0e-12)
-         {
-             I(k,j) = 0.0;
-         }
-      }
-      */
       for (j = 0; j < 5; j++)
       {
          I(k,j) = vshape(j,0)*vk[0]+vshape(j,1)*vk[1]+vshape(j,2)*vk[2]+vshape(j,3)*vk[3];
