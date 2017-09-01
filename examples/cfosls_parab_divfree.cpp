@@ -1070,6 +1070,12 @@ int main(int argc, char *argv[])
                 if (prec_is_MG)
                     coarseH_space->Update();
 
+                ParGridFunction * test_coarse = new ParGridFunction(R_space);
+                VectorFunctionCoefficient * ones;
+                ones = new VectorFunctionCoefficient(dim, zerovec4D_ex);
+
+                test_coarse->ProjectCoefficient(*ones);
+
                 pmesh->UniformRefinement();
 
                 P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
@@ -1091,6 +1097,14 @@ int main(int argc, char *argv[])
                 std::cout << "P_W_local max norm = " << P_W_local->MaxNorm() << "\n";
                 auto P_WT_local = Transpose(*P_W_local);
                 std::cout << "P_WT max norm = " << P_WT_local->MaxNorm() << "\n";
+
+                std::cout << "checking that P_R * c = c \n";
+                ParGridFunction * test_fine1 = new ParGridFunction(R_space);
+                ParGridFunction * test_fine2 = new ParGridFunction(R_space);
+                test_fine1->ProjectCoefficient(*ones);
+                P_R_local->Mult(*test_coarse, *test_fine2);
+                *test_fine1 -= *test_fine2;
+                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || = " << test_fine1->Norml2() << "\n";
 
                 C_space->Update();
                 if (prec_is_MG)

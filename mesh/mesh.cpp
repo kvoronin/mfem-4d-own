@@ -7681,7 +7681,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    bool swapped = swappedElements[i];
 
    int *v = elements[i]->GetVertices();
-   if (swappedElements[i]) { Swap(v); }
+   if (swapped) { Swap(v); }
 
    for (int j = 0; j < 10; j++)
    {
@@ -7718,7 +7718,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta1 = new Pentatope(w,attr);
    elements.Append(penta1);
    penta1->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta1->PushTransform(1+32);
    else
        penta1->PushTransform(1);
@@ -7730,7 +7730,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta2 = new Pentatope(w,attr);
    elements.Append(penta2);
    penta2->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta2->PushTransform(2+32);
    else
        penta2->PushTransform(2);
@@ -7742,7 +7742,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta3 = new Pentatope(w,attr);
    elements.Append(penta3);
    penta3->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta3->PushTransform(3+32);
    else
        penta3->PushTransform(3);
@@ -7754,7 +7754,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta4 = new Pentatope(w,attr);
    elements.Append(penta4);
    penta4->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta4->PushTransform(4+32);
    else
        penta4->PushTransform(4);
@@ -7766,7 +7766,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta5 = new Pentatope(w,attr);
    elements.Append(penta5);
    penta5->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta5->PushTransform(5+32);
    else
        penta5->PushTransform(5);
@@ -7778,7 +7778,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta6 = new Pentatope(w,attr);
    elements.Append(penta6);
    penta6->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta6->PushTransform(6+32);
    else
        penta6->PushTransform(6);
@@ -7790,7 +7790,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta7 = new Pentatope(w,attr);
    elements.Append(penta7);
    penta7->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta7->PushTransform(7+32);
    else
        penta7->PushTransform(7);
@@ -7802,7 +7802,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta8 = new Pentatope(w,attr);
    elements.Append(penta8);
    penta8->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta8->PushTransform(8+32);
    else
        penta8->PushTransform(8);
@@ -7814,7 +7814,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta9 = new Pentatope(w,attr);
    elements.Append(penta9);
    penta9->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta9->PushTransform(9+32);
    else
        penta9->PushTransform(9);
@@ -7826,7 +7826,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta10 = new Pentatope(w,attr);
    elements.Append(penta10);
    penta10->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta10->PushTransform(10+32);
    else
        penta10->PushTransform(10);
@@ -7838,7 +7838,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta11 = new Pentatope(w,attr);
    elements.Append(penta11);
    penta11->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta11->PushTransform(11+32);
    else
        penta11->PushTransform(11);
@@ -7850,7 +7850,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta12 = new Pentatope(w,attr);
    elements.Append(penta12);
    penta12->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta12->PushTransform(12+32);
    else
        penta12->PushTransform(12);
@@ -7862,7 +7862,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta13 = new Pentatope(w,attr);
    elements.Append(penta13);
    penta13->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta13->PushTransform(13+32);
    else
        penta13->PushTransform(13);
@@ -7874,7 +7874,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta14 = new Pentatope(w,attr);
    elements.Append(penta14);
    penta14->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta14->PushTransform(14+32);
    else
        penta14->PushTransform(14);
@@ -7886,7 +7886,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    Pentatope * penta15 = new Pentatope(w,attr);
    elements.Append(penta15);
    penta15->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta15->PushTransform(15+32);
    else
        penta15->PushTransform(15);
@@ -7897,7 +7897,7 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    if (mySwaped) { Swap(w); }
    penta0->SetVertices(w);
    penta0->ResetTransform(code);
-   if (mySwaped)
+   if (swapped)
        penta0->PushTransform(0+32);
    else
        penta0->PushTransform(0);
