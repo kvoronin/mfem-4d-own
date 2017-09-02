@@ -565,6 +565,8 @@ void zerovecx_ex(const Vector& xt, Vector& zerovecx );
 void zerovec4D_ex(const Vector& xt, Vector& vecvalue);
 void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue);
 
+void testfun_ex(const Vector& xt, Vector& vecvalue);
+
 
 void vminusone_exact(const Vector &x, Vector &vminusone);
 void vone_exact(const Vector &x, Vector &vone);
@@ -777,7 +779,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     bool withDiv = true;
     bool with_multilevel = true;
@@ -1070,15 +1072,39 @@ int main(int argc, char *argv[])
                 if (prec_is_MG)
                     coarseH_space->Update();
 
-                ParGridFunction * test_coarse = new ParGridFunction(R_space);
+                auto e_to_dof_coarse = R_space->GetElementToDofTable();
+
+                /*
+                ParGridFunction * test_coarse_c = new ParGridFunction(R_space);
+                ParGridFunction * test_coarse_sp = new ParGridFunction(R_space);
                 VectorFunctionCoefficient * ones;
                 ones = new VectorFunctionCoefficient(dim, zerovec4D_ex);
+                VectorFunctionCoefficient * special;
+                special = new VectorFunctionCoefficient(dim, testfun_ex);
 
-                test_coarse->ProjectCoefficient(*ones);
+                test_coarse_c->ProjectCoefficient(*ones);
+                test_coarse_sp->ProjectCoefficient(*special);
+
+                std::cout << "Printing coarse element No. 2 \n";
+                int elno = 2;
+                Element * el = pmesh->GetElement(elno);
+                int nverts = el->GetNVertices();
+                int * elverts = el->GetVertices();
+                std::cout << "el vertices: \n";
+                for (int vertno = 0; vertno < nverts; ++vertno)
+                {
+                    double * vertcoos = pmesh->GetVertex(elverts[vertno]);
+                    std::cout << "(";
+                    for ( int d = 0; d < dim; ++d)
+                        std::cout << vertcoos[d] << " ";
+                    std::cout << ")\n";
+                }
+                */
 
                 pmesh->UniformRefinement();
 
                 P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
+                /*
                 std::cout << "P_R_local max norm = " << P_R_local->MaxNorm() << "\n";
                 auto P_RT_local = Transpose(*P_R_local);
                 std::cout << "P_RT max norm = " << P_RT_local->MaxNorm() << "\n";
@@ -1090,21 +1116,116 @@ int main(int argc, char *argv[])
                 std::cout << "nnz of PPtP = " << PPtP->NumNonZeroElems() << "\n";
                 *P_R_check += *P_R_local;
                 std::cout << "norm of P_R P_R^T P_R - P_R = " << P_R_check->MaxNorm() << "\n";
+                */
 
                 P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
 
+                /*
 
                 std::cout << "P_W_local max norm = " << P_W_local->MaxNorm() << "\n";
                 auto P_WT_local = Transpose(*P_W_local);
                 std::cout << "P_WT max norm = " << P_WT_local->MaxNorm() << "\n";
 
                 std::cout << "checking that P_R * c = c \n";
-                ParGridFunction * test_fine1 = new ParGridFunction(R_space);
-                ParGridFunction * test_fine2 = new ParGridFunction(R_space);
-                test_fine1->ProjectCoefficient(*ones);
-                P_R_local->Mult(*test_coarse, *test_fine2);
-                *test_fine1 -= *test_fine2;
-                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || = " << test_fine1->Norml2() << "\n";
+                ParGridFunction * test_fine1_c = new ParGridFunction(R_space);
+                ParGridFunction * test_fine2_c = new ParGridFunction(R_space);
+                test_fine1_c->ProjectCoefficient(*ones);
+                P_R_local->Mult(*test_coarse_c, *test_fine2_c);
+                *test_fine1_c -= *test_fine2_c;
+                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || = " << test_fine1_c->Norml2() << "\n";
+
+                ParGridFunction * test_fine1_sp = new ParGridFunction(R_space);
+                ParGridFunction * test_fine2_sp = new ParGridFunction(R_space);
+                test_fine1_sp->ProjectCoefficient(*special);
+                P_R_local->Mult(*test_coarse_sp, *test_fine2_sp);
+
+                auto e_to_dof_fine = R_space->GetElementToDofTable();
+
+                bool triggered = false;
+                for ( int elno = 0; elno < pmesh->GetNE(); ++elno)
+                {
+                    Element * el = pmesh->GetElement(elno);
+                    Array<int> vdofs;
+                    R_space->GetElementVDofs(elno, vdofs);
+                    //vdofs.Print();
+
+                    //Array<int> dofs(vdofs.Size());
+                    //for ( int i = 0; i < vdofs.Size(); ++i)
+                        //dofs[i] = R_space->VDofToDof(vdofs[i]);
+                    //dofs.Print();
+
+                    Vector localvec_fine1_sp;
+                    test_fine1_sp->GetSubVector(vdofs, localvec_fine1_sp);
+
+                    Vector localvec_fine2_sp;
+                    test_fine2_sp->GetSubVector(vdofs, localvec_fine2_sp);
+
+                    Vector diff;
+                    diff = localvec_fine2_sp;
+                    diff *= -1;
+                    diff += localvec_fine1_sp;
+
+                    diff.Print();
+                    if (diff.Norml2() > 1.0e-10)
+                    {
+                        int nverts = el->GetNVertices();
+                        int * elverts = el->GetVertices();
+                        std::cout << "el vertices: \n";
+                        for (int vertno = 0; vertno < nverts; ++vertno)
+                        {
+                            double * vertcoos = pmesh->GetVertex(elverts[vertno]);
+                            std::cout << "(";
+                            for ( int d = 0; d < dim; ++d)
+                                std::cout << vertcoos[d] << " ";
+                            std::cout << ")\n";
+                        }
+
+                        int el_tr = el->GetTransform();
+                        std::cout << "el transform = " << el_tr << "\n";
+                        std::cout << "33/32 == 1 = " << (el_tr / 32 == 1) << "\n";
+                        int chain[12], n = 0;
+                        bool swapped[12];
+                        while (el_tr)
+                        {
+                           std::cout << "el transform in the loop = " << el_tr << "\n";
+                           chain[n++] = (el_tr & 31) - 1;
+                           swapped[n-1] = (el_tr / 32 == 1);
+                           el_tr >>= 6;
+                        }
+
+                        while (n)
+                        {
+                            //std::cout << "n in the loop beginning = " << n << "\n";
+                            std::cout << "chain = " << chain[--n];
+                            //std::cout << "n in the loop middle = " << n << "\n";
+                            std::cout << "swapped = " << swapped[n] << "\n";
+                        }
+
+
+                        int ncoarse_els = P_W_local->RowSize(elno);
+                        const int * coarse_els = P_W_local->GetRowColumns(elno);
+                        std::cout << "coarse el_s for this fine element: \n";
+                        for ( int elcno = 0; elcno < ncoarse_els; ++elcno )
+                            std::cout << coarse_els[elcno] << " ";
+                        std::cout << "\n";
+
+                        std::cout << "local diff norm = " << diff.Norml2() / sqrt (diff.Size()) << "\n";
+                        triggered = true;
+                    }
+
+                    int p = 5;
+                    p++;
+                }
+
+                if (triggered)
+                    std::cout << "local vectors were not the same! \n";
+                else
+                    std::cout << "not triggered \n";
+
+
+                *test_fine1_sp -= *test_fine2_sp;
+                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || for linear vec = " << test_fine1_sp->Norml2() << "\n";
+                */
 
                 C_space->Update();
                 if (prec_is_MG)
@@ -1177,8 +1298,8 @@ int main(int argc, char *argv[])
                 if (verbose)
                     std::cout << "end of P_C_local \n";
                 std::cout << "P_C_local max norm = " << P_C_local->MaxNorm() << "\n";
-                */
                 std::cout << "P_C_local max norm = " << P_C_local->MaxNorm() << "\n";
+                */
 
                 unique_ptr<SparseMatrix>RP_C_local(
                             Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
@@ -2267,6 +2388,13 @@ void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue)
 {
     vecvalue.SetSize(6);
     vecvalue = 0.0;
+    return;
+}
+
+void testfun_ex(const Vector& xt, Vector& vecvalue)
+{
+    vecvalue.SetSize(xt.Size());
+    vecvalue = xt;
     return;
 }
 

@@ -3,7 +3,7 @@
 using namespace mfem;
 using std::unique_ptr;
 
-#define DEBUG4D
+//#define DEBUG4D
 
 class DivPart
 {
@@ -42,6 +42,7 @@ public:
         total_rhside = 0.0;
         Vector rhside;
         SparseMatrix * B_input = B_fine;
+        std::cout << "abs. norm of F_fine = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
 #endif
 
         Vector total_sig(P_R[0]->Height());
@@ -50,7 +51,6 @@ public:
 //        chrono.Clear();
 //        chrono.Start();
 
-        std::cout << "abs. norm of F_fine = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
 
 
         for (int l=0; l < ref_levels; l++)
@@ -483,8 +483,8 @@ public:
 
         Vector residual_c(total_rhside.Size());
         B_input->Mult(sig_c, residual_c);
-        for (int j = 0; j < 20; ++j)
-            std::cout << "res_c[j] = " << residual_c[j] << ", rhs_c[i] = " << rhs_c[j] << ", ratio = " << residual_c[j] / rhs_c[j] << "\n";
+        //for (int j = 0; j < 20; ++j)
+            //std::cout << "res_c[j] = " << residual_c[j] << ", rhs_c[i] = " << rhs_c[j] << ", ratio = " << residual_c[j] / rhs_c[j] << "\n";
         residual_c -= rhs_c;
         std::cout << "|| residual_c || = " << residual_c.Norml2() / sqrt(residual_c.Size()) << "\n";
 

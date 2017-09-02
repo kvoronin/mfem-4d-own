@@ -7683,6 +7683,15 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    int *v = elements[i]->GetVertices();
    if (swapped) { Swap(v); }
 
+   /*
+   if (i == 2)
+   {
+       std::cout << "i = 2 \n";
+       std::cout << "swapped = " << swapped << "\n";
+   }
+   */
+
+
    for (int j = 0; j < 10; j++)
    {
       ei = elements[i]->GetEdgeVertices(j);
@@ -7700,6 +7709,26 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
       {
          v_new[j] = middle[bisect[j]];
       }
+
+      /*
+      if ( i == 2 )
+      {
+          std::cout << "first vert \n";
+          for ( int d = 0; d < spaceDim; ++d)
+              std::cout << vertices[v[ei[0]]](d) << " ";
+          std::cout << "\n";
+          std::cout << "second vert \n";
+          for ( int d = 0; d < spaceDim; ++d)
+              std::cout << vertices[v[ei[1]]](d) << " ";
+          std::cout << "\n";
+          std::cout << "middle vert " << j << ": \n";
+          double * vcoords = GetVertex(v_new[j]);
+          for ( int d = 0; d < spaceDim; ++d)
+              std::cout << vcoords[d] << " ";
+          std::cout << "\n";
+      }
+      */
+
    }
 
    int attr = elements[i]->GetAttribute();
