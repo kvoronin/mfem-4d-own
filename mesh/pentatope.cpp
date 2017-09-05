@@ -205,7 +205,6 @@ void Pentatope::GetPointMatrix(unsigned transform, DenseMatrix &pm)
    }
    else
    {
-       //SWAP(a,b); // doesn't help
        std::cout << "positive \n";
    }
    */

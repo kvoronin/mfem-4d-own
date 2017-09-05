@@ -766,12 +766,7 @@ SparseMatrix* FiniteElementSpace::RefinementMatrix(int old_ndofs,
    for (int i = 0; i < nmat; i++)
    {
       isotr.GetPointMat() = rtrans.point_matrices(i);
-      //std::cout << "isotr.GetPointMat() \n";
-      //isotr.GetPointMat().Print();
       fe->GetLocalInterpolation(isotr, localP(i));
-      //std::cout << "localP(i) \n";
-      //localP(i).Print();
-      //std::cout << "taking next i \n";
    }
 
    SparseMatrix *P = new SparseMatrix(ndofs*vdim, old_ndofs*vdim, ldof);
@@ -782,9 +777,6 @@ SparseMatrix* FiniteElementSpace::RefinementMatrix(int old_ndofs,
    {
       const Embedding &emb = rtrans.embeddings[k];
       DenseMatrix &lP = localP(emb.matrix);
-
-      //std::cout << "lP \n";
-      //lP.Print();
 
       elem_dof->GetRow(k, dofs);
       old_elem_dof->GetRow(emb.parent, old_dofs);

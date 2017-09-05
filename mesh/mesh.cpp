@@ -7683,15 +7683,6 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    int *v = elements[i]->GetVertices();
    if (swapped) { Swap(v); }
 
-   /*
-   if (i == 2)
-   {
-       std::cout << "i = 2 \n";
-       std::cout << "swapped = " << swapped << "\n";
-   }
-   */
-
-
    for (int j = 0; j < 10; j++)
    {
       ei = elements[i]->GetEdgeVertices(j);
@@ -7709,26 +7700,6 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
       {
          v_new[j] = middle[bisect[j]];
       }
-
-      /*
-      if ( i == 2 )
-      {
-          std::cout << "first vert \n";
-          for ( int d = 0; d < spaceDim; ++d)
-              std::cout << vertices[v[ei[0]]](d) << " ";
-          std::cout << "\n";
-          std::cout << "second vert \n";
-          for ( int d = 0; d < spaceDim; ++d)
-              std::cout << vertices[v[ei[1]]](d) << " ";
-          std::cout << "\n";
-          std::cout << "middle vert " << j << ": \n";
-          double * vcoords = GetVertex(v_new[j]);
-          for ( int d = 0; d < spaceDim; ++d)
-              std::cout << vcoords[d] << " ";
-          std::cout << "\n";
-      }
-      */
-
    }
 
    int attr = elements[i]->GetAttribute();
@@ -7951,79 +7922,6 @@ void Mesh::RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle)
    CoarseFineTr.embeddings.Append(Embedding(coarse));
    CoarseFineTr.embeddings.Append(Embedding(coarse));
    CoarseFineTr.embeddings.Append(Embedding(coarse));
-
-   /*
-    * old, before adding transforms
-
-   bool mySwaped;
-   w[0] = v[0];     w[1] = v_new[0]; w[2] = v_new[1]; w[3] = v_new[2];
-   w[4] = v_new[3]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[0]; w[1] = v[1];     w[2] = v_new[4]; w[3] = v_new[5];
-   w[4] = v_new[6]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v[2];     w[3] = v_new[7];
-   w[4] = v_new[8]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[7]; w[3] = v[3];
-   w[4] = v_new[9]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[3]; w[1] = v_new[6]; w[2] = v_new[8]; w[3] = v_new[9]; w[4] = v[4];
-   mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-
-   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[4]; w[3] = v_new[5];
-   w[4] = v_new[6]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[2]; w[3] = v_new[5];
-   w[4] = v_new[6]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[0]; w[1] = v_new[1]; w[2] = v_new[2]; w[3] = v_new[3];
-   w[4] = v_new[6]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-
-   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v_new[5]; w[3] = v_new[7];
-   w[4] = v_new[8]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[1]; w[1] = v_new[4]; w[2] = v_new[5]; w[3] = v_new[6];
-   w[4] = v_new[8]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[5]; w[3] = v_new[7];
-   w[4] = v_new[8]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[5]; w[3] = v_new[6];
-   w[4] = v_new[8]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[1]; w[1] = v_new[2]; w[2] = v_new[3]; w[3] = v_new[6];
-   w[4] = v_new[8]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-
-   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[7]; w[3] = v_new[8];
-   w[4] = v_new[9]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[2]; w[1] = v_new[5]; w[2] = v_new[6]; w[3] = v_new[8];
-   w[4] = v_new[9]; mySwaped = swapped;
-   if (mySwaped) { Swap(w); } elements.Append(new Pentatope(w, attr));
-   swappedElements.Append(mySwaped);
-   w[0] = v_new[2]; w[1] = v_new[3]; w[2] = v_new[6]; w[3] = v_new[8];
-   w[4] = v_new[9]; mySwaped = !swapped;
-   if (mySwaped) { Swap(w); } elements[i]->SetVertices(w);
-   swappedElements[i] = mySwaped;
-   */
 
    // DenseMatrix J(4,4);
    // for(int k=0; k<16; k++)
