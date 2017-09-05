@@ -565,9 +565,6 @@ void zerovecx_ex(const Vector& xt, Vector& zerovecx );
 void zerovec4D_ex(const Vector& xt, Vector& vecvalue);
 void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue);
 
-void testfun_ex(const Vector& xt, Vector& vecvalue);
-
-
 void vminusone_exact(const Vector &x, Vector &vminusone);
 void vone_exact(const Vector &x, Vector &vone);
 
@@ -627,8 +624,8 @@ public:
 
     ~Heat_test_divfree () {}
 private:
-    void SetScalarFun( double (*f)(const Vector & xt))
-    { scalarS = new FunctionCoefficient(f);}
+    void SetScalarSFun( double (*S)(const Vector & xt))
+    { scalarS = new FunctionCoefficient(S);}
 
     template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     void SetDivSigma()
@@ -669,7 +666,7 @@ template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt),
          void(*divfreevec)(const Vector & x, Vector & vec), void(*opdivfreevec)(const Vector & x, Vector & vec)> \
 void Heat_test_divfree::SetTestCoeffs ()
 {
-    SetScalarFun(S);
+    SetScalarSFun(S);
     SetSigmaVec<S,Sgradxvec>();
     SetDivSigma<S, dSdt, Slaplace>();
     SetDivfreePart(divfreevec);
@@ -764,7 +761,7 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
 int main(int argc, char *argv[])
 {
     int num_procs, myid;
-    bool visualization = 1;
+    bool visualization = 0;
 
     // 1. Initialize MPI
     MPI_Init(&argc, &argv);
@@ -774,12 +771,15 @@ int main(int argc, char *argv[])
 
     bool verbose = (myid == 0);
 
-    int nDimensions     = 4;
+    int nDimensions     = 3;
     int numsol          = -34;
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
+
+    bool aniso_refine = false;
+    bool refine_t_first = true;
 
     bool withDiv = true;
     bool with_multilevel = true;
@@ -831,6 +831,12 @@ int main(int argc, char *argv[])
                    "Enable or disable multilevel algorithm for finding a particular solution.");
     args.AddOption(&useM_in_divpart, "-useM", "--useM", "-no-useM", "--no-useM",
                    "Whether to use M to compute a partilar solution");
+    args.AddOption(&aniso_refine, "-aniso", "--aniso-refine", "-iso",
+                   "--iso-refine",
+                   "Using anisotropic or isotropic refinement.");
+    args.AddOption(&refine_t_first, "-refine-t-first", "--refine-time-first",
+                   "-refine-x-first", "--refine-space-first",
+                   "Refine time or space first in anisotropic refinement.");
 
     args.Parse();
     if (!args.Good())
@@ -911,21 +917,41 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-        if (verbose)
-            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-        ifstream imesh(mesh_file);
-        if (!imesh)
+        if (aniso_refine)
         {
-            std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-            MPI_Finalize();
-            return -2;
+            if (verbose)
+                std::cout << "Anisotropic refinement is ON \n";
+            if (nDimensions == 3)
+            {
+                if (verbose)
+                    std::cout << "Using hexahedral mesh in 3D for anisotr. refinement code \n";
+                mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
+            }
+            else // dim == 4
+            {
+                if (verbose)
+                    cerr << "Anisotr. refinement is not implemented in 4D case with tesseracts \n" << std::flush;
+                MPI_Finalize();
+                return -1;
+            }
         }
-        else
+        else // no anisotropic refinement
         {
-            mesh = new Mesh(imesh, 1, 1);
-            imesh.close();
+            if (verbose)
+                cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+            ifstream imesh(mesh_file);
+            if (!imesh)
+            {
+                std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+                MPI_Finalize();
+                return -2;
+            }
+            else
+            {
+                mesh = new Mesh(imesh, 1, 1);
+                imesh.close();
+            }
         }
-
     }
     else //if nDimensions is not 3 or 4
     {
@@ -937,8 +963,29 @@ int main(int argc, char *argv[])
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
-        for (int l = 0; l < ser_ref_levels; l++)
-            mesh->UniformRefinement();
+        if (aniso_refine)
+        {
+            // for anisotropic refinement, the serial mesh needs at least one
+            // serial refine to turn the mesh into a nonconforming mesh
+            MFEM_ASSERT(ser_ref_levels > 0, "need ser_ref_levels > 0 for aniso_refine");
+
+            for (int l = 0; l < ser_ref_levels-1; l++)
+                mesh->UniformRefinement();
+
+            Array<Refinement> refs(mesh->GetNE());
+            for (int i = 0; i < mesh->GetNE(); i++)
+            {
+                refs[i] = Refinement(i, 7);
+            }
+            mesh->GeneralRefinement(refs, -1, -1);
+
+            par_ref_levels *= 2;
+        }
+        else
+        {
+            for (int l = 0; l < ser_ref_levels; l++)
+                mesh->UniformRefinement();
+        }
 
         if (verbose)
             cout << "Creating parmesh(" << nDimensions <<
@@ -947,8 +994,9 @@ int main(int argc, char *argv[])
         delete mesh;
     }
 
+    MFEM_ASSERT(!(aniso_refine && (with_multilevel || nDimensions == 4)),"Anisotropic refinement works only in 3D and without multilevel algorithm \n");
+
     int dim = nDimensions;
-    //int sdim = nDimensions; // used in 4D case
 
     Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());
     ess_bdrSigma = 0;
@@ -975,13 +1023,9 @@ int main(int argc, char *argv[])
     ParFiniteElementSpace *C_space;
 
     if (dim == 3)
-    {
         hdivfree_coll = new ND_FECollection(feorder + 1, nDimensions);
-    }
     else // dim == 4
-    {
         hdivfree_coll = new DivSkew1_4DFECollection;
-    } // end of initialization of div-free f.e. space in 4D
     C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
 
     FiniteElementCollection *h1_coll;
@@ -1039,7 +1083,8 @@ int main(int argc, char *argv[])
     Array<int> ess_dof_coarsestlvl_list;
     DivPart divp;
 
-
+    chrono.Clear();
+    chrono.Start();
     if (with_multilevel)
     {
         if (verbose)
@@ -1057,7 +1102,8 @@ int main(int argc, char *argv[])
         d_td_coarse_R = coarseR_space->Dof_TrueDof_Matrix();
         d_td_coarse_W = coarseW_space->Dof_TrueDof_Matrix();
 
-        for (int l = 0; l < ref_levels+1; l++){
+        for (int l = 0; l < ref_levels+1; l++)
+        {
             if (l > 0){
 
                 if (l == 1)
@@ -1072,186 +1118,73 @@ int main(int argc, char *argv[])
                 if (prec_is_MG)
                     coarseH_space->Update();
 
-                auto e_to_dof_coarse = R_space->GetElementToDofTable();
-
-                /*
-                ParGridFunction * test_coarse_c = new ParGridFunction(R_space);
-                ParGridFunction * test_coarse_sp = new ParGridFunction(R_space);
-                VectorFunctionCoefficient * ones;
-                ones = new VectorFunctionCoefficient(dim, zerovec4D_ex);
-                VectorFunctionCoefficient * special;
-                special = new VectorFunctionCoefficient(dim, testfun_ex);
-
-                test_coarse_c->ProjectCoefficient(*ones);
-                test_coarse_sp->ProjectCoefficient(*special);
-
-                std::cout << "Printing coarse element No. 2 \n";
-                int elno = 2;
-                Element * el = pmesh->GetElement(elno);
-                int nverts = el->GetNVertices();
-                int * elverts = el->GetVertices();
-                std::cout << "el vertices: \n";
-                for (int vertno = 0; vertno < nverts; ++vertno)
+                if (aniso_refine && refine_t_first)
                 {
-                    double * vertcoos = pmesh->GetVertex(elverts[vertno]);
-                    std::cout << "(";
-                    for ( int d = 0; d < dim; ++d)
-                        std::cout << vertcoos[d] << " ";
-                    std::cout << ")\n";
-                }
-                */
-
-                pmesh->UniformRefinement();
-
-                P_R_local = ((const SparseMatrix *)R_space->GetUpdateOperator());
-                /*
-                std::cout << "P_R_local max norm = " << P_R_local->MaxNorm() << "\n";
-                auto P_RT_local = Transpose(*P_R_local);
-                std::cout << "P_RT max norm = " << P_RT_local->MaxNorm() << "\n";
-                auto PtP = Mult(*P_RT_local, *P_R_local);
-                auto PPtP = Mult(*P_R_local, *PtP);
-                SparseMatrix * P_R_check = new SparseMatrix(*PPtP);
-                *P_R_check *= -1;
-                std::cout << "nnz of P_R = " << P_R_check->NumNonZeroElems() << "\n";
-                std::cout << "nnz of PPtP = " << PPtP->NumNonZeroElems() << "\n";
-                *P_R_check += *P_R_local;
-                std::cout << "norm of P_R P_R^T P_R - P_R = " << P_R_check->MaxNorm() << "\n";
-                */
-
-                P_W_local = ((const SparseMatrix *)W_space->GetUpdateOperator());
-
-                /*
-
-                std::cout << "P_W_local max norm = " << P_W_local->MaxNorm() << "\n";
-                auto P_WT_local = Transpose(*P_W_local);
-                std::cout << "P_WT max norm = " << P_WT_local->MaxNorm() << "\n";
-
-                std::cout << "checking that P_R * c = c \n";
-                ParGridFunction * test_fine1_c = new ParGridFunction(R_space);
-                ParGridFunction * test_fine2_c = new ParGridFunction(R_space);
-                test_fine1_c->ProjectCoefficient(*ones);
-                P_R_local->Mult(*test_coarse_c, *test_fine2_c);
-                *test_fine1_c -= *test_fine2_c;
-                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || = " << test_fine1_c->Norml2() << "\n";
-
-                ParGridFunction * test_fine1_sp = new ParGridFunction(R_space);
-                ParGridFunction * test_fine2_sp = new ParGridFunction(R_space);
-                test_fine1_sp->ProjectCoefficient(*special);
-                P_R_local->Mult(*test_coarse_sp, *test_fine2_sp);
-
-                auto e_to_dof_fine = R_space->GetElementToDofTable();
-
-                bool triggered = false;
-                for ( int elno = 0; elno < pmesh->GetNE(); ++elno)
-                {
-                    Element * el = pmesh->GetElement(elno);
-                    Array<int> vdofs;
-                    R_space->GetElementVDofs(elno, vdofs);
-                    //vdofs.Print();
-
-                    //Array<int> dofs(vdofs.Size());
-                    //for ( int i = 0; i < vdofs.Size(); ++i)
-                        //dofs[i] = R_space->VDofToDof(vdofs[i]);
-                    //dofs.Print();
-
-                    Vector localvec_fine1_sp;
-                    test_fine1_sp->GetSubVector(vdofs, localvec_fine1_sp);
-
-                    Vector localvec_fine2_sp;
-                    test_fine2_sp->GetSubVector(vdofs, localvec_fine2_sp);
-
-                    Vector diff;
-                    diff = localvec_fine2_sp;
-                    diff *= -1;
-                    diff += localvec_fine1_sp;
-
-                    diff.Print();
-                    if (diff.Norml2() > 1.0e-10)
+                    Array<Refinement> refs(pmesh->GetNE());
+                    if (l < par_ref_levels/2+1)
                     {
-                        int nverts = el->GetNVertices();
-                        int * elverts = el->GetVertices();
-                        std::cout << "el vertices: \n";
-                        for (int vertno = 0; vertno < nverts; ++vertno)
-                        {
-                            double * vertcoos = pmesh->GetVertex(elverts[vertno]);
-                            std::cout << "(";
-                            for ( int d = 0; d < dim; ++d)
-                                std::cout << vertcoos[d] << " ";
-                            std::cout << ")\n";
-                        }
-
-                        int el_tr = el->GetTransform();
-                        std::cout << "el transform = " << el_tr << "\n";
-                        std::cout << "33/32 == 1 = " << (el_tr / 32 == 1) << "\n";
-                        int chain[12], n = 0;
-                        bool swapped[12];
-                        while (el_tr)
-                        {
-                           std::cout << "el transform in the loop = " << el_tr << "\n";
-                           chain[n++] = (el_tr & 31) - 1;
-                           swapped[n-1] = (el_tr / 32 == 1);
-                           el_tr >>= 6;
-                        }
-
-                        while (n)
-                        {
-                            //std::cout << "n in the loop beginning = " << n << "\n";
-                            std::cout << "chain = " << chain[--n];
-                            //std::cout << "n in the loop middle = " << n << "\n";
-                            std::cout << "swapped = " << swapped[n] << "\n";
-                        }
-
-
-                        int ncoarse_els = P_W_local->RowSize(elno);
-                        const int * coarse_els = P_W_local->GetRowColumns(elno);
-                        std::cout << "coarse el_s for this fine element: \n";
-                        for ( int elcno = 0; elcno < ncoarse_els; ++elcno )
-                            std::cout << coarse_els[elcno] << " ";
-                        std::cout << "\n";
-
-                        std::cout << "local diff norm = " << diff.Norml2() / sqrt (diff.Size()) << "\n";
-                        triggered = true;
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 4);
                     }
-
-                    int p = 5;
-                    p++;
+                    else
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 3);
+                    }
+                    pmesh->GeneralRefinement(refs, -1, -1);
                 }
-
-                if (triggered)
-                    std::cout << "local vectors were not the same! \n";
+                else if (aniso_refine && !refine_t_first)
+                {
+                    Array<Refinement> refs(pmesh->GetNE());
+                    if (l < par_ref_levels/2+1)
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 3);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < pmesh->GetNE(); i++)
+                            refs[i] = Refinement(i, 4);
+                    }
+                    pmesh->GeneralRefinement(refs, -1, -1);
+                }
                 else
-                    std::cout << "not triggered \n";
-
-
-                *test_fine1_sp -= *test_fine2_sp;
-                std::cout << "|| P_R * 1(vec_coarse) - 1(vec_fine) || for linear vec = " << test_fine1_sp->Norml2() << "\n";
-                */
+                {
+                    pmesh->UniformRefinement();
+                }
 
                 C_space->Update();
                 if (prec_is_MG)
                 {
                     auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
-                    auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                    auto P_C_loc_tmp = (SparseMatrix *)C_space->GetUpdateOperator();
+                    auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
                     unique_ptr<SparseMatrix>RP_C_local(
                                 Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
                     P_C[l-1] = d_td_coarse_C->LeftDiagMult(
                                 *RP_C_local, C_space->GetTrueDofOffsets());
                     P_C[l-1]->CopyColStarts();
                     P_C[l-1]->CopyRowStarts();
+                    delete P_C_local;
                 }
 
                 H_space->Update();
                 if (prec_is_MG)
                 {
                     auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
-                    auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+                    auto P_H_loc_tmp = (SparseMatrix *)H_space->GetUpdateOperator();
+                    auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                     unique_ptr<SparseMatrix>RP_H_local(
                                 Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
                     P_H[l-1] = d_td_coarse_H->LeftDiagMult(
                                 *RP_H_local, H_space->GetTrueDofOffsets());
                     P_H[l-1]->CopyColStarts();
                     P_H[l-1]->CopyRowStarts();
+                    delete P_H_local;
                 }
+
+                P_W_local = (SparseMatrix *)W_space->GetUpdateOperator();
+                P_R_local = (SparseMatrix *)R_space->GetUpdateOperator();
 
                 SparseMatrix* R_Element_to_dofs1 = new SparseMatrix();
                 SparseMatrix* W_Element_to_dofs1 = new SparseMatrix();
@@ -1259,14 +1192,20 @@ int main(int argc, char *argv[])
                 divp.Elem2Dofs(*R_space, *R_Element_to_dofs1);
                 divp.Elem2Dofs(*W_space, *W_Element_to_dofs1);
 
-                P_W[ref_levels -l] = new SparseMatrix ( *P_W_local);
-                P_R[ref_levels -l] = new SparseMatrix ( *P_R_local);
+                P_W[ref_levels -l] = RemoveZeroEntries(*P_W_local);
+                P_R[ref_levels -l] = RemoveZeroEntries(*P_R_local);
 
                 Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
 
+                if (l == ref_levels)
+                {
+                    delete P_W_local;
+                    delete P_R_local;
+                }
+
             }
-        }
+        } // end of loop over levels
     }
     else // not a multilevel algo
     {
@@ -1281,123 +1220,82 @@ int main(int argc, char *argv[])
             if (prec_is_MG)
                 coarseH_space->Update();
 
-            pmesh->UniformRefinement();
-            C_space->Update();
-
-            if (prec_is_MG)
+            if (aniso_refine && refine_t_first)
             {
-                auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
-                auto P_C_local = (SparseMatrix *)C_space->GetUpdateOperator();
-
-                // in 4D case P_C_local happens to be 0 in serial version, so entire P_C_local = 0
-                /*
-                // checking in 4D case
-                if (verbose)
-                    std::cout << "P_C_local \n";
-                P_C_local->Print();
-                if (verbose)
-                    std::cout << "end of P_C_local \n";
-                std::cout << "P_C_local max norm = " << P_C_local->MaxNorm() << "\n";
-                std::cout << "P_C_local max norm = " << P_C_local->MaxNorm() << "\n";
-                */
-
-                unique_ptr<SparseMatrix>RP_C_local(
-                            Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
-                // in 4D case RP_C_local happens to be 0 in serial version, so entire RP_C_local = 0
-                /*
-                // checking in 4D case
-                if (verbose)
-                    std::cout << "RP_C_local \n";
-                RP_C_local->Print();
-                if (verbose)
-                    std::cout << "end of RP_C_local \n";
-                std::cout << "RP_C_local max norm = " << RP_C_local->MaxNorm() << "\n";
-                */
-
-                P_C[l] = d_td_coarse_C->LeftDiagMult(
-                            *RP_C_local, C_space->GetTrueDofOffsets());
-                P_C[l]->CopyColStarts();
-                P_C[l]->CopyRowStarts();
-
-                // in 4D case P_C happens to be 0 in serial version, so entire P_C = 0
-                /*
-                // checking in 4D case
-                SparseMatrix P_C_diag;
-                P_C[l]->GetDiag(P_C_diag);
-                if (verbose)
-                    std::cout << "P_C_diag \n";
-                P_C_diag.Print();
-                if (verbose)
-                    std::cout << "end of P_C_diag \n";
-                std::cout << "P_C_diag max norm = " << P_C_diag.MaxNorm() << "\n";
-                */
+                Array<Refinement> refs(pmesh->GetNE());
+                if (l < par_ref_levels/2)
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 4);
+                }
+                else
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 3);
+                }
+                pmesh->GeneralRefinement(refs, -1, -1);
+            }
+            else if (aniso_refine && !refine_t_first)
+            {
+                Array<Refinement> refs(pmesh->GetNE());
+                if (l < par_ref_levels/2)
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 3);
+                }
+                else
+                {
+                    for (int i = 0; i < pmesh->GetNE(); i++)
+                        refs[i] = Refinement(i, 4);
+                }
+                pmesh->GeneralRefinement(refs, -1, -1);
+            }
+            else
+            {
+                pmesh->UniformRefinement();
             }
 
             if (withDiv)
                 W_space->Update();
             R_space->Update();
+            C_space->Update();
             H_space->Update();
 
             if (prec_is_MG)
             {
+                auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
+                auto P_C_loc_tmp = (SparseMatrix *)C_space->GetUpdateOperator();
+                auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
+                unique_ptr<SparseMatrix>RP_C_local(
+                            Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
+                P_C[l] = d_td_coarse_C->LeftDiagMult(
+                            *RP_C_local, C_space->GetTrueDofOffsets());
+                P_C[l]->CopyColStarts();
+                P_C[l]->CopyRowStarts();
+                delete P_C_local;
+            }
+
+            if (prec_is_MG)
+            {
                 auto d_td_coarse_H = coarseH_space->Dof_TrueDof_Matrix();
-                auto P_H_local = (SparseMatrix *)H_space->GetUpdateOperator();
+                auto P_H_loc_tmp = (SparseMatrix *)H_space->GetUpdateOperator();
+                auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                 unique_ptr<SparseMatrix>RP_H_local(
                             Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
                 P_H[l] = d_td_coarse_H->LeftDiagMult(
                             *RP_H_local, H_space->GetTrueDofOffsets());
                 P_H[l]->CopyColStarts();
                 P_H[l]->CopyRowStarts();
+                delete P_H_local;
             }
         } // end of loop over mesh levels
     } // end of else (not a multilevel algo)
-
+    if (verbose)
+        cout<<"MG hierarchy constructed in "<< chrono.RealTime() <<" seconds.\n";
 
     //if(dim==3) pmesh->ReorientTetMesh();
 
     pmesh->PrintInfo(std::cout); if(verbose) cout << "\n";
-
-    if (dim == 4)
-    {
-        // testing ProjectCoefficient
-        VectorFunctionCoefficient * divfreepartcoeff = new
-                VectorFunctionCoefficient(6, E_exactMat_vec);
-        //VectorCoefficient * divfreepartcoeff = new VectorFunctionCoefficient(dim, DivmatFun4D_ex);
-        ParGridFunction *u_exact = new ParGridFunction(C_space);
-        u_exact->ProjectCoefficient(*divfreepartcoeff);//(*(Mytest.divfreepart));
-
-
-        if (verbose)
-            std::cout << "ProjectCoefficient is ok with vectors from DivSkew \n";
-        //u_exact->Print();
-
-        // checking projection error computation
-        int order_quad = 2*(feorder+1) + 1;//max(2, 2*feorder+1);
-        const IntegrationRule *irs[Geometry::NumGeom];
-        for (int i=0; i < Geometry::NumGeom; ++i)
-        {
-            irs[i] = &(IntRules.Get(i, order_quad));
-        }
-
-        double norm_u = ComputeGlobalLpNorm(2, *divfreepartcoeff, *pmesh, irs);
-        double projection_error_u = u_exact->ComputeL2Error(*divfreepartcoeff, irs);
-
-        if(verbose)
-        {
-            std::cout << "|| u_ex - Pi_h u_ex || = " << projection_error_u << "\n";
-            if ( norm_u > MYZEROTOL )
-                std::cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << "\n";
-            else
-                std::cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
-        }
-
-        /*
-        if (verbose)
-            std::cout << "4D case is not implemented yet \n";
-        MPI_Finalize();
-        return 0;
-        */
-    }
 
     Heat_test_divfree Mytest(nDimensions, numsol, numcurl);
 
@@ -1475,8 +1373,11 @@ int main(int argc, char *argv[])
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
     }
 
-
+    chrono.Clear();
+    chrono.Start();
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
+    ParLinearForm *gform;
+    HypreParMatrix *Bdiv;
     if (withDiv)
     {
         if (with_multilevel)
@@ -1505,6 +1406,7 @@ int main(int argc, char *argv[])
             bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
             bVarf->Assemble();
             bVarf->Finalize();
+            Bdiv = bVarf->ParallelAssemble();
             SparseMatrix &B_fine = bVarf->SpMat();
             SparseMatrix *B_local = &B_fine;
 
@@ -1512,17 +1414,11 @@ int main(int argc, char *argv[])
             Vector F_fine(P_W[0]->Height());
             Vector G_fine(P_R[0]->Height());
 
+            gform = new ParLinearForm(W_space);
+            gform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+            gform->Assemble();
 
-            ParLinearForm gform(R_space);
-            gform.Update();
-            gform.Assemble();
-
-            ParLinearForm fform(W_space);
-            fform.Update();
-            fform.AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
-            fform.Assemble();
-
-            F_fine = fform;
+            F_fine = *gform;
             G_fine = .0;
 
             divp.div_part(ref_levels,
@@ -1539,7 +1435,7 @@ int main(int argc, char *argv[])
 
     #ifdef MFEM_DEBUG
             Vector sth(F_fine.Size());
-            bVarf->SpMat().Mult(sigmahat_pau, sth);
+            B_fine.Mult(sigmahat_pau, sth);
             sth -= F_fine;
             std::cout << "sth.Norml2() = " << sth.Norml2() << "\n";
             MFEM_ASSERT(sth.Norml2()<1e-8, "The particular solution does not satisfy the divergence constraint");
@@ -1552,9 +1448,8 @@ int main(int argc, char *argv[])
             if (verbose)
                 std::cout << "Solving Poisson problem for finding a particular solution \n";
             ParGridFunction *sigma_exact;
-            ParLinearForm *gform(new ParLinearForm);
             ParMixedBilinearForm *Bblock;
-            HypreParMatrix *Bdiv, *BdivT;
+            HypreParMatrix *BdivT;
             HypreParMatrix *BBT;
             HypreParVector *Rhs;
 
@@ -1580,14 +1475,15 @@ int main(int argc, char *argv[])
             invBBT->SetPrintLevel(0);
 
             mfem::CGSolver solver(comm);
-            solver.SetPrintLevel(1);
+            solver.SetPrintLevel(0);
             solver.SetMaxIter(70000);
-            solver.SetRelTol(1.0e-16);
-            solver.SetAbsTol(1.0e-16);
+            solver.SetRelTol(1.0e-12);
+            solver.SetAbsTol(1.0e-14);
             solver.SetPreconditioner(*invBBT);
             solver.SetOperator(*BBT);
 
             Vector * Temphat = new Vector(W_space->TrueVSize());
+            *Temphat = 0.0;
             solver.Mult(*Rhs, *Temphat);
 
             Vector * Temp = new Vector(R_space->TrueVSize());
@@ -1604,6 +1500,8 @@ int main(int argc, char *argv[])
             std::cout << "Using exact sigma minus curl of a given function from H(curl,0) as a particular solution \n";
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
+    if (verbose)
+        cout<<"Particular solution found in "<< chrono.RealTime() <<" seconds.\n";
     // in either way now Sigmahat is a function from H(div) s.t. div Sigmahat = div sigma = f
 
     //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
@@ -1629,26 +1527,16 @@ int main(int argc, char *argv[])
 
 #ifdef USE_CURLMATRIX
     if (verbose)
-        std::cout << "Creating div-free system using the explicit discrete curl operator \n";
+        std::cout << "Creating div-free system using the explicit discrete div-free operator \n";
 
     ParGridFunction* rhside_Hdiv = new ParGridFunction(R_space);  // rhside for the first equation in the original cfosls system
     *rhside_Hdiv = 0.0;
-//    ParGridFunction* rhside_Hcurl = new ParGridFunction(C_space); //  rhside for the first eqn in div-free system
-//    *rhside_Hcurl = 0.0;
     ParGridFunction* rhside_H1 = new ParGridFunction(H_space);    // rhside for the second eqn in div-free system
     *rhside_H1 = 0.0;
 
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
-    // curl operator from C_space into R_space
-    /*
-    ParDiscreteLinearOperator * Divfree_op; // from previous space to Hdiv(R_space)
-    if (dim == 3)
-        Divfree_op = new ParDiscreteLinearOperator(C_space, R_space); // from Hcurl(C_space) to Hdiv(R_space)
-    else // dim == 4
-        Divfree_op = new ParDiscreteLinearOperator(C_space, R_space); // from Hcurl(C_space) to Hdiv(R_space)
-    */
-
+    // curl or divskew operator from C_space into R_space
     ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl(R_space) to Hdiv(C_space)
     if (dim == 3)
         Divfree_op.AddDomainInterpolator(new CurlInterpolator());
@@ -1948,7 +1836,6 @@ int main(int argc, char *argv[])
     Array<BlockOperator*> P;
     if (with_prec)
     {
-        //if(dim<=3)
         if(dim<=4)
         {
             if (prec_is_MG)
@@ -2003,18 +1890,6 @@ int main(int argc, char *argv[])
                 }
             }
         }
-        /*
-        else // if(dim==4)
-        {
-            if (prec_is_MG)
-            {
-                if (verbose)
-                    cout << "MG prec is not implemented in 4D" << endl;
-                MPI_Finalize();
-                return 0;
-            }
-        }
-        */
 
         if (verbose)
             cout << "Preconditioner is ready" << endl << flush;
@@ -2022,6 +1897,8 @@ int main(int argc, char *argv[])
     else
         if (verbose)
             cout << "Using no preconditioner" << endl << flush;
+    if (verbose)
+        std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
 
     IterativeSolver * solver;
     solver = new CGSolver(comm);
@@ -2095,10 +1972,9 @@ int main(int argc, char *argv[])
     else // dim == 4
         Divfree_h.AddDomainInterpolator(new DivSkewInterpolator());
     Divfree_h.Assemble();
-    Divfree_h.Mult(*u, *opdivfreepart); // if replaced by u_exact, makes the error look nicer
+    Divfree_h.Mult(*u, *opdivfreepart);
 
     ParGridFunction * opdivfreepart_exact;
-
     double err_opdivfreepart, norm_opdivfreepart;
 
     if (!withDiv)
@@ -2122,7 +1998,7 @@ int main(int argc, char *argv[])
     }
 
     ParGridFunction * sigma = new ParGridFunction(R_space);
-    *sigma = *Sigmahat; // particular solution
+    *sigma = *Sigmahat;         // particular solution
     *sigma += *opdivfreepart;   // plus div-free guy
 
     double err_sigma = sigma->ComputeL2Error(*(Mytest.sigma), irs);
@@ -2191,9 +2067,18 @@ int main(int argc, char *argv[])
         W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
     }
 
-    DiscreteLinearOperator Grad(H_space, W_space);
+    ParFiniteElementSpace * GradSpace;
+    if (dim == 3)
+        GradSpace = C_space;
+    else // dim == 4
+    {
+        FiniteElementCollection *hcurl_coll;
+        hcurl_coll = new ND1_4DFECollection;
+        GradSpace = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+    }
+    DiscreteLinearOperator Grad(H_space, GradSpace);
     Grad.AddDomainInterpolator(new GradientInterpolator());
-    ParGridFunction GradS(W_space);
+    ParGridFunction GradS(GradSpace);
     Grad.Assemble();
     Grad.Mult(*S, GradS);
 
@@ -2208,15 +2093,65 @@ int main(int argc, char *argv[])
                      sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
     }
 
+    // Check value of functional and mass conservation
+    {
+        Vector trueSigma(R_space->TrueVSize());
+        trueSigma = 0.0;
+        sigma->ParallelProject(trueSigma);
+
+        Vector MtrueSigma(R_space->TrueVSize());
+        MtrueSigma = 0.0;
+        M->Mult(trueSigma, MtrueSigma);
+        double localFunctional = trueSigma*MtrueSigma;
+
+        Vector GtrueSigma(H_space->TrueVSize());
+        GtrueSigma = 0.0;
+        BT->Mult(trueSigma, GtrueSigma);
+        localFunctional += 2.0*(trueX.GetBlock(1)*GtrueSigma);
+
+        Vector XtrueS(H_space->TrueVSize());
+        XtrueS = 0.0;
+        C->Mult(trueX.GetBlock(1), XtrueS);
+        localFunctional += trueX.GetBlock(1)*XtrueS;
+
+        double globalFunctional;
+        MPI_Reduce(&localFunctional, &globalFunctional, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+        {
+            cout << "|| sigma_h - L(S_h) ||^2 + || div_h sigma_h - f ||^2 = "
+                 << globalFunctional+err_div*err_div<< "\n";
+            cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+            cout << "Relative Energy Error = "
+                 << sqrt(globalFunctional+err_div*err_div)/norm_div<< "\n";
+        }
+
+        auto trueRhs_part = gform->ParallelAssemble();
+        double mass_loc = trueRhs_part->Norml1();
+        double mass;
+        MPI_Reduce(&mass_loc, &mass, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass = " << mass<< "\n";
+
+        Vector DtrueSigma(W_space->TrueVSize());
+        DtrueSigma = 0.0;
+        Bdiv->Mult(trueSigma, DtrueSigma);
+        DtrueSigma -= *trueRhs_part;
+        double mass_loss_loc = DtrueSigma.Norml1();
+        double mass_loss;
+        MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
+                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (verbose)
+            cout << "Sum of local mass loss = " << mass_loss<< "\n";
+    }
+
     if (verbose)
         cout << "Computing projection errors \n";
 
-    //double projection_error_u = u_exact->ComputeL2Error(E, irs);
-    double projection_error_u;
-
     if(!withDiv)
     {
-        projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
+        double projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
         if (verbose)
         {
             if ( norm_u > MYZEROTOL )
@@ -2359,6 +2294,8 @@ int main(int argc, char *argv[])
     delete hdiv_coll;
     delete H_space;
     delete h1_coll;
+    if (dim == 4)
+        delete GradSpace;
 #endif
     MPI_Finalize();
     return 0;
