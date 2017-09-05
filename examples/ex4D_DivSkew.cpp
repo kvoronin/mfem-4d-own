@@ -36,9 +36,80 @@
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
+#include "./spe10_coeff.cpp"
 
 using namespace std;
 using namespace mfem;
+
+
+int* LoadIterations(int NRows, int NCol)
+{
+  ifstream in("iter_DivSkew.txt");
+
+  //initialize
+  int *iters = new int[NCol*NRows];
+  for(int col = 0; col < NCol; col++)
+  {
+    for(int row = 0; row < NRows; row++)
+    {
+      iters[row*NCol+col] = -1;
+    }
+  }
+
+  if (!in)
+  {
+    cout << "Cannot open file.\n";
+    return iters;
+  }
+
+  for(int row = 0; row < NRows; row++)
+	  for(int col = 0; col < NCol; col++)
+		{
+		  if(in.eof())
+		  {
+			  in.close();
+			  return iters;
+		  }
+		  in >> iters[row*NCol+col];
+		}
+
+
+  in.close();
+
+  return iters;
+}
+
+void putIterationsInArray(int iter, int row, int col, int NCol, int* iters)
+{
+	iters[row*NCol+col] = iter;
+}
+
+void WriteIterations(int *iters, int NRows, int NCol)
+{
+	ofstream out;
+	out.open("iter_DivSkew.txt",fstream::out);
+
+	if (!out)
+	{
+		cout << "Cannot open file.\n";
+		delete[] iters;
+
+		return;
+	}
+
+	for(int row = 0; row < NRows; row++)
+	{
+		for(int col = 0; col < NCol; col++)
+		{
+		  out << iters[row*NCol+col] << "\t";
+		}
+		out << endl;
+	}
+	out.close();
+
+	delete[] iters;
+}
+
 
 // Exact solution, E, and r.h.s., f. See below for implementation.
 void E_exact_vec(const Vector &x, Vector &E);
@@ -52,6 +123,7 @@ class DivSkew4dPrec : public Solver
 private:
    HypreParMatrix *A;
    ParFiniteElementSpace *fespace;
+   Coefficient *alpha_, *beta_;
 
    //kernel operators
    HypreParMatrix *P_d_HCurl_HDivSkew;
@@ -81,12 +153,36 @@ private:
 
    bool exactSolves;
 
+   FiniteElementCollection* fecHCurlKernel;
+   ParFiniteElementSpace *HCurlKernelFESpace;
+
+
 public:
-   DivSkew4dPrec(HypreParMatrix *AUser, ParFiniteElementSpace *fespaceUser,
+   ~DivSkew4dPrec()
+   {
+	   delete pcgImage, pcgKernel;
+
+	   delete f, fKernel, uKernel, fImage, uImage, fCurl, uCurl;
+
+	   delete smootherCurl, HCurlMat;
+
+	   delete P_d_HCurl_HDivSkew, P_H1_HDivSkew, P_H1_HCurl;
+
+	   delete amgH1_Image, H1_ImageMat;
+	   delete amgH1_Kernel, H1_KernelMat;
+
+	   delete smootherDivSkew;
+
+	   delete HCurlKernelFESpace, fecHCurlKernel;
+   }
+   DivSkew4dPrec(HypreParMatrix *AUser, ParFiniteElementSpace *fespaceUser, Coefficient *alpha, Coefficient *beta,
                  const Array<int> &essBnd, int orderKernel=1, bool exactSolvesUser=false)
    {
       A = AUser;
       fespace = fespaceUser;
+	  alpha_ = alpha;
+	  beta_ = beta;
+
       ParMesh *pmesh = fespace->GetParMesh();
       int dim = pmesh->Dimension();
 
@@ -120,11 +216,10 @@ public:
 
 
       //setup the H(curl) FESpace for the kernel
-      FiniteElementCollection* fecHCurlKernel;
       if (orderKer==1) { fecHCurlKernel = new ND1_4DFECollection; }
       else { fecHCurlKernel = new ND2_4DFECollection; }
 
-      ParFiniteElementSpace *HCurlKernelFESpace = new ParFiniteElementSpace(pmesh,
+      HCurlKernelFESpace = new ParFiniteElementSpace(pmesh,
                                                                             fecHCurlKernel);
       Array<int> HCurlKernel_essDof(HCurlKernelFESpace->GetVSize());
       HCurlKernel_essDof = 0;
@@ -144,8 +239,8 @@ public:
 
       //setup the H1 preconditioner for the kernel
       ParBilinearForm* H1Varf = new ParBilinearForm(H1KernelFESpace);
-      H1Varf->AddDomainIntegrator(new VectorDiffusionIntegrator);
-      H1Varf->AddDomainIntegrator(new VectorMassIntegrator);
+      H1Varf->AddDomainIntegrator(new VectorDiffusionIntegrator(*beta_));
+//      H1Varf->AddDomainIntegrator(new VectorMassIntegrator);
       H1Varf->Assemble();
       H1Varf->Finalize();
       SparseMatrix &matH1(H1Varf->SpMat());
@@ -157,8 +252,8 @@ public:
 
       //setup the H1 preconditioner for the image
       ParBilinearForm* H1VecVarf = new ParBilinearForm(H1_ImageFESpace);
-      H1VecVarf->AddDomainIntegrator(new VectorDiffusionIntegrator(6));
-      H1VecVarf->AddDomainIntegrator(new VectorMassIntegrator(6));
+      H1VecVarf->AddDomainIntegrator(new VectorDiffusionIntegrator(*alpha_, 6));
+      H1VecVarf->AddDomainIntegrator(new VectorMassIntegrator(6, beta));
       H1VecVarf->Assemble();
       H1VecVarf->Finalize();
       SparseMatrix &matH1Vec(H1VecVarf->SpMat());
@@ -210,11 +305,12 @@ public:
 
 
       //setup the smoother for H(curl)
-      Coefficient *massC = new ConstantCoefficient(1.0);
-      Coefficient *CurlCurlC = new ConstantCoefficient(1.0);
+//      Coefficient *massC = new ConstantCoefficient(1.0);
+//      Coefficient *CurlCurlC = new ConstantCoefficient(1.0);
       ParBilinearForm *a_HCurl = new ParBilinearForm(HCurlKernelFESpace);
-      a_HCurl->AddDomainIntegrator(new CurlCurlIntegrator(*CurlCurlC));
-      a_HCurl->AddDomainIntegrator(new VectorFEMassIntegrator(*massC));
+      a_HCurl->AddDomainIntegrator(new CurlCurlIntegrator(*beta_));
+//      a_HCurl->AddDomainIntegrator(new CurlCurlIntegrator(*CurlCurlC));
+//      a_HCurl->AddDomainIntegrator(new VectorFEMassIntegrator(*massC));
       a_HCurl->Assemble();
       a_HCurl->Finalize();
       SparseMatrix &matHCurl(a_HCurl->SpMat());
@@ -255,6 +351,9 @@ public:
       pcgImage->SetMaxIter(100000000);
       pcgImage->SetPrintLevel(-2);
 
+
+      delete H1KernelFESpace, fecH1Kernel;
+      delete H1_ImageFESpace, fecH1Vec;
    }
 
    void setExactSolve(bool exSol)
@@ -305,13 +404,22 @@ int main(int argc, char *argv[])
    bool verbose = (myid==0);
 
    // 2. Parse command-line options.
-   const char *mesh_file = "../data/cube4d_96.MFEM";
+   const char *mesh_file = "../data/beam-tet.mesh";
    int order = 1;
+   bool set_bc = true;
    bool static_cond = false;
    bool visualization = 1;
    int sequ_ref_levels = 0;
-   int par_ref_levels = 3;
+   int par_ref_levels = 0;
    double tol = 1e-6;
+   double coeffWeight = 1.0;
+   bool exactH1Solver = false;
+   bool spe10Coeff = false;
+   bool standardCG = true;
+
+   int NExpo = 8;
+   int weightStart = -NExpo;
+   int weightEnd = NExpo;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -322,11 +430,22 @@ int main(int argc, char *argv[])
                   "Number of parallel refinement steps.");
    args.AddOption(&order, "-o", "--order",
                   "Polynomial order of the finite element space.");
+   args.AddOption(&set_bc, "-bc", "--impose-bc", "-no-bc", "--dont-impose-bc",
+                  "Impose or not essential boundary conditions.");
    args.AddOption(&tol, "-tol", "--tol",
                   "A parameter.");
-   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-                  "--no-visualization",
-                  "Enable or disable GLVis visualization.");
+   args.AddOption(&coeffWeight, "-c", "--coeffMass",
+                  "the weight for the mass term.");
+   args.AddOption(&exactH1Solver, "-exH1Sol", "--exactH1Solver", "-H1prec", "--H1preconditioner",
+                  "Use exact H1 solvers for the preconditioner.");
+   args.AddOption(&spe10Coeff, "-spe10", "--useSPE10Coeff", "-constCoeff", "--constCoeff",
+                  "Switch between the coefficients for the mass bilinear form.");
+   args.AddOption(&standardCG, "-sCG", "--stdCG", "-rCG", "--resCG",
+                  "Switch between standard PCG or recompute residuals in every step and use the residuals itself for the stopping criteria.");
+   args.AddOption(&weightStart, "-ws", "--weightStart",
+                  "the exponent for the starting weight (for the mass term).");
+   args.AddOption(&weightEnd, "-we", "--weightEnd",
+                  "the exponent for the weight at the end (for the mass term).");
    args.Parse();
    if (!args.Good())
    {
@@ -377,14 +496,13 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace *fespace = new ParFiniteElementSpace(pmesh, fec);
    HYPRE_Int size = fespace->GlobalTrueVSize();
 
-
    // 7. Determine the list of true (i.e. parallel conforming) essential
    //    boundary dofs. In this example, the boundary conditions are defined
    //    by marking all the boundary attributes from the mesh as essential
    //    (Dirichlet) and converting them to a list of true dofs.
    Array<int> ess_tdof_list;
    Array<int> ess_bdr(pmesh->bdr_attributes.Max());
-   ess_bdr = 1;
+   ess_bdr = set_bc ? 1 : 0;
    if (pmesh->bdr_attributes.Size())
    {
       fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
@@ -417,128 +535,155 @@ int main(int argc, char *argv[])
    //    when eliminating the non-homogeneous boundary condition to modify the
    //    r.h.s. vector b.
    ParGridFunction x(fespace);
-   x.ProjectCoefficient(solVec);
 
-   //   cout << x << endl;
-   //   x = 0.0;
-
-   // 10. Set up the parallel bilinear form corresponding to the EM diffusion
-   //     operator curl muinv curl + sigma I, by adding the curl-curl and the
-   //     mass domain integrators.
-   Coefficient *muinv = new ConstantCoefficient(1.0);
-   Coefficient *sigma = new ConstantCoefficient(1.0);
-   ParBilinearForm *a = new ParBilinearForm(fespace);
-   a->AddDomainIntegrator(new DivSkewDivSkewIntegrator(*muinv));
-   a->AddDomainIntegrator(new VectorFE_DivSkewMassIntegrator(*sigma));
-
-   // 11. Assemble the parallel bilinear form and the corresponding linear
-   //     system, applying any necessary transformations such as: parallel
-   //     assembly, eliminating boundary conditions, applying conforming
-   //     constraints for non-conforming AMR, static condensation, etc.
-   if (static_cond) { a->EnableStaticCondensation(); }
-   a->Assemble();
-
-   HypreParMatrix A;
-   Vector B, X;
-   a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B);
-
-   if (myid == 0)
+   for(int expo=weightStart; expo<=weightEnd; expo++)
    {
-      cout << "Size of linear system: " << A.GetGlobalNumRows() << endl;
+	   double weight = pow(10.0,expo);
+
+	   x.ProjectCoefficient(solVec);
+
+	   //   cout << x << endl;
+	   //   x = 0.0;
+
+	   // 10. Set up the parallel bilinear form corresponding to the EM diffusion
+	   //     operator curl muinv curl + sigma I, by adding the curl-curl and the
+	   //     mass domain integrators.
+//	   std::string permFile = "spe_perm.dat";
+//	   InversePermeabilityFunction::ReadPermeabilityFile(permFile, MPI_COMM_WORLD);
+
+	   Coefficient *alpha = new ConstantCoefficient(1.0);
+	   Coefficient *beta;
+//	   if(spe10Coeff) beta = new FunctionCoefficient(InversePermeabilityFunction::Norm2Permeability);
+//	   else
+		   beta = new ConstantCoefficient(weight);
+
+
+	   ParBilinearForm *a = new ParBilinearForm(fespace);
+	   a->AddDomainIntegrator(new DivSkewDivSkewIntegrator(*alpha));
+	   a->AddDomainIntegrator(new VectorFE_DivSkewMassIntegrator(*beta));
+
+	   // 11. Assemble the parallel bilinear form and the corresponding linear
+	   //     system, applying any necessary transformations such as: parallel
+	   //     assembly, eliminating boundary conditions, applying conforming
+	   //     constraints for non-conforming AMR, static condensation, etc.
+	   if (static_cond) { a->EnableStaticCondensation(); }
+	   a->Assemble();
+
+	   HypreParMatrix A;
+	   Vector B, X;
+	   a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B);
+
+	   if (myid == 0)
+	   {
+		  cout << "Size of linear system: " << A.GetGlobalNumRows() << endl;
+	   }
+
+
+	   //Define the preconditioner
+
+	   if (myid == 0) { cout << "Set up the preconditioner" << endl; }
+	   Solver *prec;
+	   if (dim==4) { prec = new DivSkew4dPrec(&A, fespace, alpha, beta, ess_bdr, order, exactH1Solver); }
+
+	   IterativeSolver *pcg = new CGSolver(MPI_COMM_WORLD);
+	   pcg->SetOperator(A);
+	   pcg->SetRelTol(tol);
+	   pcg->SetMaxIter(500);
+	   pcg->SetPrintLevel(1);
+	   pcg->SetPreconditioner(*prec);
+	   pcg->Mult(B, X);
+
+	   delete prec;
+
+	   int iter = pcg->GetNumIterations();
+	   if(myid==0)
+	   {
+		   cout << "Weigth: " << weight << " " << iter << endl;
+
+		   int *iters = LoadIterations(10, 2*NExpo+1);
+		   putIterationsInArray(iter, sequ_ref_levels+par_ref_levels, expo+NExpo, 2*NExpo+1, iters);
+		   WriteIterations(iters, 10, 2*NExpo+1);
+	   }
+
+	   // 13. Recover the parallel grid function corresponding to X. This is the
+	   //     local finite element solution on each processor.
+	   a->RecoverFEMSolution(X, *b, x);
+
+	   // 14. Compute and print the L^2 norm of the error.
+	   {
+		  double error = 0.0;
+		  for (int i = 0; i < fespace->GetNE(); i++)
+		  {
+			 const FiniteElement* fe = fespace->GetFE(i);
+			 int fdof = fe->GetDof();
+			 ElementTransformation* transf = fespace->GetElementTransformation(i);
+			 DenseMatrix shape(fdof,dim*dim);
+
+			 int intorder = 2*fe->GetOrder() + 1; // <----------
+			 const IntegrationRule *ir;
+			 ir = &(IntRules.Get(fe->GetGeomType(), intorder));
+
+			 Vector elSol(dim*dim);
+			 DenseMatrix elSolMat(dim,dim);
+			 DenseMatrix exactSol(dim,dim);
+			 Vector exactSolVec(dim*dim);
+
+
+
+			 Array<int> vdofs;
+			 fespace->GetElementVDofs(i, vdofs);
+			 for (int j = 0; j < ir->GetNPoints(); j++)
+			 {
+				const IntegrationPoint &ip = ir->IntPoint(j);
+				transf->SetIntPoint(&ip);
+
+				fe->CalcVShape(*transf, shape);
+
+				elSol = 0.0;
+				for (int k = 0; k < fdof; k++)
+				{
+				   if (vdofs[k] >= 0)
+				   {
+					  for (int l=0; l<dim*dim; l++) { elSol(l) += shape(k,l)*x(vdofs[k]); }
+				   }
+				   else
+				   {
+					  for (int l=0; l<dim*dim; l++) { elSol(l) -= shape(k,l)*x(-1-vdofs[k]); }
+				   }
+				}
+				for (int k=0; k<dim; k++)
+				   for (int l=0; l<dim; l++)
+				   {
+					  elSolMat(k,l) = elSol(dim*k+l);
+				   }
+
+
+				solMat.Eval(exactSol,*transf, ip);
+				for (int k=0; k<dim; k++)
+				   for (int l=0; l<dim; l++)
+				   {
+					  exactSolVec(dim*k+l) = exactSol(k,l);
+				   }
+				elSol.Add(-1.0, exactSolVec);
+
+				error += ip.weight * fabs(transf->Weight()) * (elSol * elSol);
+			 }
+		  }
+		  double globalError = 0.0;
+		  MPI_Allreduce(&error, &globalError, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		  if (myid==0) { std::cout << "L2 error: " << sqrt(globalError) << std::endl; }
+
+
+	   }
+
+	   delete pcg;
+	   delete a;
+	   delete alpha;
+	   delete beta;
    }
-
-
-   //Define the preconditioner
-
-   if (myid == 0) { cout << "Set up the preconditioner" << endl; }
-   Solver *prec;
-   if (dim==4) { prec = new DivSkew4dPrec(&A, fespace, ess_bdr, order, false); }
-
-   IterativeSolver *pcg = new CGSolver(MPI_COMM_WORLD);
-   pcg->SetOperator(A);
-   pcg->SetRelTol(tol);
-   pcg->SetMaxIter(1000000000);
-   pcg->SetPrintLevel(1);
-   pcg->SetPreconditioner(*prec);
-   pcg->Mult(B, X);
-
-   // 13. Recover the parallel grid function corresponding to X. This is the
-   //     local finite element solution on each processor.
-   a->RecoverFEMSolution(X, *b, x);
-
-   // 14. Compute and print the L^2 norm of the error.
-   {
-      double error = 0.0;
-      for (int i = 0; i < fespace->GetNE(); i++)
-      {
-         const FiniteElement* fe = fespace->GetFE(i);
-         int fdof = fe->GetDof();
-         ElementTransformation* transf = fespace->GetElementTransformation(i);
-         DenseMatrix shape(fdof,dim*dim);
-
-         int intorder = 2*fe->GetOrder() + 1; // <----------
-         const IntegrationRule *ir;
-         ir = &(IntRules.Get(fe->GetGeomType(), intorder));
-
-         Vector elSol(dim*dim);
-         DenseMatrix elSolMat(dim,dim);
-         DenseMatrix exactSol(dim,dim);
-         Vector exactSolVec(dim*dim);
-
-
-
-         Array<int> vdofs;
-         fespace->GetElementVDofs(i, vdofs);
-         for (int j = 0; j < ir->GetNPoints(); j++)
-         {
-            const IntegrationPoint &ip = ir->IntPoint(j);
-            transf->SetIntPoint(&ip);
-
-            fe->CalcVShape(*transf, shape);
-
-            elSol = 0.0;
-            for (int k = 0; k < fdof; k++)
-            {
-               if (vdofs[k] >= 0)
-               {
-                  for (int l=0; l<dim*dim; l++) { elSol(l) += shape(k,l)*x(vdofs[k]); }
-               }
-               else
-               {
-                  for (int l=0; l<dim*dim; l++) { elSol(l) -= shape(k,l)*x(-1-vdofs[k]); }
-               }
-            }
-            for (int k=0; k<dim; k++)
-               for (int l=0; l<dim; l++)
-               {
-                  elSolMat(k,l) = elSol(dim*k+l);
-               }
-
-
-            solMat.Eval(exactSol,*transf, ip);
-            for (int k=0; k<dim; k++)
-               for (int l=0; l<dim; l++)
-               {
-                  exactSolVec(dim*k+l) = exactSol(k,l);
-               }
-            elSol.Add(-1.0, exactSolVec);
-
-            error += ip.weight * fabs(transf->Weight()) * (elSol * elSol);
-         }
-      }
-      double globalError = 0.0;
-      MPI_Allreduce(&error, &globalError, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-      if (myid==0) { std::cout << "L2 error: " << sqrt(globalError) << std::endl; }
-
-
-   }
-
 
    // 17. Free the used memory.
-   delete pcg;
-   delete a;
-   delete sigma;
-   delete muinv;
+
    delete b;
    delete fespace;
    delete fec;

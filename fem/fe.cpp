@@ -202,7 +202,7 @@ void NodalFiniteElement::NodalLocalInterpolation (
    ElementTransformation &Trans, DenseMatrix &I,
    const NodalFiniteElement &fine_fe) const
 {
-   double v[3];
+   double v[4];
    Vector vv (v, Dim);
    IntegrationPoint f_ip;
 
@@ -7372,6 +7372,108 @@ void DivSkew1PentFiniteElement::ProjectCurl(const FiniteElement &fe,
    }
 }
 
+void DivSkew1PentFiniteElement::GetLocalInterpolation (
+   ElementTransformation &Trans, DenseMatrix &I) const
+{
+
+   //cerr << "DivSkew1PentFiniteElement::GetLocalInterpolation (...)  is not implemented yet!!! \n";
+
+   int k, j;
+#ifdef MFEM_THREAD_SAFE
+   DenseMatrix vshape(Dof, Dim);
+   DenseMatrix Jinv(Dim);
+#endif
+
+   DenseMatrix mat(Dim,Dim); mat = 0.0;
+   Vector t1i(4);
+   Vector t2i(4);
+   Vector Mt(4);
+
+#ifdef MFEM_DEBUG
+   for (k = 0; k < 10; k++)
+   {
+      CalcVShape (Nodes.IntPoint(k), vshape);
+
+      for (j = 0; j < 10; j++)
+      {
+         mat(0,0) =  0.0;          mat(0,1) =  vshape(j,11);
+         mat(0,2) =  vshape(j,13); mat(0,3) =  vshape(j,6);
+         mat(1,0) =  vshape(j,14); mat(1,1) =  0.0;
+         mat(1,2) =  vshape(j,3);  mat(1,3) =  vshape(j,8);
+         mat(2,0) =  vshape(j,7);  mat(2,1) =  vshape(j,12); mat(2,2) =  0.0;
+         mat(2,3) =  vshape(j,1);
+         mat(3,0) =  vshape(j,9);  mat(3,1) =  vshape(j,2);
+         mat(3,2) =  vshape(j,4);  mat(3,3) =  0.0;
+
+         for ( int dim = 0; dim < 4; ++dim)
+         {
+             t1i[dim] = tk1[k][dim];
+             t2i[dim] = tk2[k][dim];
+         }
+         mat.Mult(t2i, Mt);
+         double d = t1i * Mt;
+
+         //double d = ( vshape(j,0)*nk[k][0] + vshape(j,1)*nk[k][1] +
+                      //vshape(j,2)*nk[k][2] + vshape(j,3)*nk[k][3] );
+         if (j == k) { d -= 1.0; }
+
+         if (fabs(d) > 1.0e-12)
+         {
+            cerr << "DivSkew1PentFiniteElement::GetLocalInterpolation (...)\n"
+                 " k = " << k << ", j = " << j << ", d = " << d << endl;
+            mfem_error();
+         }
+      }
+   }
+#endif
+
+   IntegrationPoint ip;
+   ip.x = ip.y = ip.z = ip.t = 0.0;
+   Trans.SetIntPoint (&ip);
+   // Trans must be linear
+   // set Jinv = |J| J^{-t} = adj(J)^t
+   CalcAdjugateTranspose (Trans.Jacobian(), Jinv);
+   Vector vk1(4), vk2(4);
+   Vector xk(4);
+
+   for (k = 0; k < 10; k++)
+   {
+      Trans.Transform (Nodes.IntPoint (k), xk);
+      ip.x = xk[0]; ip.y = xk[1]; ip.z = xk[2]; ip.t = xk[3];
+      CalcVShape (ip, vshape);
+
+      //  vk1 = |J| J^{-t} tk1, vk2 = |J| J^{-t} tk2
+      for ( int dim = 0; dim < 4; ++dim)
+      {
+          t1i[dim] = tk1[k][dim];
+          t2i[dim] = tk2[k][dim];
+      }
+
+      Jinv.Mult(t1i, vk1);
+      Jinv.Mult(t2i, vk2);
+
+      for (j = 0; j < 10; j++)
+      {
+         mat(0,0) =  0.0;          mat(0,1) =  vshape(j,11);
+         mat(0,2) =  vshape(j,13); mat(0,3) =  vshape(j,6);
+         mat(1,0) =  vshape(j,14); mat(1,1) =  0.0;
+         mat(1,2) =  vshape(j,3);  mat(1,3) =  vshape(j,8);
+         mat(2,0) =  vshape(j,7);  mat(2,1) =  vshape(j,12); mat(2,2) =  0.0;
+         mat(2,3) =  vshape(j,1);
+         mat(3,0) =  vshape(j,9);  mat(3,1) =  vshape(j,2);
+         mat(3,2) =  vshape(j,4);  mat(3,3) =  0.0;
+
+         mat.Mult(vk2, Mt);
+         I(k,j) = vk1 * Mt;
+
+         if (fabs (I(k,j)) < 1.0e-12)
+         {
+             I(k,j) = 0.0;
+         }
+      }
+   }
+}
+
 
 RT0HexFiniteElement::RT0HexFiniteElement()
    : VectorFiniteElement(3, Geometry::CUBE, 6, 1, H_DIV, FunctionSpace::Qk)
@@ -8130,7 +8232,7 @@ void RT0PentFiniteElement::GetLocalInterpolation (
    ElementTransformation &Trans, DenseMatrix &I) const
 {
 
-   cerr << "RT0PentFiniteElement::GetLocalInterpolation (...) implementation not tested yet!!! \n";
+   //cerr << "RT0PentFiniteElement::GetLocalInterpolation (...) implementation not tested yet!!! \n";
 
    int k, j;
 #ifdef MFEM_THREAD_SAFE
@@ -8139,17 +8241,17 @@ void RT0PentFiniteElement::GetLocalInterpolation (
 #endif
 
 #ifdef MFEM_DEBUG
-   for (k = 0; k < 4; k++)
+   for (k = 0; k < 5; k++)
    {
       CalcVShape (Nodes.IntPoint(k), vshape);
-      for (j = 0; j < 4; j++)
+      for (j = 0; j < 5; j++)
       {
          double d = ( vshape(j,0)*nk[k][0] + vshape(j,1)*nk[k][1] +
-                      vshape(j,2)*nk[k][2] );
+                      vshape(j,2)*nk[k][2] + vshape(j,3)*nk[k][3] );
          if (j == k) { d -= 1.0; }
          if (fabs(d) > 1.0e-12)
          {
-            cerr << "RT0TetFiniteElement::GetLocalInterpolation (...)\n"
+            cerr << "RT0PentFiniteElement::GetLocalInterpolation (...)\n"
                  " k = " << k << ", j = " << j << ", d = " << d << endl;
             mfem_error();
          }
@@ -8158,32 +8260,40 @@ void RT0PentFiniteElement::GetLocalInterpolation (
 #endif
 
    IntegrationPoint ip;
-   ip.x = ip.y = ip.z = 0.0;
+   ip.x = ip.y = ip.z = ip.t = 0.0;
    Trans.SetIntPoint (&ip);
    // Trans must be linear
    // set Jinv = |J| J^{-t} = adj(J)^t
    CalcAdjugateTranspose (Trans.Jacobian(), Jinv);
    double vk[4];
-   Vector xk(vk, 4);
+   Vector xk(4);
+   //Vector temp(4);
+   //Vector ones(4);
+   //ones = 1.0;
 
+   I = 0.0;
    for (k = 0; k < 5; k++)
    {
       Trans.Transform (Nodes.IntPoint (k), xk);
-      ip.x = vk[0]; ip.y = vk[1]; ip.z = vk[2]; ip.t = vk[3];
+      ip.x = xk[0]; ip.y = xk[1]; ip.z = xk[2]; ip.t = xk[3];
       CalcVShape (ip, vshape);
       //  vk = |J| J^{-t} nk
-      vk[0] = Jinv(0,0)*nk[k][0]+Jinv(0,1)*nk[k][1]+Jinv(0,2)*nk[k][2]+Jinv(0,
-                                                                            3)*nk[k][3];
-      vk[1] = Jinv(1,0)*nk[k][0]+Jinv(1,1)*nk[k][1]+Jinv(1,2)*nk[k][2]+Jinv(1,
-                                                                            3)*nk[k][3];
-      vk[2] = Jinv(2,0)*nk[k][0]+Jinv(2,1)*nk[k][1]+Jinv(2,2)*nk[k][2]+Jinv(2,
-                                                                            3)*nk[k][3];
-      vk[3] = Jinv(3,0)*nk[k][0]+Jinv(3,1)*nk[k][1]+Jinv(3,2)*nk[k][2]+Jinv(3,
-                                                                            3)*nk[k][3];
+      /*
+      vk[0] = Jinv(0,0)*nk[k][0]+Jinv(0,1)*nk[k][1]+Jinv(0,2)*nk[k][2]+Jinv(0,3)*nk[k][3];
+      vk[1] = Jinv(1,0)*nk[k][0]+Jinv(1,1)*nk[k][1]+Jinv(1,2)*nk[k][2]+Jinv(1,3)*nk[k][3];
+      vk[2] = Jinv(2,0)*nk[k][0]+Jinv(2,1)*nk[k][1]+Jinv(2,2)*nk[k][2]+Jinv(2,3)*nk[k][3];
+      vk[3] = Jinv(3,0)*nk[k][0]+Jinv(3,1)*nk[k][1]+Jinv(3,2)*nk[k][2]+Jinv(3,3)*nk[k][3];
+      */
+      Jinv.Mult(nk[k], vk);
 
       for (j = 0; j < 5; j++)
-         if (fabs (I(k,j) = (vshape(j,0)*vk[0]+vshape(j,1)*vk[1]+vshape(j,
-                                                                        2)*vk[2]+vshape(j,3)*vk[3])) < 1.0e-12) { I(k,j) = 0.0; }
+      {
+         I(k,j) = vshape(j,0)*vk[0]+vshape(j,1)*vk[1]+vshape(j,2)*vk[2]+vshape(j,3)*vk[3];
+         if (fabs (I(k,j)) < 1.0e-12)
+         {
+             I(k,j) = 0.0;
+         }
+      }
    }
 }
 
