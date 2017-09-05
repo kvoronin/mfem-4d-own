@@ -560,9 +560,8 @@ void hcurlFun3D_2_ex(const Vector& xt, Vector& vecvalue);
 void curlhcurlFun3D_2_ex(const Vector& xt, Vector& vecvalue);
 
 double zero_ex(const Vector& xt);
-void zerovec3D_ex(const Vector& xt, Vector& vecvalue);
+void zerovectx_ex(const Vector& xt, Vector& vecvalue);
 void zerovecx_ex(const Vector& xt, Vector& zerovecx );
-void zerovec4D_ex(const Vector& xt, Vector& vecvalue);
 void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue);
 
 void vminusone_exact(const Vector &x, Vector &vminusone);
@@ -712,9 +711,9 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
         if (numsol == -34)
         {
             if (dim == 3)
-                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovec3D_ex, &zerovec3D_ex>();
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
             else // dim == 4
-                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovecMat4D_ex, &zerovec4D_ex>();
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovecMat4D_ex, &zerovectx_ex>();
         }
         if (numsol == 0)
         {
@@ -724,7 +723,7 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &zerovec3D_ex, &zerovec3D_ex>();
+                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         if (numsol == 1)
         {
@@ -734,16 +733,20 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &zerovec3D_ex, &zerovec3D_ex>();
+                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         if (numsol == 2)
         {
-            if (numcurl == 1)
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
-            else if (numcurl == 2)
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            //if (numcurl == 1)
+                //SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            //else if (numcurl == 2)
+                //SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            if (numcurl == 1 || numcurl == 2)
+            {
+                std::cout << "Critical error: Explicit analytic div-free guy is not implemented in 4D \n";
+            }
             else
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &zerovec3D_ex, &zerovec3D_ex>();
+                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &zerovecMat4D_ex, &zerovectx_ex>();
         }
         if (numsol == 3)
         {
@@ -752,7 +755,7 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &zerovec3D_ex, &zerovec3D_ex>();
+                SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         testisgood = true;
     }
@@ -1092,7 +1095,7 @@ int main(int argc, char *argv[])
                          "(with multilevel and multigrid prerequisites) \n";
 
         if (!withDiv && verbose)
-            std::cout << "Multilevel code cannot be used withut withDiv flag \n";
+            std::cout << "Multilevel code cannot be used without withDiv flag \n";
 
         coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
         coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
@@ -1197,12 +1200,6 @@ int main(int argc, char *argv[])
 
                 Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
-
-                if (l == ref_levels)
-                {
-                    delete P_W_local;
-                    delete P_R_local;
-                }
 
             }
         } // end of loop over levels
@@ -1367,7 +1364,11 @@ int main(int argc, char *argv[])
         std::cout << "Boundary conditions: \n";
         std::cout << "ess bdr Sigma: \n";
         ess_bdrSigma.Print(std::cout, pmesh->bdr_attributes.Max());
+#ifndef USE_CURLMATRIX
         std::cout << "ess bdr U: \n";
+#else
+        std::cout << "ess bdr U: not used in USE_CURLMATRIX mode \n";
+#endif
         ess_bdrU.Print(std::cout, pmesh->bdr_attributes.Max());
         std::cout << "ess bdr S: \n";
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
@@ -1537,14 +1538,14 @@ int main(int argc, char *argv[])
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
     // curl or divskew operator from C_space into R_space
-    ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl(R_space) to Hdiv(C_space)
+    ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     if (dim == 3)
         Divfree_op.AddDomainInterpolator(new CurlInterpolator());
     else // dim == 4
         Divfree_op.AddDomainInterpolator(new DivSkewInterpolator());
     Divfree_op.Assemble();
     Divfree_op.Finalize();
-    HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl(R_space) to Hdiv(C_space)
+    HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     HypreParMatrix * DivfreeT_dop = Divfree_dop->Transpose();
 
     // mass matrix for H(div)
@@ -2082,6 +2083,8 @@ int main(int argc, char *argv[])
     Grad.Assemble();
     Grad.Mult(*S, GradS);
 
+    if (numsol != -34 && verbose)
+        std::cout << "For this norm we are grad S for S from numsol = -34 \n";
     VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
     double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
     double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
@@ -2307,14 +2310,7 @@ void zerovecx_ex(const Vector& xt, Vector& zerovecx )
     zerovecx = 0.0;
 }
 
-void zerovec3D_ex(const Vector& xt, Vector& vecvalue)
-{
-    vecvalue.SetSize(xt.Size());
-    vecvalue = 0.0;
-    return;
-}
-
-void zerovec4D_ex(const Vector& xt, Vector& vecvalue)
+void zerovectx_ex(const Vector& xt, Vector& vecvalue)
 {
     vecvalue.SetSize(xt.Size());
     vecvalue = 0.0;

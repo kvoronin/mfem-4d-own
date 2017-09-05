@@ -533,7 +533,7 @@ int main(int argc, char *argv[])
     bool verbose = (myid == 0);
     bool visualization = 0;
 
-    int nDimensions     = 4;
+    int nDimensions     = 3;
     int numsol          = 3;
 
     int ser_ref_levels  = 1;//0;
@@ -1207,7 +1207,6 @@ int main(int argc, char *argv[])
 
     if (numsol != -34 && verbose)
         std::cout << "For this norm we are grad S for S from numsol = -34 \n";
-
     VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
     double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
     double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);

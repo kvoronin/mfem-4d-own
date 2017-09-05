@@ -3,8 +3,6 @@
 using namespace mfem;
 using std::unique_ptr;
 
-//#define DEBUG4D
-
 class DivPart
 {
 
@@ -35,15 +33,6 @@ public:
         Vector rhs_l;
         Vector comp;
         Vector F_coarse;
-
-#ifdef DEBUG4D
-        Vector vec2;
-        Vector total_rhside(P_W[0]->Height()); // at finest level
-        total_rhside = 0.0;
-        Vector rhside;
-        SparseMatrix * B_input = B_fine;
-        std::cout << "abs. norm of F_fine = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
-#endif
 
         Vector total_sig(P_R[0]->Height());
         total_sig = .0;
@@ -155,11 +144,6 @@ public:
             u_loc_vec =0.0;
             p_loc_vec =0.0;
 
-#ifdef DEBUG4D
-            Vector rhs_loc_vec(total_rhside.Size());
-            rhs_loc_vec = 0.0;
-#endif
-
             for( int e = 0; e < AE_R->Height(); e++){
 
                 Array<int> Rtmp_j(AE_R->GetRowColumns(e), AE_R->RowSize(e));
@@ -209,11 +193,6 @@ public:
 
                 p_loc_vec.AddElementVector(Rtmp_j,sig);
 
-#ifdef DEBUG4D
-                //rhs_loc_vec = rhs_l;
-                rhs_loc_vec.AddElementVector(Wtmp_j, sub_F);
-#endif
-
             } // end of loop over all elements at level l
 
 #ifdef MFEM_DEBUG
@@ -238,49 +217,6 @@ public:
 
             total_sig +=p_loc_vec;
 
-#ifdef DEBUG4D
-            rhs_loc_vec.SetSize(rhs_l.Size());
-            rhs_loc_vec = rhs_l;
-            std::cout << "abs. norm rhs_loc_vec at level = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
-            if (l>0){
-                for (int k = l-1; k>=0; k--){
-
-                    vec2.SetSize(P_W[k]->Height());
-                    P_W[k]->Mult(rhs_loc_vec, vec2);
-                    rhs_loc_vec.SetSize(vec2.Size());
-                    rhs_loc_vec = vec2;
-                }
-            }
-
-            // maybe this is wrong for more than one level, multiplying rhside by the scaling factors from
-            // all the previous levels used
-            if (l > 0)
-            {
-                for (int k = 0; k<l; k++)
-                {
-                    SparseMatrix * P_WT = Transpose(*P_W[k]);
-                    SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[k]);
-                    Vector Diag(P_WTxP_W->Size());
-                    P_WTxP_W->GetDiag(Diag);
-
-                    for (int i = 0; i < rhs_loc_vec.Size(); ++i)
-                        rhs_loc_vec[i] *= 1.0 / Diag[0];
-                }
-            }
-
-            std::cout << "abs. norm rhs_loc_vec after = " << rhs_loc_vec.Norml2() / sqrt(rhs_loc_vec.Size()) << "\n";
-
-            total_rhside += rhs_loc_vec;
-
-            Vector residual_l(total_rhside.Size());
-            B_input->Mult(p_loc_vec, residual_l);
-            //for (int j = 0; j < 20; ++j)
-                //std::cout << "res_l[j] = " << residual_l[j] << ", rhs[i] = " << rhs_loc_vec[j] << ", ratio = " << residual_l[j] / rhs_loc_vec[j] << "\n";
-            residual_l -= rhs_loc_vec;
-            std::cout << "|| residual_l || = " << residual_l.Norml2() / sqrt(residual_l.Size()) << "\n";
-
-#endif
-
             MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
                         "checking global solution added" << total_sig.Norml2());
 
@@ -294,14 +230,6 @@ public:
 
         rhs_l +=F_coarse;
         P_W[ref_levels-1]->MultTranspose(rhs_l, FF_coarse );
-
-#ifdef DEBUG4D
-        std::cout << "abs. norm of F_coarse = " << F_coarse.Norml2() / sqrt(F_coarse.Size()) << "\n";
-        std::cout << "abs. norm of rhs_L = " << rhs_l.Norml2() / sqrt(rhs_l.Size()) << "\n";
-        std::cout << "abs. norm of FF_coarse = " << FF_coarse.Norml2() / sqrt(FF_coarse.Size()) << "\n";
-        Vector rhs_c(P_W[0]->Height());
-        rhs_c = 0.0;
-#endif
 
         SparseMatrix *P_WT2 = Transpose(*P_W[ref_levels-1]);
         SparseMatrix *P_RT2;
@@ -425,7 +353,7 @@ public:
             solver.SetMaxIter(maxIter);
             solver.SetOperator(*S);
             solver.SetPreconditioner(*invS);
-            solver.SetPrintLevel(1);
+            solver.SetPrintLevel(0);
             solver.Mult(FF_coarse, tmp_c);
 //            chrono.Stop();
 
@@ -436,12 +364,6 @@ public:
 
         d_td_coarse_R->Mult(Truesig_c,sig_c);
 
-#ifdef DEBUG4D
-        Vector residual_c_coarse(FF_coarse.Size());
-        B_Global->Mult(sig_c, residual_c_coarse);
-        residual_c_coarse -= FF_coarse;
-        std::cout << "|| residual_c on coarse level || = " << residual_c_coarse.Norml2() / sqrt(residual_c_coarse.Size()) << "\n";
-#endif
         for (int k = ref_levels-1; k>=0; k--){
 
             vec1.SetSize(P_R[k]->Height());
@@ -454,73 +376,6 @@ public:
         total_sig+=sig_c;
         sigma.SetSize(total_sig.Size());
         sigma = total_sig;
-
-#ifdef DEBUG4D
-        std::cout << "abs. norm of total_rhside before adding coarsest level = " << total_rhside.Norml2() / sqrt(total_rhside.Size()) << "\n";
-
-        rhs_c = FF_coarse;
-        // maybe this is wrong for more than one level
-        for (int k = 0; k< ref_levels; k++)
-        {
-            SparseMatrix * P_WT = Transpose(*P_W[k]);
-            SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[k]);
-            Vector Diag(P_WTxP_W->Size());
-            P_WTxP_W->GetDiag(Diag);
-
-            for (int i = 0; i < rhs_c.Size(); ++i)
-                rhs_c[i] *= 1.0 / Diag[0]; // dimensions mismatch so use Diag[[0]
-        }
-
-        for (int k = ref_levels-1; k>=0; k--){
-
-            vec2.SetSize(P_W[k]->Height());
-            P_W[k]->Mult(rhs_c, vec2);
-            rhs_c.SetSize(P_W[k]->Height());
-            rhs_c = vec2;
-        }
-
-        std::cout << "abs. norm of rhs_c = projected FF_coarse = " << rhs_c.Norml2() / sqrt(rhs_c.Size()) << "\n";
-
-        Vector residual_c(total_rhside.Size());
-        B_input->Mult(sig_c, residual_c);
-        //for (int j = 0; j < 20; ++j)
-            //std::cout << "res_c[j] = " << residual_c[j] << ", rhs_c[i] = " << rhs_c[j] << ", ratio = " << residual_c[j] / rhs_c[j] << "\n";
-        residual_c -= rhs_c;
-        std::cout << "|| residual_c || = " << residual_c.Norml2() / sqrt(residual_c.Size()) << "\n";
-
-        // only for 2-level case
-        if (ref_levels == 1)
-        {
-            Vector Bsig_c(total_rhside.Size());
-            B_input->Mult(sig_c, Bsig_c);
-            Vector PWTBsig_c(P_W[0]->Width());
-            P_W[0]->MultTranspose(Bsig_c, PWTBsig_c);
-
-            Vector PWTrhs_c(P_W[0]->Width());
-            P_W[0]->MultTranspose(rhs_c, PWTrhs_c);
-            PWTBsig_c -= PWTrhs_c;
-
-            std::cout << "|| P_w^T residual_c || = " << PWTBsig_c.Norml2() / sqrt(PWTBsig_c.Size()) << "\n";
-        }
-
-
-        total_rhside += rhs_c;
-        rhside = total_rhside;
-
-        //total_rhside += FF_coarse;
-        //rhside = total_rhside;
-
-        rhside -= F_fine;
-
-        std::cout << "|| fine f - sum over all f in the algo || = " << rhside.Norml2() / sqrt(rhside.Size()) << "\n";
-        std::cout << "|| fine f || = " << F_fine.Norml2() / sqrt(F_fine.Size()) << "\n";
-        std::cout << "ratio = " << rhside.Norml2() / F_fine.Norml2() << "\n";
-
-        Vector total_residual(rhside.Size());
-        B_input->Mult(sigma, total_residual);
-        total_residual -= F_fine;
-        std::cout << "|| total_residual || = " << total_residual.Norml2() / sqrt(total_residual.Size()) << "\n";
-#endif
     }
 
     void Dofs_AE(SparseMatrix &Element_Dofs, const SparseMatrix &Element_Element_coarse, SparseMatrix &Dofs_Ae)

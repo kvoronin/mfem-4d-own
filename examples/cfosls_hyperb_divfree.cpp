@@ -15,7 +15,7 @@
 // if undefined, a code with new integrators is used
 // for now, the "integrators'" code is giving wrong results
 // TODO: once it will be good to have the integrators working
-//#define USE_CURLMATRIX
+#define USE_CURLMATRIX
 
 //#define BAD_TEST
 //#define ONLY_DIVFREEPART
@@ -693,10 +693,14 @@ Transport_test_divfree::Transport_test_divfree (int Dim, int NumSol, int NumCurl
         }
         if (numsol == -4)
         {
-            if (numcurl == 1) // actually wrong div-free guy in 4D but it is not used when withDiv = true
-                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
-            else if (numcurl == 2)
-                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            //if (numcurl == 1) // actually wrong div-free guy in 4D but it is not used when withDiv = true
+                //SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            //else if (numcurl == 2)
+                //SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            if (numcurl == 1 || numcurl == 2)
+            {
+                std::cout << "Critical error: Explicit analytic div-free guy is not implemented in 4D \n";
+            }
             else
                 SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_gradx, &bFunCube3D_ex, &bFunCube3Ddiv_ex, &zerovecMat4D_ex, &zerovec_ex>();
         }
@@ -752,11 +756,11 @@ int main(int argc, char *argv[])
     int ser_ref_levels  = 1;
     int par_ref_levels  = 1;
 
-    bool aniso_refine = true;
+    bool aniso_refine = false;
     bool refine_t_first = false;
 
     bool withDiv = true;
-    bool with_multilevel = false;
+    bool with_multilevel = true;
     bool withS = true;
     bool blockedversion = true; // should be always true
     bool monolithicMG = false;
@@ -764,7 +768,7 @@ int main(int argc, char *argv[])
     bool useM_in_divpart = false;
 
     // solver options
-    int prec_option = 2;        // defines whether to use preconditioner or not, and which one
+    int prec_option = 0;        // defines whether to use preconditioner or not, and which one
     bool prec_is_MG;
 
     //const char *mesh_file = "../data/cube_3d_fine.mesh";
@@ -1172,13 +1176,6 @@ int main(int argc, char *argv[])
 
                 Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
-
-                if (l == ref_levels)
-                {
-                    delete P_W_local;
-                    delete P_R_local;
-                }
-
             }
         } // end of loop over levels
     }
@@ -1489,7 +1486,7 @@ int main(int argc, char *argv[])
     else // solving a div-free system with some analytical solution for the div-free part
     {
         if (verbose)
-            std::cout << "Using exact sigma minus curl of a given function from H(curl,0) as a particular solution \n";
+            std::cout << "Using exact sigma minus curl of a given function from H(curl,0) (in 3D) as a particular solution \n";
         Sigmahat->ProjectCoefficient(*(Mytest.sigmahat));
     }
     if (verbose)
@@ -1543,26 +1540,29 @@ int main(int argc, char *argv[])
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
     // curl or divskew operator from C_space into R_space
-    ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl(R_space) to Hdiv(C_space)
+    ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     if (dim == 3)
         Divfree_op.AddDomainInterpolator(new CurlInterpolator());
     else // dim == 4
         Divfree_op.AddDomainInterpolator(new DivSkewInterpolator());
     Divfree_op.Assemble();
     Divfree_op.Finalize();
-    HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl(R_space) to Hdiv(C_space)
+    HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     HypreParMatrix * DivfreeT_dop = Divfree_dop->Transpose();
 
     // mass matrix for H(div)
     ParBilinearForm *Mblock(new ParBilinearForm(R_space));
-    Mblock->AddDomainIntegrator(new VectorFEMassIntegrator);
+    if (withS)
+        Mblock->AddDomainIntegrator(new VectorFEMassIntegrator);
+    else
+        Mblock->AddDomainIntegrator(new VectorFEMassIntegrator(*(Mytest.Ktilda)));
     Mblock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact, *rhside_Hdiv);
     Mblock->Assemble();
     Mblock->Finalize();
 
     HypreParMatrix *M = Mblock->ParallelAssemble();
 
-    // curl-curl matrix for H(curl)
+    // curl-curl matrix for H(curl) in 3D
     // either as DivfreeT_dop * M * Divfree_dop
     auto temp = ParMult(DivfreeT_dop,M);
     auto A = ParMult(temp, Divfree_dop);
@@ -1605,7 +1605,7 @@ int main(int argc, char *argv[])
     rhside_Hdiv->ParallelAssemble(tempHdiv_true);
     DivfreeT_dop->Mult(tempHdiv_true, trueRhs.GetBlock(0));
 
-    // subtracting from Hcurl rhs a part from Sigmahat
+    // subtracting from rhs a part from Sigmahat
     Sigmahat->ParallelProject(tempHdiv_true);
     M->Mult(tempHdiv_true, temp2Hdiv_true);
     //DivfreeT_dop->Mult(temp2Hdiv_true, tempHcurl_true);
@@ -1799,7 +1799,7 @@ int main(int argc, char *argv[])
 #endif
 
     if (verbose)
-        cout << "Discretized problem is assembled" << endl << flush;
+        cout << "Discretized problem is assembled \n" << flush;
 
     chrono.Clear();
     chrono.Start();
@@ -2098,6 +2098,8 @@ int main(int argc, char *argv[])
         Grad.Assemble();
         Grad.Mult(*S, GradS);
 
+        if (numsol != -34 && verbose)
+            std::cout << "For this norm we are grad S for S from numsol = -34 \n";
         VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
         double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
         double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
@@ -2165,15 +2167,8 @@ int main(int argc, char *argv[])
 #endif
     }
 
-    if (!withDiv)
-    {
-        l2_coll = new L2_FECollection(feorder, nDimensions);
-        W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
-    }
-
     if (verbose)
-        cout << "Computing projection errors" << endl;
-
+        cout << "Computing projection errors \n";
 
     if(verbose && !withDiv)
     {
@@ -2222,11 +2217,14 @@ int main(int argc, char *argv[])
             socketstream uex_sock(vishost, visport);
             uex_sock << "parallel " << num_procs << " " << myid << "\n";
             uex_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             uex_sock << "solution\n" << *pmesh << *u_exact << "window_title 'u_exact'"
                    << endl;
+
             socketstream uh_sock(vishost, visport);
             uh_sock << "parallel " << num_procs << " " << myid << "\n";
             uh_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             uh_sock << "solution\n" << *pmesh << *u << "window_title 'u_h'"
                    << endl;
 
@@ -2234,18 +2232,21 @@ int main(int argc, char *argv[])
             socketstream udiff_sock(vishost, visport);
             udiff_sock << "parallel " << num_procs << " " << myid << "\n";
             udiff_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             udiff_sock << "solution\n" << *pmesh << *u << "window_title 'u_h - u_exact'"
                    << endl;
 
             socketstream opdivfreepartex_sock(vishost, visport);
             opdivfreepartex_sock << "parallel " << num_procs << " " << myid << "\n";
             opdivfreepartex_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             opdivfreepartex_sock << "solution\n" << *pmesh << *opdivfreepart_exact << "window_title 'curl u_exact'"
                    << endl;
 
             socketstream opdivfreepart_sock(vishost, visport);
             opdivfreepart_sock << "parallel " << num_procs << " " << myid << "\n";
             opdivfreepart_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             opdivfreepart_sock << "solution\n" << *pmesh << *opdivfreepart << "window_title 'curl u_h'"
                    << endl;
 
@@ -2253,6 +2254,7 @@ int main(int argc, char *argv[])
             socketstream opdivfreepartdiff_sock(vishost, visport);
             opdivfreepartdiff_sock << "parallel " << num_procs << " " << myid << "\n";
             opdivfreepartdiff_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             opdivfreepartdiff_sock << "solution\n" << *pmesh << *opdivfreepart << "window_title 'curl u_h - curl u_exact'"
                    << endl;
         }
@@ -2262,12 +2264,14 @@ int main(int argc, char *argv[])
             socketstream S_ex_sock(vishost, visport);
             S_ex_sock << "parallel " << num_procs << " " << myid << "\n";
             S_ex_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             S_ex_sock << "solution\n" << *pmesh << *S_exact << "window_title 'S_exact'"
                    << endl;
 
             socketstream S_h_sock(vishost, visport);
             S_h_sock << "parallel " << num_procs << " " << myid << "\n";
             S_h_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             S_h_sock << "solution\n" << *pmesh << *S << "window_title 'S_h'"
                    << endl;
 
@@ -2275,6 +2279,7 @@ int main(int argc, char *argv[])
             socketstream S_diff_sock(vishost, visport);
             S_diff_sock << "parallel " << num_procs << " " << myid << "\n";
             S_diff_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
             S_diff_sock << "solution\n" << *pmesh << *S << "window_title 'S_h - S_exact'"
                    << endl;
         }
@@ -2327,10 +2332,17 @@ int main(int argc, char *argv[])
     delete hdivfree_coll;
     delete R_space;
     delete hdiv_coll;
+
     if (withS)
     {
         delete H_space;
         delete h1_coll;
+    }
+
+    if (withDiv)
+    {
+        delete W_space;
+        delete l2_coll;
     }
 
     MPI_Finalize();
