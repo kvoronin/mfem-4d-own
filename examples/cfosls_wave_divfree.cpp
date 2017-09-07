@@ -825,7 +825,7 @@ int main(int argc, char *argv[])
         delete mesh;
     }
 
-    MFEM_ASSERT(!(aniso_refine && (with_multilevel || nDimensions == 4)),"Anisotropic refinement works only in 3D and without multilevel algorithm \n");
+    MFEM_ASSERT(!(aniso_refine && nDimensions == 4),"Anisotropic refinement works only in 3D \n");
 
 
     int dim = nDimensions;
