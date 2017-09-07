@@ -1438,7 +1438,6 @@ int main(int argc, char *argv[])
             Vector sth(F_fine.Size());
             B_fine.Mult(sigmahat_pau, sth);
             sth -= F_fine;
-            std::cout << "sth.Norml2() = " << sth.Norml2() << "\n";
             MFEM_ASSERT(sth.Norml2()<1e-8, "The particular solution does not satisfy the divergence constraint");
     #endif
 
