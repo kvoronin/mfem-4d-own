@@ -560,8 +560,9 @@ void hcurlFun3D_2_ex(const Vector& xt, Vector& vecvalue);
 void curlhcurlFun3D_2_ex(const Vector& xt, Vector& vecvalue);
 
 double zero_ex(const Vector& xt);
-void zerovec_ex(const Vector& xt, Vector& vecvalue);
+void zerovectx_ex(const Vector& xt, Vector& vecvalue);
 void zerovecx_ex(const Vector& xt, Vector& zerovecx );
+void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue);
 
 void vminusone_exact(const Vector &x, Vector &vminusone);
 void vone_exact(const Vector &x, Vector &vone);
@@ -571,6 +572,11 @@ void E_exact(const Vector &, Vector &);
 void curlE_exact(const Vector &x, Vector &curlE);
 void f_exact(const Vector &, Vector &);
 double freq = 1.0, kappa;
+
+// 4d test from Martin's example
+void E_exactMat_vec(const Vector &x, Vector &E);
+void E_exactMat(const Vector &, DenseMatrix &);
+void f_exactMat(const Vector &, DenseMatrix &);
 
 template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     double divsigmaTemplate(const Vector& xt);
@@ -617,8 +623,8 @@ public:
 
     ~Heat_test_divfree () {}
 private:
-    void SetScalarFun( double (*f)(const Vector & xt))
-    { scalarS = new FunctionCoefficient(f);}
+    void SetScalarSFun( double (*S)(const Vector & xt))
+    { scalarS = new FunctionCoefficient(S);}
 
     template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     void SetDivSigma()
@@ -659,7 +665,7 @@ template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt),
          void(*divfreevec)(const Vector & x, Vector & vec), void(*opdivfreevec)(const Vector & x, Vector & vec)> \
 void Heat_test_divfree::SetTestCoeffs ()
 {
-    SetScalarFun(S);
+    SetScalarSFun(S);
     SetSigmaVec<S,Sgradxvec>();
     SetDivSigma<S, dSdt, Slaplace>();
     SetDivfreePart(divfreevec);
@@ -704,7 +710,10 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
     {
         if (numsol == -34)
         {
-            SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovec_ex, &zerovec_ex>();
+            if (dim == 3)
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
+            else // dim == 4
+                SetTestCoeffs<&uFunTest_ex, &uFunTest_ex_dt, &uFunTest_ex_laplace, &uFunTest_ex_gradx, &zerovecMat4D_ex, &zerovectx_ex>();
         }
         if (numsol == 0)
         {
@@ -714,7 +723,7 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &zerovec_ex, &zerovec_ex>();
+                SetTestCoeffs<&uFun_ex, &uFun_ex_dt, &uFun_ex_laplace, &uFun_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         if (numsol == 1)
         {
@@ -724,16 +733,20 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &zerovec_ex, &zerovec_ex>();
+                SetTestCoeffs<&uFun1_ex, &uFun1_ex_dt, &uFun1_ex_laplace, &uFun1_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         if (numsol == 2)
         {
-            if (numcurl == 1)
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
-            else if (numcurl == 2)
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            //if (numcurl == 1)
+                //SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_ex, &curlhcurlFun3D_ex>();
+            //else if (numcurl == 2)
+                //SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
+            if (numcurl == 1 || numcurl == 2)
+            {
+                std::cout << "Critical error: Explicit analytic div-free guy is not implemented in 4D \n";
+            }
             else
-                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &zerovec_ex, &zerovec_ex>();
+                SetTestCoeffs<&uFun2_ex, &uFun2_ex_dt, &uFun2_ex_laplace, &uFun2_ex_gradx, &zerovecMat4D_ex, &zerovectx_ex>();
         }
         if (numsol == 3)
         {
@@ -742,7 +755,7 @@ Heat_test_divfree::Heat_test_divfree (int Dim, int NumSol, int NumCurl)
             else if (numcurl == 2)
                 SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &hcurlFun3D_2_ex, &curlhcurlFun3D_2_ex>();
             else
-                SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &zerovec_ex, &zerovec_ex>();
+                SetTestCoeffs<&uFun3_ex, &uFun3_ex_dt, &uFun3_ex_laplace, &uFun3_ex_gradx, &zerovectx_ex, &zerovectx_ex>();
         }
         testisgood = true;
     }
@@ -766,9 +779,9 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
 
-    bool aniso_refine = true;
+    bool aniso_refine = false;
     bool refine_t_first = true;
 
     bool withDiv = true;
@@ -907,7 +920,25 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-        if (nDimensions == 4)
+        if (aniso_refine)
+        {
+            if (verbose)
+                std::cout << "Anisotropic refinement is ON \n";
+            if (nDimensions == 3)
+            {
+                if (verbose)
+                    std::cout << "Using hexahedral mesh in 3D for anisotr. refinement code \n";
+                mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
+            }
+            else // dim == 4
+            {
+                if (verbose)
+                    cerr << "Anisotr. refinement is not implemented in 4D case with tesseracts \n" << std::flush;
+                MPI_Finalize();
+                return -1;
+            }
+        }
+        else // no anisotropic refinement
         {
             if (verbose)
                 cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
@@ -923,10 +954,6 @@ int main(int argc, char *argv[])
                 mesh = new Mesh(imesh, 1, 1);
                 imesh.close();
             }
-        }
-        else
-        {
-            mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
         }
     }
     else //if nDimensions is not 3 or 4
@@ -970,8 +997,9 @@ int main(int argc, char *argv[])
         delete mesh;
     }
 
+    MFEM_ASSERT(!(aniso_refine && (with_multilevel || nDimensions == 4)),"Anisotropic refinement works only in 3D and without multilevel algorithm \n");
+
     int dim = nDimensions;
-    //int sdim = nDimensions; // used in 4D case
 
     Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());
     ess_bdrSigma = 0;
@@ -998,22 +1026,28 @@ int main(int argc, char *argv[])
     ParFiniteElementSpace *C_space;
 
     if (dim == 3)
-    {
         hdivfree_coll = new ND_FECollection(feorder + 1, nDimensions);
-        C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
-    }
     else // dim == 4
-    {
-        if (verbose)
-            std::cout << "4D case is not implemented yet \n";
-        MPI_Finalize();
-        return 0;
-    } // end of initialization of div-free f.e. space in 4D
-
+        hdivfree_coll = new DivSkew1_4DFECollection;
+    C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
 
     FiniteElementCollection *h1_coll;
     ParFiniteElementSpace *H_space;
-    h1_coll = new H1_FECollection(feorder+1, nDimensions);
+    if (dim == 3)
+        h1_coll = new H1_FECollection(feorder+1, nDimensions);
+    else
+    {
+        if (feorder + 1 == 1)
+            h1_coll = new LinearFECollection;
+        else if (feorder + 1 == 2)
+        {
+            if (verbose)
+                std::cout << "We have Quadratic FE for H1 in 4D, but are you sure? \n";
+            h1_coll = new QuadraticFECollection;
+        }
+        else
+            MFEM_ABORT("Higher-order H1 elements are not implemented in 4D \n");
+    }
     H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
 
 
@@ -1061,7 +1095,7 @@ int main(int argc, char *argv[])
                          "(with multilevel and multigrid prerequisites) \n";
 
         if (!withDiv && verbose)
-            std::cout << "Multilevel code cannot be used withut withDiv flag \n";
+            std::cout << "Multilevel code cannot be used without withDiv flag \n";
 
         coarseR_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
         coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
@@ -1071,7 +1105,8 @@ int main(int argc, char *argv[])
         d_td_coarse_R = coarseR_space->Dof_TrueDof_Matrix();
         d_td_coarse_W = coarseW_space->Dof_TrueDof_Matrix();
 
-        for (int l = 0; l < ref_levels+1; l++){
+        for (int l = 0; l < ref_levels+1; l++)
+        {
             if (l > 0){
 
                 if (l == 1)
@@ -1167,7 +1202,7 @@ int main(int argc, char *argv[])
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
 
             }
-        }
+        } // end of loop over levels
     }
     else // not a multilevel algo
     {
@@ -1329,7 +1364,11 @@ int main(int argc, char *argv[])
         std::cout << "Boundary conditions: \n";
         std::cout << "ess bdr Sigma: \n";
         ess_bdrSigma.Print(std::cout, pmesh->bdr_attributes.Max());
+#ifndef USE_CURLMATRIX
         std::cout << "ess bdr U: \n";
+#else
+        std::cout << "ess bdr U: not used in USE_CURLMATRIX mode \n";
+#endif
         ess_bdrU.Print(std::cout, pmesh->bdr_attributes.Max());
         std::cout << "ess bdr S: \n";
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
@@ -1399,6 +1438,7 @@ int main(int argc, char *argv[])
             Vector sth(F_fine.Size());
             B_fine.Mult(sigmahat_pau, sth);
             sth -= F_fine;
+            std::cout << "sth.Norml2() = " << sth.Norml2() << "\n";
             MFEM_ASSERT(sth.Norml2()<1e-8, "The particular solution does not satisfy the divergence constraint");
     #endif
 
@@ -1465,7 +1505,7 @@ int main(int argc, char *argv[])
         cout<<"Particular solution found in "<< chrono.RealTime() <<" seconds.\n";
     // in either way now Sigmahat is a function from H(div) s.t. div Sigmahat = div sigma = f
 
-    MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
+    //MFEM_ASSERT(dim == 3, "For now only 3D case is considered \n");
 
     // the div-free part
     ParGridFunction *u_exact = new ParGridFunction(C_space);
@@ -1488,24 +1528,25 @@ int main(int argc, char *argv[])
 
 #ifdef USE_CURLMATRIX
     if (verbose)
-        std::cout << "Creating div-free system using the explicit discrete curl operator \n";
+        std::cout << "Creating div-free system using the explicit discrete div-free operator \n";
 
     ParGridFunction* rhside_Hdiv = new ParGridFunction(R_space);  // rhside for the first equation in the original cfosls system
     *rhside_Hdiv = 0.0;
-//    ParGridFunction* rhside_Hcurl = new ParGridFunction(C_space); //  rhside for the first eqn in div-free system
-//    *rhside_Hcurl = 0.0;
     ParGridFunction* rhside_H1 = new ParGridFunction(H_space);    // rhside for the second eqn in div-free system
     *rhside_H1 = 0.0;
 
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
-    // curl operator from C_space into R_space
-    ParDiscreteLinearOperator Curl_op(C_space, R_space); // from Hcurl(R_space) to Hdiv(C_space)
-    Curl_op.AddDomainInterpolator(new CurlInterpolator());
-    Curl_op.Assemble();
-    Curl_op.Finalize();
-    HypreParMatrix * Curl_dop = Curl_op.ParallelAssemble(); // from Hcurl(R_space) to Hdiv(C_space)
-    HypreParMatrix * CurlT_dop = Curl_dop->Transpose();
+    // curl or divskew operator from C_space into R_space
+    ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
+    if (dim == 3)
+        Divfree_op.AddDomainInterpolator(new CurlInterpolator());
+    else // dim == 4
+        Divfree_op.AddDomainInterpolator(new DivSkewInterpolator());
+    Divfree_op.Assemble();
+    Divfree_op.Finalize();
+    HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
+    HypreParMatrix * DivfreeT_dop = Divfree_dop->Transpose();
 
     // mass matrix for H(div)
     ParBilinearForm *Mblock(new ParBilinearForm(R_space));
@@ -1517,9 +1558,9 @@ int main(int argc, char *argv[])
     HypreParMatrix *M = Mblock->ParallelAssemble();
 
     // curl-curl matrix for H(curl)
-    // either as CurlT_dop * M * Curl_dop
-    auto temp = ParMult(CurlT_dop,M);
-    auto A = ParMult(temp, Curl_dop);
+    // either as DivfreeT_dop * M * Divfree_dop
+    auto temp = ParMult(DivfreeT_dop,M);
+    auto A = ParMult(temp, Divfree_dop);
     // or as curl-curl integrator, results are the same
     /*
     ParBilinearForm *Ablock = new ParBilinearForm(C_space);
@@ -1553,7 +1594,7 @@ int main(int argc, char *argv[])
     auto B = Bblock->ParallelAssemble();
     auto BT = B->Transpose();
 
-    auto CHT = ParMult(CurlT_dop, B);
+    auto CHT = ParMult(DivfreeT_dop, B);
     auto CH = CHT->Transpose();
 
     // additional temporary vectors on true dofs required for various matvec
@@ -1563,14 +1604,14 @@ int main(int argc, char *argv[])
     // assembling local rhs vectors from inhomog. boundary conditions
     rhside_H1->ParallelAssemble(trueRhs.GetBlock(1));
     rhside_Hdiv->ParallelAssemble(tempHdiv_true);
-    CurlT_dop->Mult(tempHdiv_true, trueRhs.GetBlock(0));
+    DivfreeT_dop->Mult(tempHdiv_true, trueRhs.GetBlock(0));
 
     // subtracting from Hcurl rhs a part from Sigmahat
     Sigmahat->ParallelProject(tempHdiv_true);
     M->Mult(tempHdiv_true, temp2Hdiv_true);
-    //CurlT_dop->Mult(temp2Hdiv_true, tempHcurl_true);
+    //DivfreeT_dop->Mult(temp2Hdiv_true, tempHcurl_true);
     //trueRhs.GetBlock(0) -= tempHcurl_true;
-    CurlT_dop->Mult(-1.0, temp2Hdiv_true, 1.0, trueRhs.GetBlock(0));
+    DivfreeT_dop->Mult(-1.0, temp2Hdiv_true, 1.0, trueRhs.GetBlock(0));
 
     // subtracting from H1 rhs a part from Sigmahat
     //BT->Mult(tempHdiv_true, tempH1_true);
@@ -1597,12 +1638,12 @@ int main(int argc, char *argv[])
         if (!withDiv)
         {
             ParGridFunction * curl_divfree_exact = new ParGridFunction(R_space);
-            CurlT_dop->MultTranspose(*u_exact, *curl_divfree_exact);
+            DivfreeT_dop->MultTranspose(*u_exact, *curl_divfree_exact);
             *curl_divfree_exact -= *curlu_exact;
             std::cout << "diff between curl * u_exact and curlu_exact = " << curl_divfree_exact->Norml2() / sqrt( curl_divfree_exact->Size()) << "\n";
 
             //CurlT->MultTranspose(*u_exact, *temp1R);
-            CurlT_dop->MultTranspose(*u_exact, *temp1R);
+            DivfreeT_dop->MultTranspose(*u_exact, *temp1R);
             *temp1R += *Sigmahat;
             *temp1R -= *sigma_exact;
             std::cout << "diff between curl * u_exact and (sigma_exact - sigmahat) = " << temp1R->Norml2() / sqrt( temp1R->Size()) << "\n";
@@ -1612,9 +1653,9 @@ int main(int argc, char *argv[])
             ParGridFunction *temp1_Hcurl = new ParGridFunction(C_space);
             A->Mult(*u_exact, *temp1_Hcurl);
             //std::cout << "A * u_exact norm = " << temp1_Hcurl->Norml2() / sqrt (temp1_Hcurl->Size()) << "\n";
-            CurlT_dop->MultTranspose(*u_exact, *temp1R);
+            DivfreeT_dop->MultTranspose(*u_exact, *temp1R);
             M->Mult(*temp1R, *temp2R);
-            CurlT_dop->Mult(*temp2R, *temp1C);
+            DivfreeT_dop->Mult(*temp2R, *temp1C);
             //std::cout << "CurlT M C curl u_exact norm = " << temp1C->Norml2() / sqrt (temp1C->Size()) << "\n";
             *res_Hcurl -= *temp1_Hcurl;
             CHT->Mult(*S_exact, *temp1_Hcurl);
@@ -1640,7 +1681,7 @@ int main(int argc, char *argv[])
         *res_Hdiv = *rhside_Hdiv;
         std::cout << "rhside_Hdiv norm = " << rhside_Hdiv->Norml2() / sqrt (rhside_Hdiv->Size()) << "\n";
         //CurlT->Mult(*rhside_Hdiv, *temp1C);
-        CurlT_dop->Mult(*rhside_Hdiv, *temp1C);
+        DivfreeT_dop->Mult(*rhside_Hdiv, *temp1C);
         //std::cout << "CurlT * rhside_Hdiv norm = " << temp1C->Norml2() / sqrt (temp1C->Size()) << "\n";
         ParGridFunction *Msigmatilda = new ParGridFunction(R_space);
         ParGridFunction *temp2_Hdiv = new ParGridFunction(R_space);
@@ -1648,13 +1689,13 @@ int main(int argc, char *argv[])
         *temp2_Hdiv -= *Sigmahat;
         M->Mult(*temp2_Hdiv, *Msigmatilda);
         ParGridFunction *CurlTMsigmatilda = new ParGridFunction(C_space);
-        CurlT_dop->Mult(*Msigmatilda, *CurlTMsigmatilda);
+        DivfreeT_dop->Mult(*Msigmatilda, *CurlTMsigmatilda);
         //std::cout << "CurlT M sigmatilda norm = " << CurlTMsigmatilda->Norml2() / sqrt (CurlTMsigmatilda->Size()) << "\n";
         *res_Hdiv -= *Msigmatilda;
         ParGridFunction *BS_exact = new ParGridFunction(R_space);
         B->Mult(*S_exact, *BS_exact);
         //std::cout << "B * S_exact norm = " << BS_exact->Norml2() / sqrt (BS_exact->Size()) << "\n";
-        CurlT_dop->Mult(*BS_exact, *temp1C);
+        DivfreeT_dop->Mult(*BS_exact, *temp1C);
         //std::cout << "CurlT * B * S_exact norm = " << temp1C->Norml2() / sqrt (temp1C->Size()) << "\n";
         *res_Hdiv -= *BS_exact;
 
@@ -1666,14 +1707,14 @@ int main(int argc, char *argv[])
         if (!withDiv)
         {
             ParGridFunction * checkk = new ParGridFunction(C_space);
-            CurlT_dop->Mult(*res_Hdiv, *checkk);
+            DivfreeT_dop->Mult(*res_Hdiv, *checkk);
             *checkk -= *res_Hcurl;
 
             std::cout << "diff between CurlT * residual for Hdiv and residual for Hcurl = " << checkk->Norml2() / sqrt( checkk->Size()) << "\n";
         }
 
         ParGridFunction * curl_res_Hdiv = new ParGridFunction(C_space);
-        CurlT_dop->Mult(*res_Hdiv, *curl_res_Hdiv);
+        DivfreeT_dop->Mult(*res_Hdiv, *curl_res_Hdiv);
 
         std::cout << "Curl of residual for H(div) eqn with (sigma - sigmahat) and no lambda = "
                   << curl_res_Hdiv->Norml2() / curl_res_Hdiv->Size() << "\n";
@@ -1796,7 +1837,7 @@ int main(int argc, char *argv[])
     Array<BlockOperator*> P;
     if (with_prec)
     {
-        if(dim<=3)
+        if(dim<=4)
         {
             if (prec_is_MG)
             {
@@ -1830,24 +1871,24 @@ int main(int argc, char *argv[])
                 }            }
             else // prec is AMS-like for the div-free part (block-diagonal for the system with boomerAMG for S)
             {
-                prec = new BlockDiagonalPreconditioner(block_trueOffsets);
-                Operator * precU = new HypreAMS(*A, C_space);
-                ((HypreAMS*)precU)->SetSingularProblem();
-                Operator * precS = new HypreBoomerAMG(*C);
-                ((HypreBoomerAMG*)precS)->SetPrintLevel(0);
+                if (dim == 3)
+                {
+                    prec = new BlockDiagonalPreconditioner(block_trueOffsets);
+                    Operator * precU = new HypreAMS(*A, C_space);
+                    ((HypreAMS*)precU)->SetSingularProblem();
+                    Operator * precS = new HypreBoomerAMG(*C);
+                    ((HypreBoomerAMG*)precS)->SetPrintLevel(0);
 
-                ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
-                ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
-            }
-        }
-        else // if(dim==4)
-        {
-            if (prec_is_MG)
-            {
-                if (verbose)
-                    cout << "MG prec is not implemented in 4D" << endl;
-                MPI_Finalize();
-                return 0;
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(0, precU);
+                    ((BlockDiagonalPreconditioner*)prec)->SetDiagonalBlock(1, precS);
+                }
+                else // dim == 4
+                {
+                    if (verbose)
+                        std::cout << "Aux. space prec is not implemented in 4D \n";
+                    MPI_Finalize();
+                    return 0;
+                }
             }
         }
 
@@ -1906,49 +1947,59 @@ int main(int argc, char *argv[])
        irs[i] = &(IntRules.Get(i, order_quad));
     }
 
-    double err_u = u->ComputeL2Error(*(Mytest.divfreepart), irs);
-    double norm_u = ComputeGlobalLpNorm(2, *(Mytest.divfreepart), *pmesh, irs);
+    double err_u, norm_u;
 
-    if (verbose && !withDiv)
+    if (!withDiv)
     {
-        if ( norm_u > MYZEROTOL )
+        err_u = u->ComputeL2Error(*(Mytest.divfreepart), irs);
+        norm_u = ComputeGlobalLpNorm(2, *(Mytest.divfreepart), *pmesh, irs);
+
+        if (verbose)
         {
-            //std::cout << "norm_u = " << norm_u << "\n";
-            cout << "|| u - u_ex || / || u_ex || = " << err_u / norm_u << endl;
+            if ( norm_u > MYZEROTOL )
+            {
+                //std::cout << "norm_u = " << norm_u << "\n";
+                cout << "|| u - u_ex || / || u_ex || = " << err_u / norm_u << endl;
+            }
+            else
+                cout << "|| u || = " << err_u << " (u_ex = 0)" << endl;
         }
-        else
-            cout << "|| u || = " << err_u << " (u_ex = 0)" << endl;
     }
 
     ParGridFunction * opdivfreepart = new ParGridFunction(R_space);
-    DiscreteLinearOperator Curl_h(C_space, R_space);
-    Curl_h.AddDomainInterpolator(new CurlInterpolator());
-    Curl_h.Assemble();
-    Curl_h.Mult(*u, *opdivfreepart); // if replaced by u_exact, makes the error look nicer
+    DiscreteLinearOperator Divfree_h(C_space, R_space);
+    if (dim == 3)
+        Divfree_h.AddDomainInterpolator(new CurlInterpolator());
+    else // dim == 4
+        Divfree_h.AddDomainInterpolator(new DivSkewInterpolator());
+    Divfree_h.Assemble();
+    Divfree_h.Mult(*u, *opdivfreepart);
 
     ParGridFunction * opdivfreepart_exact;
+    double err_opdivfreepart, norm_opdivfreepart;
+
     if (!withDiv)
     {
         opdivfreepart_exact = new ParGridFunction(R_space);
         opdivfreepart_exact->ProjectCoefficient(*(Mytest.opdivfreepart));
-    }
 
-    double err_opdivfreepart = opdivfreepart->ComputeL2Error(*(Mytest.opdivfreepart), irs);
-    double norm_opdivfreepart = ComputeGlobalLpNorm(2, *(Mytest.opdivfreepart), *pmesh, irs);
+        err_opdivfreepart = opdivfreepart->ComputeL2Error(*(Mytest.opdivfreepart), irs);
+        norm_opdivfreepart = ComputeGlobalLpNorm(2, *(Mytest.opdivfreepart), *pmesh, irs);
 
-    if (verbose && !withDiv)
-    {
-        if ( norm_opdivfreepart > MYZEROTOL )
+        if (verbose)
         {
-            //cout << "|| opdivfreepart_ex || = " << norm_opdivfreepart << endl;
-            cout << "|| curl_h u_h - opdivfreepart_ex || / || opdivfreepart_ex || = " << err_opdivfreepart / norm_opdivfreepart << endl;
+            if (norm_opdivfreepart > MYZEROTOL )
+            {
+                //cout << "|| opdivfreepart_ex || = " << norm_opdivfreepart << endl;
+                cout << "|| Divfree_h u_h - opdivfreepart_ex || / || opdivfreepart_ex || = " << err_opdivfreepart / norm_opdivfreepart << endl;
+            }
+            else
+                cout << "|| Divfree_h u_h || = " << err_opdivfreepart << " (divfreepart_ex = 0)" << endl;
         }
-        else
-            cout << "|| curl_h u_h || = " << err_opdivfreepart << " (divfreepart_ex = 0)" << endl;
     }
 
     ParGridFunction * sigma = new ParGridFunction(R_space);
-    *sigma = *Sigmahat; // particular solution
+    *sigma = *Sigmahat;         // particular solution
     *sigma += *opdivfreepart;   // plus div-free guy
 
     double err_sigma = sigma->ComputeL2Error(*(Mytest.sigma), irs);
@@ -2017,12 +2068,23 @@ int main(int argc, char *argv[])
         W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
     }
 
-    DiscreteLinearOperator Grad(H_space, C_space);
+    ParFiniteElementSpace * GradSpace;
+    if (dim == 3)
+        GradSpace = C_space;
+    else // dim == 4
+    {
+        FiniteElementCollection *hcurl_coll;
+        hcurl_coll = new ND1_4DFECollection;
+        GradSpace = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+    }
+    DiscreteLinearOperator Grad(H_space, GradSpace);
     Grad.AddDomainInterpolator(new GradientInterpolator());
-    ParGridFunction GradS(C_space);
+    ParGridFunction GradS(GradSpace);
     Grad.Assemble();
     Grad.Mult(*S, GradS);
 
+    if (numsol != -34 && verbose)
+        std::cout << "For this norm we are grad S for S from numsol = -34 \n";
     VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
     double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
     double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
@@ -2090,19 +2152,20 @@ int main(int argc, char *argv[])
     if (verbose)
         cout << "Computing projection errors \n";
 
-    //double projection_error_u = u_exact->ComputeL2Error(E, irs);
-    double projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
-
-    if(verbose && !withDiv)
+    if(!withDiv)
     {
-        if ( norm_u > MYZEROTOL )
+        double projection_error_u = u_exact->ComputeL2Error(*(Mytest.divfreepart), irs);
+        if (verbose)
         {
-            //std::cout << "Debug: || u_ex || = " << norm_u << "\n";
-            //std::cout << "Debug: proj error = " << projection_error_u << "\n";
-            cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << endl;
+            if ( norm_u > MYZEROTOL )
+            {
+                //std::cout << "Debug: || u_ex || = " << norm_u << "\n";
+                //std::cout << "Debug: proj error = " << projection_error_u << "\n";
+                cout << "|| u_ex - Pi_h u_ex || / || u_ex || = " << projection_error_u / norm_u << endl;
+            }
+            else
+                cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
         }
-        else
-            cout << "|| Pi_h u_ex || = " << projection_error_u << " (u_ex = 0) \n ";
     }
 
     double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
@@ -2234,6 +2297,8 @@ int main(int argc, char *argv[])
     delete hdiv_coll;
     delete H_space;
     delete h1_coll;
+    if (dim == 4)
+        delete GradSpace;
 #endif
     MPI_Finalize();
     return 0;
@@ -2245,22 +2310,27 @@ void zerovecx_ex(const Vector& xt, Vector& zerovecx )
     zerovecx = 0.0;
 }
 
-void zerovec_ex(const Vector& xt, Vector& vecvalue)
+void zerovectx_ex(const Vector& xt, Vector& vecvalue)
 {
     vecvalue.SetSize(xt.Size());
-
-    //vecvalue(0) = -y * (1 - t);
-    //vecvalue(1) = x * (1 - t);
-    //vecvalue(2) = 0;
-    //vecvalue(0) = x * (1 - x);
-    //vecvalue(1) = y * (1 - y);
-    //vecvalue(2) = t * (1 - t);
-
-    // Martin's function
     vecvalue = 0.0;
-
     return;
 }
+
+void zerovecMat4D_ex(const Vector& xt, Vector& vecvalue)
+{
+    vecvalue.SetSize(6);
+    vecvalue = 0.0;
+    return;
+}
+
+void testfun_ex(const Vector& xt, Vector& vecvalue)
+{
+    vecvalue.SetSize(xt.Size());
+    vecvalue = xt;
+    return;
+}
+
 
 double zero_ex(const Vector& xt)
 {
@@ -2690,4 +2760,91 @@ void vminusone_exact(const Vector &x, Vector &vminusone)
 {
     vminusone.SetSize(x.Size());
     vminusone = -1.0;
+}
+
+
+
+void E_exactMat_vec(const Vector &x, Vector &E)
+{
+    int dim = x.Size();
+
+    if (dim==4)
+    {
+        E.SetSize(6);
+
+        double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+                s3 = sin(M_PI*x(3));
+        double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+                c3 = cos(M_PI*x(3));
+
+        E(0) =  c0*c1*s2*s3;
+        E(1) = -c0*s1*c2*s3;
+        E(2) =  c0*s1*s2*c3;
+        E(3) =  s0*c1*c2*s3;
+        E(4) = -s0*c1*s2*c3;
+        E(5) =  s0*s1*c2*c3;
+    }
+}
+
+void E_exactMat(const Vector &x, DenseMatrix &E)
+{
+    int dim = x.Size();
+
+    E.SetSize(dim*dim);
+
+    if (dim==4)
+    {
+        Vector vecE;
+        E_exactMat_vec(x, vecE);
+
+        E = 0.0;
+
+        E(0,1) = vecE(0);
+        E(0,2) = vecE(1);
+        E(0,3) = vecE(2);
+        E(1,2) = vecE(3);
+        E(1,3) = vecE(4);
+        E(2,3) = vecE(5);
+
+        E(1,0) =  -E(0,1);
+        E(2,0) =  -E(0,2);
+        E(3,0) =  -E(0,3);
+        E(2,1) =  -E(1,2);
+        E(3,1) =  -E(1,3);
+        E(3,2) =  -E(2,3);
+    }
+}
+
+
+
+//f_exact = E + 0.5 * P( curl DivSkew E ), where P is the 4d permutation operator
+void f_exactMat(const Vector &x, DenseMatrix &f)
+{
+    int dim = x.Size();
+
+    f.SetSize(dim,dim);
+
+    if (dim==4)
+    {
+        f = 0.0;
+
+        double s0 = sin(M_PI*x(0)), s1 = sin(M_PI*x(1)), s2 = sin(M_PI*x(2)),
+                s3 = sin(M_PI*x(3));
+        double c0 = cos(M_PI*x(0)), c1 = cos(M_PI*x(1)), c2 = cos(M_PI*x(2)),
+                c3 = cos(M_PI*x(3));
+
+        f(0,1) =  (1.0 + 1.0  * M_PI*M_PI)*c0*c1*s2*s3;
+        f(0,2) = -(1.0 + 0.0  * M_PI*M_PI)*c0*s1*c2*s3;
+        f(0,3) =  (1.0 + 1.0  * M_PI*M_PI)*c0*s1*s2*c3;
+        f(1,2) =  (1.0 - 1.0  * M_PI*M_PI)*s0*c1*c2*s3;
+        f(1,3) = -(1.0 + 0.0  * M_PI*M_PI)*s0*c1*s2*c3;
+        f(2,3) =  (1.0 + 1.0  * M_PI*M_PI)*s0*s1*c2*c3;
+
+        f(1,0) =  -f(0,1);
+        f(2,0) =  -f(0,2);
+        f(3,0) =  -f(0,3);
+        f(2,1) =  -f(1,2);
+        f(3,1) =  -f(1,3);
+        f(3,2) =  -f(2,3);
+    }
 }

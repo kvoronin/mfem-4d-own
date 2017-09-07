@@ -34,12 +34,13 @@ public:
         Vector comp;
         Vector F_coarse;
 
-
         Vector total_sig(P_R[0]->Height());
         total_sig = .0;
 
 //        chrono.Clear();
 //        chrono.Start();
+
+
 
         for (int l=0; l < ref_levels; l++)
         {
@@ -89,7 +90,14 @@ public:
             P_WTxP_W->GetDiag(Diag);
 
             for(int m=0; m < P_WTxP_W->Size(); m++)
+            {
+                //std::cout << "Diag(m) = " << Diag(m) << "\n";
                 invDiag(m) = comp(m)/Diag(m);
+            }
+
+            //std::cout << "Diag(100) = " << Diag(100);
+            //std::cout << "Diag(200) = " << Diag(200);
+            //std::cout << "Diag(300) = " << Diag(300);
 
 
             P_W[l]->Mult(invDiag,F_coarse);
@@ -135,7 +143,6 @@ public:
 
             u_loc_vec =0.0;
             p_loc_vec =0.0;
-
 
             for( int e = 0; e < AE_R->Height(); e++){
 
@@ -186,7 +193,7 @@ public:
 
                 p_loc_vec.AddElementVector(Rtmp_j,sig);
 
-            }
+            } // end of loop over all elements at level l
 
 #ifdef MFEM_DEBUG
             Vector fcheck2(u_loc_vec.Size());
@@ -213,7 +220,7 @@ public:
             MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
                         "checking global solution added" << total_sig.Norml2());
 
-        }
+        } // end of loop over levels
 
         // The coarse problem::
 

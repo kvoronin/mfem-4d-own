@@ -1810,26 +1810,6 @@ double GridFunction::ComputeL2Error(
                  }
               }
 
-              /*
-              if (i == 0 && j == 0)
-              {
-                  //std::cout << "shape \n";
-                  //shape.Print();
-                  //std::cout << "vdofs \n";
-                  //vdofs.Print();
-                  std::cout << "valsvec ~ elsol \n";
-                  valsvec.Print();
-                  //std::cout << "exact_valsvec ~ exactSolVec \n";
-                  //exact_valsvec.Print();
-                  //std::cout << "exactmat \n";
-                  //exactmat.Print();
-                  std::cout << "exact_valsvec ~ exactSolVec \n";
-                  exact_valsvec.Print();
-              }
-              */
-
-
-
           }
           vals -= exact_valsmat;
       }

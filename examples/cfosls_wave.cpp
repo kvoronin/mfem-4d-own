@@ -410,11 +410,8 @@ protected:
 
 public:
     FunctionCoefficient * scalarS;             // S
-    FunctionCoefficient * scalarSnonhomo;      // S(t=0)
-    FunctionCoefficient * scalarf;             // = d2 S/dt2 - laplace S + laplace S(t=0) - what is used for solving
     FunctionCoefficient * scalardivsigma;      // = d2 S/dt2 - laplace S                  - what is used for computing error
     VectorFunctionCoefficient * sigma;
-    VectorFunctionCoefficient * sigma_nonhomo; // to incorporate inhomogeneous boundary conditions, stores ( - gradx S0, 0) with S0 = S(t=0)
 public:
     Wave_test (int Dim, int NumSol);
 
@@ -426,34 +423,18 @@ public:
 
     ~Wave_test () {}
 private:
-    void SetScalarFun( double (*f)(const Vector & xt))
+    void SetScalarSFun( double (*f)(const Vector & xt))
     { scalarS = new FunctionCoefficient(f);}
-
-    template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt)> \
-    void SetScalarSnonhomo()
-    { scalarSnonhomo = new FunctionCoefficient(SnonhomoTemplate<S, dSdt>);}
-
-    template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt)> \
-    void SetRhandFun()
-    { scalarf = new FunctionCoefficient(rhsideTemplate<S, d2Sdt2, Slaplace, dSdtlaplace>);}
 
     template<double (*S)(const Vector & xt), double (*d2Sdt2)(const Vector & xt), double (*Slaplace)(const Vector & xt)> \
     void SetDivSigma()
     { scalardivsigma = new FunctionCoefficient(divsigmaTemplate<S, d2Sdt2, Slaplace>);}
-
 
     template<double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & vec)> \
     void SetSigmaVec()
     {
         sigma = new VectorFunctionCoefficient(dim, sigmaTemplate<dSdt,Sgradxvec>);
     }
-
-    template<double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & vec), void (*dSdtgradxvec)(const Vector&, Vector& )> \
-    void SetInitSigmaVec()
-    {
-        sigma_nonhomo = new VectorFunctionCoefficient(dim, sigmaNonHomoTemplate<dSdt,Sgradxvec,dSdtgradxvec>);
-    }
-
 
     template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), double (*d2Sdt2)(const Vector & xt),\
              double (*Slaplace)(const Vector & xt), double (*dSdtlaplace)(const Vector & xt), \
@@ -467,11 +448,8 @@ template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), doub
          void(*Sgradxvec)(const Vector & x, Vector & gradx), void (*dSdtgradxvec)(const Vector&, Vector& ) > \
 void Wave_test::SetTestCoeffs ()
 {
-    SetScalarFun(S);
-    SetScalarSnonhomo<S, dSdt>();
-    SetRhandFun<S, d2Sdt2, Slaplace, dSdtlaplace>();
+    SetScalarSFun(S);
     SetSigmaVec<dSdt,Sgradxvec>();
-    SetInitSigmaVec<dSdt,Sgradxvec,dSdtgradxvec>();
     SetDivSigma<S, d2Sdt2, Slaplace>();
     return;
 }
@@ -559,17 +537,7 @@ int main(int argc, char *argv[])
     int numsol          = 3;
 
     int ser_ref_levels  = 1;//0;
-    int par_ref_levels  = 2;//2;
-
-    /*
-    int generate_frombase   = 0;el norm
-    int generate_parallel   = generate_frombase * 1;
-    int whichparallel       = generate_parallel * 2;
-    int bnd_method          = 1;
-    int local_method        = 2;
-    int Nsteps          = 8;//16;//2;
-    double tau          = 0.125;//0.0625;//0.5;
-    */
+    int par_ref_levels  = 1;//2;
 
     const char *formulation = "cfosls";      // "cfosls" or "fosls"
     bool with_divdiv = false;                // should be true for fosls and can be false for cfosls
@@ -612,8 +580,6 @@ int main(int argc, char *argv[])
     OptionsParser args(argc, argv);
     //args.AddOption(&mesh_file, "-m", "--mesh",
     //               "Mesh file to use.");
-    //args.AddOption(&meshbase_file, "-mbase", "--meshbase",
-    //               "Mesh base file to use.");
     args.AddOption(&feorder, "-o", "--feorder",
                    "Finite element order (polynomial degree).");
     args.AddOption(&ser_ref_levels, "-sref", "--sref",
@@ -622,24 +588,6 @@ int main(int argc, char *argv[])
                    "Number of parallel refinements 4d mesh.");
     args.AddOption(&nDimensions, "-dim", "--whichD",
                    "Dimension of the space-time problem.");
-    /*
-    args.AddOption(&Nsteps, "-nstps", "--nsteps",
-                   "Number of time steps.");
-    args.AddOption(&tau, "-tau", "--tau",
-                   "Time step.");
-    args.AddOption(&generate_frombase, "-gbase", "--genfrombase",
-                   "Generating mesh from the base mesh.");
-    args.AddOption(&generate_parallel, "-gp", "--genpar",
-                   "Generating mesh in parallel.");
-    args.AddOption(&whichparallel, "-pv", "--parver",
-                   "Version of parallel algorithm.");
-    args.AddOption(&bnd_method, "-bnd", "--bndmeth",
-                   "Method for generating boundary elements.");
-    args.AddOption(&local_method, "-loc", "--locmeth",
-                   "Method for local mesh procedure.");
-    args.AddOption(&numsol, "-nsol", "--numsol",
-                   "Solution number.");
-    */
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -707,138 +655,20 @@ int main(int argc, char *argv[])
 
     if (nDimensions == 3 || nDimensions == 4)
     {
-        /*
-        if ( generate_frombase == 1 )
+        // not generating from a lower dimensional mesh
+        if (verbose)
+            cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
+        ifstream imesh(mesh_file);
+        if (!imesh)
         {
-            if ( verbose )
-                cout << "Creating a " << nDimensions << "d mesh from a " <<
-                        nDimensions - 1 << "d mesh from the file " << meshbase_file << endl;
-
-            Mesh * meshbase;
-            ifstream imesh(meshbase_file);
-            if (!imesh)
-            {
-                 cerr << "\nCan not open mesh file for base mesh: " <<
-                                                    meshbase_file << endl << flush;
-                 MPI_Finalize();
-                 return -2;
-            }
-            meshbase = new Mesh(imesh, 1, 1);
-            imesh.close();
-
-            for (int l = 0; l < ser_ref_levels; l++)
-                meshbase->UniformRefinement();
-
-
-            //if ( verbose )
-            //{
-                //std::stringstream fname;
-                //fname << "mesh_" << nDimensions - 1 << "dbase.mesh";
-                //std::ofstream ofid(fname.str().c_str());
-                //ofid.precision(8);
-                //meshbase->Print(ofid);
-            //}
-
-
-            if (generate_parallel == 1) //parallel version
-            {
-                ParMesh * pmeshbase = new ParMesh(comm, *meshbase);
-
-
-                //std::stringstream fname;
-                //fname << "pmesh_"<< nDimensions - 1 << "dbase_" << myid << ".mesh";
-                //std::ofstream ofid(fname.str().c_str());
-                //ofid.precision(8);
-                //pmesh3dbase->Print(ofid);
-
-
-                chrono.Clear();
-                chrono.Start();
-
-                if ( whichparallel == 1 )
-                {
-                    if ( nDimensions == 3)
-                    {
-                        if  (myid == 0)
-                            cout << "Not implemented for 2D->3D. Use parallel version2"
-                                    " instead" << endl << flush;
-                        MPI_Finalize();
-                        return 0;
-                    }
-                    else // nDimensions == 4
-                    {
-                        mesh = new Mesh( comm, *pmeshbase, tau, Nsteps, bnd_method, local_method);
-                        if ( myid == 0)
-                            cout << "Success: ParMesh is created by deprecated method"
-                                 << endl << flush;
-
-                        std::stringstream fname;
-                        fname << "mesh_par1_id" << myid << "_np_" << num_procs << ".mesh";
-                        std::ofstream ofid(fname.str().c_str());
-                        ofid.precision(8);
-                        mesh->Print(ofid);
-
-                        MPI_Barrier(comm);
-                    }
-                }
-                else
-                {
-                    if (myid == 0)
-                        cout << "Starting parallel \"" << nDimensions-1 << "D->"
-                             << nDimensions <<"D\" mesh generator" << endl;
-
-                    pmesh = make_shared<ParMesh>( comm, *pmeshbase, tau, Nsteps,
-                                                  bnd_method, local_method);
-
-                    if ( myid == 0)
-                        cout << "Success: ParMesh created" << endl << flush;
-                    MPI_Barrier(comm);
-                }
-
-                chrono.Stop();
-                if (myid == 0 && whichparallel == 2)
-                    cout << "Timing: Space-time mesh extension done in parallel in "
-                              << chrono.RealTime() << " seconds.\n" << endl << flush;
-                delete pmeshbase;
-            }
-            else // serial version
-            {
-                if (myid == 0)
-                    cout << "Starting serial \"" << nDimensions-1 << "D->"
-                         << nDimensions <<"D\" mesh generator" << endl;
-                mesh = new Mesh( *meshbase, tau, Nsteps, bnd_method, local_method);
-                if ( myid == 0)
-                    cout << "Timing: Space-time mesh extension done in serial in "
-                              << chrono.RealTime() << " seconds.\n" << endl << flush;
-            }
-
-            delete meshbase;
-
+             std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
+             MPI_Finalize();
+             return -2;
         }
         else
-        */ // not generating from a lower dimensional mesh
         {
-            if (nDimensions == 4)
-            {
-                if (verbose)
-                    cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-                ifstream imesh(mesh_file);
-                if (!imesh)
-                {
-                    std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-                    MPI_Finalize();
-                    return -2;
-                }
-                else
-                {
-                    mesh = new Mesh(imesh, 1, 1);
-                    imesh.close();
-                }
-            }
-            else
-            {
-                mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
-            }
+            mesh = new Mesh(imesh, 1, 1);
+            imesh.close();
         }
     }
     else //if nDimensions is no 3 or 4
@@ -850,25 +680,6 @@ int main(int argc, char *argv[])
         return -1;
 
     }
-
-
-    /*
-     * Short reading mesh from the mesh, with no mentions of space-time mesh generator
-    if (myid == 0)
-        cout << "Reading a " << nDimensions << "d mesh from the file " << mesh_file << endl;
-    ifstream imesh(mesh_file);
-    if (!imesh)
-    {
-         std::cerr << "\nCan not open mesh file: " << mesh_file << '\n' << std::endl;
-         MPI_Finalize();
-         return -2;
-    }
-    else
-    {
-        mesh = new Mesh(imesh, 1, 1);
-        imesh.close();
-    }
-    */
 
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
@@ -1003,9 +814,6 @@ int main(int argc, char *argv[])
     // 8.5 some additional parelag stuff which is used for coarse lagrange
     // multiplier implementation at the matrix level
 
-//    HypreParMatrix * pPT;
-    //-----------------------
-
     // 9. Define the parallel grid function and parallel linear forms, solution
     //    vector and rhs.
 
@@ -1015,18 +823,23 @@ int main(int argc, char *argv[])
     rhs = new BlockVector(block_offsets);
     *rhs = 0.0;
 
+    ParGridFunction *S_exact = new ParGridFunction(H_space);
+    S_exact->ProjectCoefficient(*(Mytest.scalarS));
+
+    ParGridFunction * sigma_exact = new ParGridFunction(R_space);
+    sigma_exact->ProjectCoefficient(*(Mytest.sigma));
+
+    x->GetBlock(0) = *sigma_exact;
+    x->GetBlock(1) = *S_exact;
+
     ParLinearForm *fform(new ParLinearForm);
     fform->Update(R_space, rhs->GetBlock(0), 0);
-    //if (strcmp(formulation,"cfosls") == 0)
-        //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
-    //else // fosls, then we need righthand side term here
-        //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
     if (strcmp(formulation,"cfosls") == 0) // cfosls case
         if (with_divdiv)
         {
             if (verbose)
                 cout << "Adding div-driven rhside term to the formulation" << endl;
-            fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
+            fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalardivsigma)));
         }
         else
         {
@@ -1034,29 +847,25 @@ int main(int argc, char *argv[])
                 cout << "No div-driven rhside term in the formulation" << endl;
             fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
         }
-    else // fosls, then we need righthand side term here
+    else // if fosls, then we need righthand side term here
     {
         if (verbose)
             cout << "Adding div-driven rhside term to the formulation" << endl;
-        fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
+        fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalardivsigma)));
     }
-    //fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*(Mytest.scalarf)));
     fform->Assemble();
-    //fform->ParallelAssemble(trueRhs->GetBlock(0));
 
     ParLinearForm *qform(new ParLinearForm);
     qform->Update(H_space, rhs->GetBlock(1), 0);
     qform->AddDomainIntegrator(new VectorDomainLFIntegrator(vzero_coeff));
     qform->Assemble();
-    //qform->ParallelAssemble(trueRhs->GetBlock(1));
 
     ParLinearForm *gform(new ParLinearForm);
     if (strcmp(formulation,"cfosls") == 0)
     {
         gform->Update(W_space, rhs->GetBlock(2), 0);
-        gform->AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalarf)));
+        gform->AddDomainIntegrator(new DomainLFIntegrator(*(Mytest.scalardivsigma)));
         gform->Assemble();
-        //gform->ParallelAssemble(trueRhs->GetBlock(2));
     }
 
 
@@ -1083,8 +892,6 @@ int main(int argc, char *argv[])
     HypreParMatrix *A;
 
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
-    //if (strcmp(formulation,"cfosls") != 0) // fosls, then we need div-div term
-        //Ablock->AddDomainIntegrator(new DivDivIntegrator());
     if (strcmp(formulation,"cfosls") != 0) // fosls, then we need div-div term
     {
         if (verbose)
@@ -1103,7 +910,6 @@ int main(int argc, char *argv[])
             if (verbose)
                 cout << "No div-div term in the formulation" << endl;
         }
-    //Ablock->AddDomainIntegrator(new DivDivIntegrator());
     Ablock->Assemble();
     Ablock->EliminateEssentialBC(ess_bdrSigma, x->GetBlock(0), rhs->GetBlock(0)); // new
     Ablock->Finalize();
@@ -1309,12 +1115,6 @@ int main(int argc, char *argv[])
     if (verbose)
     {
         cout << "rel res_norm for the conservation law = " << global_res_norm / global_rhs_norm << endl;
-        /*
-        cout << "Debugging" << endl;
-        cout << "vec1.size = " << vec1.Size() << endl;
-        cout << "Dvec1.size = " << Dvec1.Size() << endl;
-        cout << "D is " << D->M() << " x " << D->N() << endl;
-        */
     }
 
 
@@ -1325,19 +1125,6 @@ int main(int argc, char *argv[])
     ParGridFunction *sigma(new ParGridFunction);
     sigma->MakeRef(R_space, x->GetBlock(0), 0);
     sigma->Distribute(&(trueX->GetBlock(0)));
-
-    ParGridFunction *sigma_exact = new ParGridFunction(R_space);
-    sigma_exact->ProjectCoefficient(*(Mytest.sigma));
-
-    ParGridFunction *S_exact = new ParGridFunction(H_space);
-    S_exact->ProjectCoefficient(*(Mytest.scalarS));
-
-
-    // adding back the term from nonhomogeneous initial condition
-    ParGridFunction *sigma_nonhomo = new ParGridFunction(R_space);
-    sigma_nonhomo->ProjectCoefficient(*(Mytest.sigma_nonhomo));
-
-    *sigma += *sigma_nonhomo;
 
     // 13. Extract the parallel grid function corresponding to the finite element
     //     approximation X. This is the local solution on each processor. Compute
@@ -1368,7 +1155,6 @@ int main(int argc, char *argv[])
 
     ParGridFunction DivSigma(W_space);
     Div.Mult(*sigma, DivSigma);
-    //SpecialDmat->Mult(*sigma, DivSigma);
 
     ParGridFunction DivSigma_exact(W_space);
     DivSigma_exact.ProjectCoefficient(*(Mytest.scalardivsigma));
@@ -1390,16 +1176,6 @@ int main(int argc, char *argv[])
     }
 
     // Computing error for S
-
-    //ParGridFunction *Svar(new ParGridFunction);
-    //Svar->MakeRef(H_space, x.GetBlock(1), 0);
-    //Svar->Distribute(&(trueX.GetBlock(1)));
-
-    ParGridFunction *S_nonhomo = new ParGridFunction(H_space);
-    S_nonhomo->ProjectCoefficient(*(Mytest.scalarSnonhomo));
-
-    *S += *S_nonhomo;
-
     double err_S  = S->ComputeL2Error(*(Mytest.scalarS), irs);
     double norm_S = ComputeGlobalLpNorm(2, *(Mytest.scalarS), *pmesh, irs);
 
@@ -1411,33 +1187,35 @@ int main(int argc, char *argv[])
                   << err_S/norm_S  << "\n";
     }
 
+    ParFiniteElementSpace * GradSpace;
+    FiniteElementCollection *hcurl_coll;
+    if (dim == 3)
     {
-        FiniteElementCollection * hcurl_coll;
-        if(dim==4)
-            hcurl_coll = new ND1_4DFECollection;
-        else
-            hcurl_coll = new ND_FECollection(feorder+1, dim);
-        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+        hcurl_coll = new ND_FECollection(feorder+1, dim);
+        GradSpace = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+    }
+    else // dim == 4
+    {
+        hcurl_coll = new ND1_4DFECollection;
+        GradSpace = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+    }
+    DiscreteLinearOperator Grad(H_space, GradSpace);
+    Grad.AddDomainInterpolator(new GradientInterpolator());
+    ParGridFunction GradS(GradSpace);
+    Grad.Assemble();
+    Grad.Mult(*S, GradS);
 
-        DiscreteLinearOperator Grad(H_space, N_space);
-        Grad.AddDomainInterpolator(new GradientInterpolator());
-        ParGridFunction GradS(N_space);
-        Grad.Assemble();
-        Grad.Mult(*S, GradS);
-
-        VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
-        double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
-        double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
-        if (verbose)
-        {
-            std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
-                         err_GradS / norm_GradS << "\n";
-            std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
-                         sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
-        }
-
-        delete hcurl_coll;
-        delete N_space;
+    if (numsol != -34 && verbose)
+        std::cout << "For this norm we are grad S for S from numsol = -34 \n";
+    VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+    double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+    double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+    if (verbose)
+    {
+        std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                     err_GradS / norm_GradS << "\n";
+        std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                     sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
     }
 
     // Check value of functional and mass conservation
@@ -1477,69 +1255,29 @@ int main(int argc, char *argv[])
             cout << "Sum of local mass loss = " << mass_loss<< "\n";
     }
 
-    // Computing error in mesh norms
+    if (verbose)
+        cout << "Computing projection errors \n";
 
-//    if (verbose)
-//        cout << "Computing mesh norms" << endl;
+    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
-//    HypreParVector * sigma_exactpv = sigma_exact->ParallelAssemble();
-//    Vector * sigma_exactv = sigma_exactpv->GlobalVector();
-//    HypreParVector * sigmapv = sigma->ParallelAssemble();
-//    Vector * sigmav = sigmapv->GlobalVector();
-//    *sigmav -= *sigma_exactv;
+    if(verbose)
+    {
+        if ( norm_sigma > MYZEROTOL )
+        {
+            cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = " << projection_error_sigma / norm_sigma << endl;
+        }
+        else
+            cout << "|| Pi_h sigma_ex || = " << projection_error_sigma << " (sigma_ex = 0) \n ";
+    }
+    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
 
-//    double sigma_meshnorm = (*sigma_exactv)*(*sigma_exactv);
-//    double sigma_mesherror = (*sigmav) * (*sigmav);
-//    if(verbose)
-//        cout << "|| sigma_h - sigma_ex ||_h / || sigma_ex ||_h = "
-//                        << sqrt(sigma_mesherror) / sqrt(sigma_meshnorm) << endl;
-
-//    HypreParVector * S_exactpv = S_exact->ParallelAssemble();
-//    Vector * S_exactv = S_exactpv->GlobalVector();
-//    HypreParVector * Spv = S->ParallelAssemble();
-//    Vector * Sv = Spv->GlobalVector();
-//    *Sv -= *S_exactv;
-
-//    double S_meshnorm = (*S_exactv)*(*S_exactv);
-//    double S_mesherror = (*Sv) * (*Sv);
-//    if(verbose)
-//        cout << "|| S_h - S_ex ||_h / || S_ex ||_h = "
-//                        << sqrt(S_mesherror) / sqrt(S_meshnorm) << endl;
-
-
-//    BilinearForm *m = new BilinearForm(R_space);
-//    m->AddDomainIntegrator(new DivDivIntegrator);
-//    //m->AddDomainIntegrator(new VectorFEMassIntegrator);
-//    m->Assemble(); m->Finalize();
-//    SparseMatrix E = m->SpMat();
-//    Vector Asigma(sigmav->Size());
-//    E.Mult(*sigma_exactv,Asigma);
-//    double weighted_norm = (*sigma_exactv)*Asigma;
-
-//    Vector Ae(sigmav->Size());
-//    E.Mult(*sigmav,Ae);
-//    double weighted_error = (*sigmav)*Ae;
-
-//    //if(verbose)
-//        //cout << "|| sigma_h - sigma_ex ||_h,Hdiv / || sigma_ex ||_h,Hdiv = " <<
-//                        //sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-//    if(verbose)
-//        cout << "|| div sigma_h - div sigma_ex ||_h / || div sigma_ex ||_h = " <<
-//                        sqrt(weighted_error)/sqrt(weighted_norm) << endl;
-//    if (verbose)
-//        cout << "Computing projection errors" << endl;
-
-//    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
-
-//    if(verbose)
-//        cout << "|| sigma_ex - Pi_h sigma_ex || / || sigma_ex || = "
-//                        << projection_error_sigma / norm_sigma << endl;
-
-//    double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
-
-//    if(verbose)
-//        cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
-//                        << projection_error_S / norm_S << endl;
+    if(verbose)
+    {
+       if ( norm_S > MYZEROTOL )
+           cout << "|| S_ex - Pi_h S_ex || / || S_ex || = " << projection_error_S / norm_S << endl;
+       else
+           cout << "|| Pi_h S_ex ||  = " << projection_error_S << " (S_ex = 0) \n";
+    }
 
     if (visualization)
     {
@@ -1561,28 +1299,13 @@ int main(int argc, char *argv[])
         u_sock << "solution\n" << *pmesh << *sigma_exact
                << "window_title 'sigma_exact'" << endl;
 
-        socketstream delete_sock(vishost, visport);
-        delete_sock << "parallel " << num_procs << " " << myid << "\n";
-        delete_sock.precision(8);
-        MPI_Barrier(pmesh->GetComm());
-        delete_sock << "solution\n" << *pmesh << *sigma_nonhomo
-                 << "window_title 'sigma_nonhomo'" << endl;
-
-        *sigma_nonhomo -= *sigma_exact;
-        socketstream delete_sock2(vishost, visport);
-        delete_sock2 << "parallel " << num_procs << " " << myid << "\n";
-        delete_sock2.precision(8);
-        MPI_Barrier(pmesh->GetComm());
-        delete_sock2 << "solution\n" << *pmesh << *sigma_nonhomo
-                 << "window_title 'sigma_nonhomo - sigma_exact'" << endl;
-
         *sigma_exact -= *sigma;
         socketstream uuu_sock(vishost, visport);
         uuu_sock << "parallel " << num_procs << " " << myid << "\n";
         uuu_sock.precision(8);
         MPI_Barrier(pmesh->GetComm());
         uuu_sock << "solution\n" << *pmesh << *sigma_exact
-                 << "window_title 'difference'" << endl;
+                 << "window_title 'difference for sigma'" << endl;
 
         socketstream s_sock(vishost, visport);
         s_sock << "parallel " << num_procs << " " << myid << "\n";
@@ -1590,14 +1313,6 @@ int main(int argc, char *argv[])
         MPI_Barrier(pmesh->GetComm());
         s_sock << "solution\n" << *pmesh << *S_exact << "window_title 'S_exact'"
                 << endl;
-
-        socketstream deletes_sock(vishost, visport);
-        deletes_sock << "parallel " << num_procs << " " << myid << "\n";
-        deletes_sock.precision(8);
-        MPI_Barrier(pmesh->GetComm());
-        deletes_sock << "solution\n" << *pmesh << *S_nonhomo << "window_title 'S_nonhomo'"
-                << endl;
-
 
         socketstream ss_sock(vishost, visport);
         ss_sock << "parallel " << num_procs << " " << myid << "\n";
@@ -1656,13 +1371,14 @@ int main(int argc, char *argv[])
     delete Ablock;
     delete Bblock;
     delete Cblock;
-    //delete Dblock;
     delete H_space;
     delete R_space;
     delete W_space;
     delete hdiv_coll;
     delete h1_coll;
     delete l2_coll;
+    delete hcurl_coll;
+    delete GradSpace;
 
     MPI_Finalize();
 
