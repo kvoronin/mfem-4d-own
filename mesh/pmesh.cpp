@@ -2354,19 +2354,27 @@ void ParMesh::LocalRefinement(const Array<int> &marked_el, int type)
          case 3:
             for (i = 0; i < marked_el.Size(); i++)
             {
+               std::cout << "First bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
 
                j = NumOfElements - 1;
+               std::cout << "Second bisection \n";
                Bisection(j, v_to_v, NULL, NULL, middle);
+               std::cout << "Third bisection \n";
                Bisection(NumOfElements - 1, v_to_v, NULL, NULL, middle);
+               std::cout << "4th bisection \n";
                Bisection(j, v_to_v, NULL, NULL, middle);
 
+               std::cout << "5th bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
+               std::cout << "6th bisection \n";
                Bisection(NumOfElements-1, v_to_v, NULL, NULL, middle);
+               std::cout << "7th bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
             }
             break;
       }
+
 
       // 4. Do the green refinement (to get conforming mesh).
       int need_refinement;
@@ -2509,7 +2517,6 @@ void ParMesh::LocalRefinement(const Array<int> &marked_el, int type)
          delete [] face_splittings[i];
       }
       delete [] face_splittings;
-
 
       // 5. Update the boundary elements.
       do

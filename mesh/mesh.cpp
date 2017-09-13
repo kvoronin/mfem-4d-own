@@ -6811,15 +6811,22 @@ void Mesh::LocalRefinement(const Array<int> &marked_el, int type)
          case 3:
             for (i = 0; i < marked_el.Size(); i++)
             {
+                std::cout << "First bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
 
                ii = NumOfElements - 1;
+               std::cout << "Second bisection \n";
                Bisection(ii, v_to_v, NULL, NULL, middle);
+               std::cout << "Third bisection \n";
                Bisection(NumOfElements - 1, v_to_v, NULL, NULL, middle);
+               std::cout << "4th bisection \n";
                Bisection(ii, v_to_v, NULL, NULL, middle);
 
+               std::cout << "5th bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
+               std::cout << "6th bisection \n";
                Bisection(NumOfElements-1, v_to_v, NULL, NULL, middle);
+               std::cout << "7th bisection \n";
                Bisection(marked_el[i], v_to_v, NULL, NULL, middle);
             }
             break;
@@ -7326,6 +7333,9 @@ void Mesh::GeneralRefinement(const Array<int> &el_to_refine, int nonconforming,
    Array<Refinement> refinements(el_to_refine.Size());
    for (int i = 0; i < el_to_refine.Size(); i++)
    {
+      // temporary comment
+      // 3D case: 7 for isotropic, 3 for subdivision into 4 tetrahedra, 1 for bisection
+      // 4D case: trying to implement case type = 1 for bisection
       refinements[i] = Refinement(el_to_refine[i]);
    }
    GeneralRefinement(refinements, nonconforming, nc_limit);
@@ -7547,6 +7557,8 @@ void Mesh::Bisection(int i, const DSTable &v_to_v,
       // 2. Set the node indices for the new elements in v[2][4] so that
       //    the edge marked for refinement is between the first two nodes.
       tet->ParseRefinementFlag(old_redges, type, flag);
+
+      std::cout << "type = " << type << " flag = " << flag << "\n";
 
       v[0][3] = v_new;
       v[1][3] = v_new;

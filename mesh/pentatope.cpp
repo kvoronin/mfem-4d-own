@@ -220,6 +220,80 @@ Element *Pentatope::Duplicate(Mesh *m) const
    return pent;
 }
 
+void Pentatope::ParseRefinementFlag(int refinement_edges[2], int &type,
+                                      int &flag)
+{
+   int i, f = refinement_flag;
+
+   MFEM_VERIFY(f != 0, "pentatope is not marked");
+
+   for (i = 0; i < 2; i++)
+   {
+      refinement_edges[i] = f & 15;
+      f = f >> 4;
+   }
+   type = f & 7;
+   flag = (f >> 3);
+}
+
+void Pentatope::CreateRefinementFlag(int refinement_edges[2], int type,
+                                       int flag)
+{
+   // Check for correct type
+   // Not implemented for pentatops, a similar implelentation is in Tetrahedron class
+#ifdef MFEM_DEBUG
+   int e1, e2;
+   e1 = refinement_edges[0];
+   e2 = refinement_edges[1];
+   // if (e1 > e2)  e1 = e2, e2 = refinement_edges[0];
+   switch (type)
+   {
+      case Tetrahedron::TYPE_PU:
+         if (e1 == 2 && e2 == 1) { break; }
+         // if (e1 == 3 && e2 == 4) break;
+         mfem_error("Error in Tetrahedron::CreateRefinementFlag(...) #1");
+         break;
+      case Tetrahedron::TYPE_A:
+         if (e1 == 3 && e2 == 1) { break; }
+         if (e1 == 2 && e2 == 4) { break; }
+         // if (flag == 0)  // flag is assumed to be the generation
+         //   if (e2 == 5)
+         //      if (e1 >= 1 && e1 <= 5) break; // type is actually O or M
+         //                                     //   ==>  ok for generation = 0
+         mfem_error("Error in Tetrahedron::CreateRefinementFlag(...) #2");
+         break;
+      case Tetrahedron::TYPE_O:
+         if (flag == 0 && e1 == 5 && e2 == 5)
+         {
+            break;
+         }
+         mfem_error("Error in Tetrahedron::CreateRefinementFlag(...) #4");
+         break;
+      case Tetrahedron::TYPE_M:
+         if (flag == 0)
+         {
+            if (e1 == 5 && e2 == 1) { break; }
+            if (e1 == 2 && e2 == 5) { break; }
+         }
+         mfem_error("Error in Tetrahedron::CreateRefinementFlag(...) #5");
+         break;
+      default:
+         mfem_error("Error in Tetrahedron::CreateRefinementFlag(...) #6");
+         break;
+   }
+#endif
+
+   refinement_flag = flag;
+   refinement_flag <<= 3; // it assumed that flag is stored in 3 bits but this might have been changed
+
+   refinement_flag |= type;
+   refinement_flag <<= 3;
+
+   refinement_flag |= refinement_edges[1];
+   refinement_flag <<= 4;
+
+   refinement_flag |= refinement_edges[0];
+}
 
 void Pentatope::MarkEdge(const DSTable &v_to_v, const int *length)
 {

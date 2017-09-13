@@ -25,6 +25,16 @@ class Pentatope : public Element
 protected:
    int indices[5];
 
+   /** The refinement flag keeps (in order) :
+       1. Two marked edges given with local index (0..10) for the two faces
+       that don't have the refinement edge as edge. The refinement edge
+       is determined by the first two nodes of the pentatope. Each
+       marked edge is stored in 4 bits (or as implemented in the functions
+       CreateRefinementFlag and ParseRefinementFlag).
+       2. Type of the element, stored in the next 3 bits.
+       3. The rest is free for now. **/
+   int refinement_flag;
+
    unsigned transform;
 
 public:
@@ -59,6 +69,9 @@ public:
        to vertex 1. If called it should be once from the mesh constructor,
        because the order may be used later for setting the edges. **/
    virtual void MarkEdge(const DSTable &v_to_v, const int *length);
+
+   void  ParseRefinementFlag(int refinement_edges[2], int &type, int &flag);
+   void CreateRefinementFlag(int refinement_edges[2], int  type, int  flag = 0);
 
    /// Calculate point matrix corresponding to a chain of transformations.
    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);

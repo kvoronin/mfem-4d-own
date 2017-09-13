@@ -39,6 +39,7 @@ int main(int argc, char *argv[])
 
     const char *mesh_file = "../data/1tet.mesh";
     //const char *mesh_file = "../data/2tets.mesh";
+    //const char *mesh_file = "../data/2tets_another.mesh";
     //const char *mesh_file = "../data/1penta.MFEM";
     //const char *mesh_file = "../data/2penta.MFEM";
 
@@ -150,10 +151,11 @@ int main(int argc, char *argv[])
 
     Array<int> marked_el;
     marked_el.Append(0);
+    //marked_el.Append(1);
     for (int l = 0; l < par_ref_levels; l++)
     {
-       //pmesh->UniformRefinement();
-        pmesh->GeneralRefinement(marked_el, 2);
+        //pmesh->UniformRefinement();
+        pmesh->GeneralRefinement(marked_el);
     }
 
     //if(dim==3) pmesh->ReorientTetMesh();
