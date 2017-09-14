@@ -328,6 +328,46 @@ void Tetrahedron::GetVertices(Array<int> &v) const
    }
 }
 
+// returns false if failed to apply any rule or there were no rules
+// returns true if a rule was found
+// doesn't check whether a multiple rules exist
+bool Tetrahedron::ApplyRefRules(const TestRefRules& refrules, std::pair<RefMarker,RefMarker> children_markers)
+{
+    int nrules = refrules.size();
+    if (nrules == 0)
+        return false;
+    else
+    {
+        bool found_rule = false;
+        // loop over all rules in the refrules
+        // searhicnf for a rule which can be applied
+        for ( auto const& refRule : refrules )
+        {
+            if (refRule.first == refmarker) // find a suitable rule
+            {
+                children_markers.first = refRule.second.first;
+                children_markers.second = refRule.second.second;
+                found_rule = true;
+                return true;
+            }
+        }
+
+        if (found_rule == false)
+        {
+            std::cout << "Cannot find a rule for this tetrahedron: \n";
+            std::cout << "refmarker was: \n";
+            std::cout << "Type: " << refmarker.first << ", Color: " << refmarker.second << "\n";
+            std::cout << "refrules were: \n";
+            PrintTestRules(refrules);
+        }
+
+    }
+
+    std::cout << "Should not get to this place in tetrahedron::ApplyRefRule() \n";
+    return false;
+}
+
+
 Element *Tetrahedron::Duplicate(Mesh *m) const
 {
 #ifdef MFEM_USE_MEMALLOC

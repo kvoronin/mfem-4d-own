@@ -34,6 +34,11 @@ protected:
        3. The rest is free for now. **/
    int refinement_flag;
 
+   // new data members for studying local refinement
+   int generation; // stores index of generation
+   RefMarker refmarker;
+   int marked_edges[2]; // two marked edges, the refinement edge is always the first edge (edge between the first two vertices)
+
    unsigned transform;
 
 public:
@@ -56,6 +61,14 @@ public:
 
    void  ParseRefinementFlag(int refinement_edges[2], int &type, int &flag);
    void CreateRefinementFlag(int refinement_edges[2], int  type, int  flag = 0);
+
+    // new functions for studying local refinement
+   TestRef::RefType GetRefType() {return refmarker.first;}
+   TestRef::RefColor GetRefColor() {return refmarker.second;}
+   void SetRefType(TestRef::RefType reftype) {refmarker.first = reftype;}
+   void SetRefColor(TestRef::RefColor refcolor) {refmarker.second = refcolor;}
+   bool ApplyRefRules(const TestRefRules& refrules, std::pair<RefMarker,RefMarker> children_markers);
+   RefMarker GetRefMarker() {return refmarker;}
 
    void GetMarkedFace(const int face, int *fv);
 
@@ -108,6 +121,7 @@ public:
    virtual Element *Duplicate(Mesh *m) const;
 
    virtual ~Tetrahedron() { }
+
 };
 
 extern Linear3DFiniteElement TetrahedronFE;

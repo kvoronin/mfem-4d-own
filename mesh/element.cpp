@@ -27,4 +27,18 @@ void Element::SetVertices(const int *ind)
    }
 }
 
+void PrintTestRules(const TestRefRules& refrules)
+{
+    int nrules = 0;
+    for (const auto& refrule : refrules)
+    {
+        nrules++;
+        std::cout << "Rule No. " << nrules << "\n";
+        std::cout << "(" << refrule.first.first << ", " << refrule.first.second << ") : ";
+        std::cout << "---> ";
+        std::cout << "(" << refrule.second.first.first << ", " << refrule.second.first.second << ") + ";
+        std::cout << "(" << refrule.second.second.first << ", " << refrule.second.second.second << ") \n";
+    }
+}
+
 }

@@ -227,6 +227,9 @@ protected:
    /** Bisection. Boundary element with index i is bisected. */
    void Bisection(int i, const DSTable &, int *);
 
+   void RefRuleBisection(int i, const DSTable &v_to_v,
+                        int *edge1, int *edge2, int *middle, const TestRefRules& refrules);
+
    void RedRefinementPentatope(int i, const DSTable & v_to_v, int *middle);
    void RedRefinementBoundaryTet(int i, const DSTable & v_to_v, int *middle);
 

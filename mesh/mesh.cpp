@@ -7432,6 +7432,98 @@ bool Mesh::RefineByError(const Vector &elem_error, double threshold,
 }
 
 
+void Mesh::RefRuleBisection(int i, const DSTable &v_to_v,
+                     int *edge1, int *edge2, int *middle, const mfem::TestRefRules &refrules)
+{
+    int *vert;
+    int v[2][4], v_new, bisect, t;
+    Element *el = elements[i];
+    Vertex V;
+
+    t = el->GetType();
+
+    if (t == Element::TETRAHEDRON)
+    {
+        int j, type, new_type, old_redges[2], new_redges[2][2], flag;
+        Tetrahedron *tet = (Tetrahedron *) el;
+
+        MFEM_VERIFY(tet->GetRefinementFlag() != 0,
+                    "TETRAHEDRON element is not marked for refinement.");
+
+        vert = tet->GetVertices();
+
+        // 1. Get the index for the new vertex in v_new.
+        bisect = v_to_v(vert[0], vert[1]);
+        if (bisect == -1)
+        {
+           tet->ParseRefinementFlag(old_redges, type, flag);
+           cerr << "Error in Bisection(...) of tetrahedron!" << endl
+                << "   redge[0] = " << old_redges[0]
+                << "   redge[1] = " << old_redges[1]
+                << "   type = " << type
+                << "   flag = " << flag << endl;
+           mfem_error();
+        }
+
+        if (middle[bisect] == -1)
+        {
+           v_new = NumOfVertices++;
+           for (j = 0; j < 3; j++)
+           {
+              V(j) = 0.5 * (vertices[vert[0]](j) + vertices[vert[1]](j));
+           }
+           vertices.Append(V);
+
+           middle[bisect] = v_new;
+        }
+        else
+        {
+           v_new = middle[bisect];
+        }
+
+        // 2. Search for a bisection rule to apply
+
+        std::pair<RefMarker,RefMarker> children_markers;
+        bool found_rule = tet->ApplyRefRules(refrules, children_markers);
+
+        // 3. If found a rule, apply it, i.e. define the children info
+        if (found_rule) // if we found a rule and hence were able to define children RefMarkers
+        {
+            int attr = tet->GetAttribute();
+            const RefMarker refmarker = tet->GetRefMarker();
+            if (refmarker.first != TestRef::M) // then we cannot decide which child gets which marker from children_markers
+            {
+                tet->SetVertices(v[0]);
+                Tetrahedron *tet2 = new Tetrahedron(v[1], attr);
+                elements.Append(tet2);
+            }
+            else // otherwise the first Refmarker is given to a child who has its marked edge connected to the current refinement edge
+            {
+
+            }
+
+
+
+            NumOfElements++;
+        }
+        else
+        {
+            MFEM_ABORT("Shouldn't get here inside RefRuleBisection().");
+        }
+
+        // 4. For now we don't care about transforms and related (coarse-to-fine) data structures
+
+        // ...
+    }
+    else
+    {
+       MFEM_ABORT("RefRuleBisection for now works only for tetrahedra.");
+    }
+
+    return;
+}
+
+
 void Mesh::Bisection(int i, const DSTable &v_to_v,
                      int *edge1, int *edge2, int *middle)
 {

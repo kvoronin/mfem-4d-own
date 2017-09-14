@@ -18,8 +18,30 @@
 #include "../linalg/densemat.hpp"
 #include "../fem/geom.hpp"
 
+#include <map>
+
 namespace mfem
 {
+
+// TestRef is a simple structure for studying local refinement in 3D and 4D
+using namespace std;
+struct TestRef
+{
+    enum RefType { P = 0, O, A, M};
+    enum RefColor { R = 0, G, B, Y, W };
+};
+
+typedef std::pair<TestRef::RefType, TestRef::RefColor> RefMarker;
+
+// TestRefRules is a map: <RefType, RefColor> --> <RefType1, RefColor1> & <RefType2, RefColor2>
+typedef std::map< std::pair<TestRef::RefType, TestRef::RefColor>, \
+                    std::pair< \
+                    std::pair<TestRef::RefType, TestRef::RefColor>, \
+                    std::pair<TestRef::RefType, TestRef::RefColor> \
+                             > \
+                > TestRefRules;
+
+void PrintTestRules(const TestRefRules& refrules);
 
 class Mesh;
 
