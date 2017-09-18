@@ -35,6 +35,12 @@ protected:
        3. The rest is free for now. **/
    int refinement_flag;
 
+   /*
+   int generation; // stores index of generation
+   std::pair<TestRef::RefType,TestRef::RefColor> refmarker;
+   std::vector<TestRefRule> refrules;
+   */
+
    unsigned transform;
 
 public:
@@ -70,8 +76,16 @@ public:
        because the order may be used later for setting the edges. **/
    virtual void MarkEdge(const DSTable &v_to_v, const int *length);
 
-   void  ParseRefinementFlag(int refinement_edges[2], int &type, int &flag);
+   void ParseRefinementFlag(int refinement_edges[2], int &type, int &flag);
    void CreateRefinementFlag(int refinement_edges[2], int  type, int  flag = 0);
+
+   /*
+   TestRef::RefType GetRefType() {return refmarker.first;}
+   TestRef::RefColor GetRefColor() {return refmarker.second;}
+   void SetRefType(TestRef::RefType reftype) {refmarker.first = reftype;}
+   void SetRefColor(TestRef::RefColor refcolor) {refmarker.second = refcolor;}
+   */
+
 
    /// Calculate point matrix corresponding to a chain of transformations.
    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
