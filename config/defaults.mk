@@ -56,7 +56,7 @@ endif
 # config.hpp. The values below are the defaults for generating the actual values
 # in config.mk and config.hpp.
 
-MFEM_USE_MPI         = NO
+MFEM_USE_MPI         = YES
 MFEM_USE_METIS_5     = NO
 MFEM_DEBUG           = NO
 MFEM_USE_GZSTREAM    = NO
@@ -69,7 +69,7 @@ MFEM_TIMER_TYPE      = $(if $(NOTMAC),2,4)
 MFEM_USE_SUNDIALS    = NO
 MFEM_USE_MESQUITE    = NO
 MFEM_USE_SUITESPARSE = NO
-MFEM_USE_SUPERLU     = NO
+MFEM_USE_SUPERLU     = YES
 MFEM_USE_STRUMPACK   = NO
 MFEM_USE_GECKO       = NO
 MFEM_USE_GNUTLS      = NO
@@ -121,7 +121,7 @@ else
    # (included with ParMETIS) is installed in the same location.
    METIS_DIR = @MFEM_DIR@/../parmetis-4.0.3
    METIS_OPT = -I$(METIS_DIR)/include
-   METIS_LIB = -L$(METIS_DIR)/lib -lparmetis -lmetis
+   METIS_LIB = -L$(METIS_DIR)/lib -lmetis
    MFEM_USE_METIS_5 = YES
 endif
 
@@ -163,9 +163,10 @@ SUITESPARSE_LIB = -L$(SUITESPARSE_DIR)/lib -lklu -lbtf -lumfpack -lcholmod\
  $(LAPACK_LIB) -Wl,-rpath=$(SUITESPARSE_DIR)/lib
 
 # SuperLU library configuration
-SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_5.1.0
+SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_5.1.3
 SUPERLU_OPT = -I$(SUPERLU_DIR)/SRC
-SUPERLU_LIB = -L$(SUPERLU_DIR)/SRC -lsuperlu_dist
+PARMETIS_LIBDIR = -L$(METIS_DIR)/lib
+SUPERLU_LIB = -L$(SUPERLU_DIR)/lib -L$(PARMETIS_LIBDIR) -lparmetis -lsuperlu_dist
 
 # SCOTCH library configuration
 SCOTCH_DIR = @MFEM_DIR@/../scotch_6.0.4
