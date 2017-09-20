@@ -32,6 +32,8 @@
 
 #include"cfosls_testsuite.hpp"
 
+//#define DEBUGGING
+
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
@@ -42,6 +44,93 @@ using std::make_shared;
 
 
 // Some bilinear and linear form integrators used in the code
+
+/// Integrator for (q * u, v)
+/// where q is a scalar coefficient, u and v are from vector FE space
+/// created from scalar FE collection (called improper vector FE)
+class ImproperVectorFEMassIntegrator : public BilinearFormIntegrator
+{
+private:
+   Coefficient *Q;
+   void Init(Coefficient *q)
+   { Q = q; }
+
+#ifndef MFEM_THREAD_SAFE
+   Vector scalar_shape;
+   DenseMatrix vector_vshape; // components are test shapes
+#endif
+
+public:
+   ImproperVectorFEMassIntegrator() { Init(NULL); }
+   ImproperVectorFEMassIntegrator(Coefficient *_q) { Init(_q); }
+   ImproperVectorFEMassIntegrator(Coefficient &q) { Init(&q); }
+
+   virtual void AssembleElementMatrix(const FiniteElement &el,
+                                       ElementTransformation &Trans,
+                                       DenseMatrix &elmat);
+};
+
+void ImproperVectorFEMassIntegrator::AssembleElementMatrix(
+   const FiniteElement &el, ElementTransformation &Trans, DenseMatrix &elmat)
+{
+    MFEM_ASSERT(el.GetRangeType() == FiniteElement::SCALAR,
+                "The improper vector FE should have a scalar type in the current implementation \n");
+
+    int dim  = el.GetDim();
+    int nd = el.GetDof();
+    int improper_nd = nd * dim;
+
+    double w;
+
+#ifdef MFEM_THREAD_SAFE
+    DenseMatrix vector_vshape(improper_nd, dim);
+#else
+    scalar_shape.SetSize(improper_nd);
+    vector_vshape.SetSize(improper_nd, dim);
+#endif
+    elmat.SetSize (improper_nd, improper_nd);
+
+    const IntegrationRule *ir = IntRule;
+    if (ir == NULL)
+    {
+       int order = (Trans.OrderW() + el.GetOrder() + el.GetOrder());
+       ir = &IntRules.Get(el.GetGeomType(), order);
+    }
+
+    elmat = 0.0;
+    for (int i = 0; i < ir->GetNPoints(); i++)
+    {
+       const IntegrationPoint &ip = ir->IntPoint(i);
+
+       Trans.SetIntPoint (&ip);
+
+       el.CalcShape(ip, scalar_shape);
+       for (int d = 0; d < dim; ++d )
+           for (int l = 0; l < dim; ++l)
+               for (int k = 0; k < nd; ++k)
+               {
+                   if (l == d)
+                       vector_vshape(l*nd+k,d) = scalar_shape(k);
+                   else
+                       vector_vshape(l*nd+k,d) = 0.0;
+               }
+       // now vector_vshape is of size improper_nd x dim
+       //el.CalcVShape(Trans, vector_vshape); // would be easy but this doesn't work for improper vector L2
+
+       //std::cout << "scalar_shape \n";
+       //scalar_shape.Print();
+       //std::cout << "improper vector_vshape \n";
+       //vector_vshape.Print();
+
+       w = ip.weight * Trans.Weight();
+       if (Q)
+          w *= Q->Eval(Trans, ip);
+
+       AddMult_a_AAt (w, vector_vshape, elmat);
+
+    }
+}
+
 
 /// Integrator for (q * u, v)
 /// where q is a scalar coefficient, u is from vector FE space created
@@ -728,7 +817,7 @@ int main(int argc, char *argv[])
 
     // solver options
     int prec_option = 0; //defines whether to use preconditioner or not, and which one
-    bool direct_solver = false;
+    bool direct_solver = true;
 
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
 
@@ -1040,6 +1129,19 @@ int main(int argc, char *argv[])
    A11_block->Finalize();
    A11 = A11_block->ParallelAssemble();
 
+   /*
+   SparseMatrix Debug_A11;
+   A11->GetDiag(Debug_A11);
+   int nnz_A11 = Debug_A11.NumNonZeroElems();
+   double * data_A11 = Debug_A11.GetData();
+   double max_elem_A11 = 0.0;
+   for ( int i = 0; i < nnz_A11; ++i)
+       if (fabs(data_A11[i]) > max_elem_A11)
+           max_elem_A11 = fabs(data_A11[i]);
+   std::cout << "max_element_A11 = " << max_elem_A11 << "\n";
+   std::cout << "norm, A11 = " << Debug_A11.MaxNorm() << "\n";
+   */
+
    //----------------
    //  A22 Block: (S, p) + (grad S, grad p) with S and p from H1
    //-----------------
@@ -1052,6 +1154,21 @@ int main(int argc, char *argv[])
    A22_block->EliminateEssentialBC(ess_bdrS, x.GetBlock(1), *rhsS_form);
    A22_block->Finalize();
    A22 = A22_block->ParallelAssemble();
+
+   /*
+   SparseMatrix Debug_A22;
+   A22->GetDiag(Debug_A22);
+   int nnz_A22 = Debug_A22.NumNonZeroElems();
+   double * data_A22 = Debug_A22.GetData();
+   double max_elem_A22 = 0.0;
+   for ( int i = 0; i < nnz_A22; ++i)
+       if (fabs(data_A22[i]) > max_elem_A22)
+           max_elem_A22 = fabs(data_A22[i]);
+   std::cout << "max_element_A22 = " << max_elem_A22 << "\n";
+   std::cout << "norm, A22 = " << Debug_A22.MaxNorm() << "\n";
+   MPI_Finalize();
+   return 0;
+   */
 
    //---------------
    //  B Block: block 2 x 2 with Lagrange multiplier's stuff
@@ -1114,28 +1231,21 @@ int main(int argc, char *argv[])
    B21 = B21block->ParallelAssemble();
    B21T = B21->Transpose();
 
-   /*
-   ParBilinearForm *Cblock(new ParBilinearForm(H_space));
-   HypreParMatrix *C;
-   Cblock->AddDomainIntegrator(new MassIntegrator(*Mytest.bTb));
-   Cblock->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
-   Cblock->Assemble();
-   Cblock->EliminateEssentialBC(ess_bdrS, x.GetBlock(1),*rhsS_form);
-   Cblock->Finalize();
-   C = Cblock->ParallelAssemble();
+#ifdef DEBUGGING
+   ParBilinearForm *L33_block(new ParBilinearForm(L_space));
+   HypreParMatrix *L33;
+   L33_block->AddDomainIntegrator(new ImproperVectorFEMassIntegrator);
+   L33_block->Assemble();
+   L33_block->Finalize();
+   L33 = L33_block->ParallelAssemble();
 
-   ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, H_space));
-   HypreParMatrix *B;
-   Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
-   Bblock->Assemble();
-   //Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *rhsS_form);
-   Bblock->EliminateTestDofs(ess_bdrS);
-   Bblock->Finalize();
-   B = Bblock->ParallelAssemble();
-   *B *= -1.;
-   HypreParMatrix *BT = B->Transpose();
-   */
-
+   ParBilinearForm *W44_block(new ParBilinearForm(W_space));
+   HypreParMatrix *W44;
+   W44_block->AddDomainIntegrator(new MassIntegrator);
+   W44_block->Assemble();
+   W44_block->Finalize();
+   W44 = W44_block->ParallelAssemble();
+#endif
    //=======================================================
    // Assembling the righthand side
    //-------------------------------------------------------
@@ -1291,11 +1401,23 @@ int main(int argc, char *argv[])
    solver.SetAbsTol(atol);
    solver.SetRelTol(rtol);
    solver.SetMaxIter(max_iter);
-   solver.SetOperator(*CFOSLSop);
+   solver.SetOperator(*CFOSLSop); // overwritten in case of UMFPackSolver
    if (prec_option > 0 && !direct_solver )
         solver.SetPreconditioner(prec);
+#ifdef MFEM_USE_SUITESPARSE
+   Solver * DirectSolver;
+   BlockMatrix * SystemBlockMat;
+   SparseMatrix * SystemMat;
+   SparseMatrix *A11_diag, *A22_diag, *B11_diag, *B12_diag, *B21_diag, *B11T_diag, *B12T_diag, *B21T_diag;
+#ifdef DEBUGGING
+   SparseMatrix *L33_diag, *W44_diag;
+#endif
+#endif
    if (direct_solver)
    {
+#ifdef MFEM_USE_SUPERLU
+       if (verbose)
+           std::cout << "Using parallel SuperLU direct solver \n";
        Operator * LURowOp = new SuperLURowLocMatrix(*CFOSLSop);
 
        SuperLUSolver * superlu = new SuperLUSolver(MPI_COMM_WORLD);
@@ -1303,8 +1425,82 @@ int main(int argc, char *argv[])
        superlu->SetSymmetricPattern(true);
        superlu->SetColumnPermutation(superlu::PARMETIS);
        superlu->SetOperator(*LURowOp);
-
        solver.SetPreconditioner(superlu);
+#else
+#ifdef MFEM_USE_SUITESPARSE
+       if (verbose)
+           std::cout << "Using serial UMFPack direct solver \n";
+       SystemBlockMat = new BlockMatrix(block_trueOffsets);
+       A11_diag = new SparseMatrix();
+       A22_diag = new SparseMatrix();
+       B11_diag = new SparseMatrix();
+       B12_diag = new SparseMatrix();
+       B21_diag = new SparseMatrix();
+       B11T_diag = new SparseMatrix();
+       B12T_diag = new SparseMatrix();
+       B21T_diag = new SparseMatrix();
+       A11->GetDiag(*A11_diag);
+       A22->GetDiag(*A22_diag);
+       B11->GetDiag(*B11_diag);
+       B12->GetDiag(*B12_diag);
+       B21->GetDiag(*B21_diag);
+       B11T->GetDiag(*B11T_diag);
+       B12T->GetDiag(*B12T_diag);
+       B21T->GetDiag(*B21T_diag);
+
+#ifdef DEBUGGING
+       L33_diag = new SparseMatrix();
+       L33->GetDiag(*L33_diag);
+       W44_diag = new SparseMatrix();
+       W44->GetDiag(*W44_diag);
+#endif
+
+       std::cout << "infinitness measure, A11 = " << A11_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, A22 = " << A22_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B11 = " << B11_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B12 = " << B12_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B21 = " << B21_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B11T = " << B11T_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B12T = " << B12T_diag->CheckFinite() << "\n";
+       std::cout << "infinitness measure, B21T = " << B21T_diag->CheckFinite() << "\n";
+       std::cout << "norm, A11 = " << A11_diag->MaxNorm() << "\n";
+       std::cout << "norm, A22 = " << A22_diag->MaxNorm() << "\n";
+       std::cout << "norm, B11 = " << B11_diag->MaxNorm() << "\n";
+       std::cout << "norm, B12 = " << B12_diag->MaxNorm() << "\n";
+       std::cout << "norm, B21 = " << B21_diag->MaxNorm() << "\n";
+
+       SystemBlockMat->SetBlock(0,0,A11_diag);
+       SystemBlockMat->SetBlock(1,1,A22_diag);
+#ifndef DEBUGGING
+       SystemBlockMat->SetBlock(0,2,B11T_diag);
+       SystemBlockMat->SetBlock(0,3,B21T_diag);
+       SystemBlockMat->SetBlock(1,2,B12T_diag);
+       SystemBlockMat->SetBlock(2,0,B11_diag);
+       SystemBlockMat->SetBlock(2,1,B12_diag);
+       SystemBlockMat->SetBlock(3,0,B21_diag);
+#else
+       SystemBlockMat->SetBlock(2,2,L33_diag);
+       SystemBlockMat->SetBlock(3,3,W44_diag);
+#endif
+       SystemMat = SystemBlockMat->CreateMonolithic();
+
+       DirectSolver = new UMFPackSolver(*SystemMat);
+       DirectSolver->iterative_mode = false;
+       ((UMFPackSolver*)DirectSolver)->SetPrintLevel(10);
+
+       std::cout << "unsymmetry measure = " << SystemMat->IsSymmetric() << "\n";
+       std::cout << "infinitness measure = " << SystemMat->CheckFinite() << "\n";
+       //SystemMat->Print();
+       solver.SetOperator(*SystemMat);
+       solver.SetPreconditioner(*DirectSolver);
+#else
+       if (verbose)
+            std::cout << "Error: no suitesparse and no superlu, direct solver cannot be used \n";
+       MPI_Finalize();
+       return 0;
+#endif
+#endif
+
    }
    solver.SetPrintLevel(1);
    trueX = 0.0;
