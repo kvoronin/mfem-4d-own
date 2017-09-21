@@ -817,8 +817,10 @@ int main(int argc, char *argv[])
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
 
     // solver options
-    int prec_option = 0; //defines whether to use preconditioner or not, and which one
-    bool direct_solver = true;
+    int prec_option = 2; //defines whether to use preconditioner or not, and which one
+    bool direct_solver = false;
+    bool with_prec; // to be defined from prec_option value
+    bool ADS_for_A11;  // whether to use ADS for A11 block
 
     // level gap between coarse an fine grid (T_H and T_h)
     int level_gap = 1;
@@ -906,6 +908,21 @@ int main(int argc, char *argv[])
         std::cout << "For the records: numsol = " << numsol
                   << ", mesh_file = " << mesh_file << "\n";
 
+    switch (prec_option)
+    {
+    case 1: // smth simple like AMS
+        with_prec = true;
+        ADS_for_A11 = false;
+        break;
+    case 2: // MG
+        with_prec = true;
+        ADS_for_A11 = true;
+        break;
+    default: // no preconditioner (default)
+        with_prec = false;
+        ADS_for_A11 = false;
+        break;
+    }
 
 
     if (verbose)
@@ -1125,6 +1142,8 @@ int main(int argc, char *argv[])
        std::cout << "dim(L) = " << dimL << ", ";
        std::cout << "dim(W) = " << dimW << ", ";
        std::cout << "dim(R+H+W+L) = " << dimR + dimH + dimL + dimW << "\n";
+       std::cout << "Number of primary unknowns (sigma and S): " << dimR + dimH << "\n";
+       std::cout << "Number of equations in constraints: " << P_L->Width() + P_W->Width() << "\n";
        std::cout << "***********************************************************\n";
     }
 
@@ -1241,19 +1260,6 @@ int main(int argc, char *argv[])
    A11_block->Finalize();
    A11 = A11_block->ParallelAssemble();
 
-   /*
-   SparseMatrix Debug_A11;
-   A11->GetDiag(Debug_A11);
-   int nnz_A11 = Debug_A11.NumNonZeroElems();
-   double * data_A11 = Debug_A11.GetData();
-   double max_elem_A11 = 0.0;
-   for ( int i = 0; i < nnz_A11; ++i)
-       if (fabs(data_A11[i]) > max_elem_A11)
-           max_elem_A11 = fabs(data_A11[i]);
-   std::cout << "max_element_A11 = " << max_elem_A11 << "\n";
-   std::cout << "norm, A11 = " << Debug_A11.MaxNorm() << "\n";
-   */
-
    //----------------
    //  A22 Block: (S, p) + (grad S, grad p) with S and p from H1
    //-----------------
@@ -1266,21 +1272,6 @@ int main(int argc, char *argv[])
    A22_block->EliminateEssentialBC(ess_bdrS, x.GetBlock(1), *rhsS_form);
    A22_block->Finalize();
    A22 = A22_block->ParallelAssemble();
-
-   /*
-   SparseMatrix Debug_A22;
-   A22->GetDiag(Debug_A22);
-   int nnz_A22 = Debug_A22.NumNonZeroElems();
-   double * data_A22 = Debug_A22.GetData();
-   double max_elem_A22 = 0.0;
-   for ( int i = 0; i < nnz_A22; ++i)
-       if (fabs(data_A22[i]) > max_elem_A22)
-           max_elem_A22 = fabs(data_A22[i]);
-   std::cout << "max_element_A22 = " << max_elem_A22 << "\n";
-   std::cout << "norm, A22 = " << Debug_A22.MaxNorm() << "\n";
-   MPI_Finalize();
-   return 0;
-   */
 
    //---------------
    //  B Block: block 2 x 2 with Lagrange multiplier's stuff
@@ -1304,18 +1295,6 @@ int main(int argc, char *argv[])
    //----------------
    //  B12 Block: -([b,1]^T S, theta) with S is from H1 and theta from vector L2
    //-----------------
-
-   /*
-   ParMixedBilinearForm *B12block(new ParMixedBilinearForm(H_space, L_space));
-   HypreParMatrix *B12, *B12T;
-   B12block->AddDomainIntegrator(new MixedDotProductIntegrator(*Mytest.b));
-   B12block->Assemble();
-   B12block->EliminateTrialDofs(ess_bdrS, x.GetBlock(1), *rhslam_form);
-   B12block->Finalize();
-   B12 = B12block->ParallelAssemble();
-   *B12 *= -1.;
-   B12T = B12->Transpose();
-   */
 
    ParMixedBilinearForm *B12Tblock(new ParMixedBilinearForm(L_space, H_space));
    HypreParMatrix *B12, *B12T;
@@ -1384,7 +1363,7 @@ int main(int argc, char *argv[])
   Vector tempL1(coarseL_space->TrueVSize()), tempL2(coarseW_space->TrueVSize());
   B21->Mult(TrueSig, resW);
   P_W->MultTranspose(trueRhs.GetBlock(3), tempL2);
-//  resW -= trueRhs.GetBlock(3);
+  //resW -= trueRhs.GetBlock(3);
   resW -= tempL2;
 
   B11->Mult(TrueSig,tempL1);
@@ -1455,7 +1434,7 @@ int main(int argc, char *argv[])
    //     Check the norm of the unpreconditioned residual.
 
    BlockDiagonalPreconditioner prec(block_finalOffsets);
-   if (prec_option > 0 && !direct_solver)
+   if (with_prec > 0 && !direct_solver)
    {
        // Construct the operators for preconditioner
        if (verbose)
@@ -1463,9 +1442,17 @@ int main(int argc, char *argv[])
        chrono.Clear();
        chrono.Start();
 
-       HypreBoomerAMG * invA11 = new HypreBoomerAMG(*A11);
-       invA11->SetPrintLevel(0);
-       invA11->iterative_mode = false;
+       Solver * invA11;
+       if (ADS_for_A11)
+       {
+           invA11 = new HypreADS(*A11, R_space);
+       }
+       else // BoomerAMG
+       {
+           invA11 = new HypreBoomerAMG(*A11);
+       }
+       ((HypreBoomerAMG*)invA11)->SetPrintLevel(0);
+       ((HypreBoomerAMG*)invA11)->iterative_mode = false;
 
        HypreBoomerAMG * invA22 = new HypreBoomerAMG(*A22);
        invA22->iterative_mode = false;
@@ -1478,12 +1465,14 @@ int main(int argc, char *argv[])
 
        HypreParMatrix * Temp11 = B11->Transpose();
        Temp11->InvScaleRows(*A11d);
-       HypreParMatrix * Schur11 = ParMult(B11, Temp11);
+       HypreParMatrix * Tempp = ParMult(B11, Temp11);
        HypreParMatrix * Temp12 = B12->Transpose();
        Temp12->InvScaleRows(*A22d);
-       HypreParMatrix * Tempp = ParMult(B12, Temp12);
-       *Schur11 += *Tempp; //->Add(1.0, *Tempp);
+       HypreParMatrix * Schur11 = ParMult(B12, Temp12);
+       //*Tempp += *Schur11; //->Add(1.0, *Schur11);
+       *Schur11 += *Tempp; // cannot interchange matrices, gives internal hypre error, maybe because of sparsity patterns
 
+       //Solver * invLam = new HypreBoomerAMG(*Tempp);
        Solver * invLam = new HypreBoomerAMG(*Schur11);
        ((HypreBoomerAMG *)invLam)->SetPrintLevel(0);
        ((HypreBoomerAMG *)invLam)->iterative_mode = false;
@@ -1516,13 +1505,6 @@ int main(int argc, char *argv[])
 
    //GMRESSolver solver(MPI_COMM_WORLD);    // too slow
    MINRESSolver solver(MPI_COMM_WORLD);
-   //CGSolver solver(MPI_COMM_WORLD);       // cannot be used, it is an indefinite saddle-point system
-   solver.SetAbsTol(atol);
-   solver.SetRelTol(rtol);
-   solver.SetMaxIter(max_iter);
-   solver.SetOperator(*CFOSLSop); // overwritten in case of UMFPackSolver
-   if (prec_option > 0 && !direct_solver )
-        solver.SetPreconditioner(prec);
 #ifdef MFEM_USE_SUITESPARSE
    Solver * DirectSolver;
    BlockMatrix * SystemBlockMat;
@@ -1619,9 +1601,16 @@ int main(int argc, char *argv[])
        return 0;
 #endif
 #endif
-
+   } // end of case when direct solver is used
+   else // iterative solver
+   {
+       solver.SetAbsTol(atol);
+       solver.SetRelTol(rtol);
+       solver.SetMaxIter(max_iter);
+       solver.SetOperator(*CFOSLSop); // overwritten in case of UMFPackSolver
+       if (with_prec > 0 && !direct_solver )
+            solver.SetPreconditioner(prec);
    }
-//   solver.SetPrintLevel(1);
    trueX = 0.0;
    BlockVector finalRhs(block_finalOffsets);
    finalRhs = 0.0;
@@ -1629,19 +1618,27 @@ int main(int argc, char *argv[])
    finalRhs.GetBlock(1) = trueRhs.GetBlock(1);
    P_L->MultTranspose(trueRhs.GetBlock(2), finalRhs.GetBlock(2));
    P_W->MultTranspose(trueRhs.GetBlock(3), finalRhs.GetBlock(3));
-   DirectSolver->Mult(finalRhs, trueX);
+   if (direct_solver)
+       DirectSolver->Mult(finalRhs, trueX);
+   else
+   {
+       solver.SetPrintLevel(0);
+       solver.Mult(finalRhs, trueX);
+   }
+
    chrono.Stop();
 
-//   if (verbose)
-//   {
-//      if (solver.GetConverged())
-//         std::cout << "MINRES converged in " << solver.GetNumIterations()
-//                   << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
-//      else
-//         std::cout << "MINRES did not converge in " << solver.GetNumIterations()
-//                   << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
-//      std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
-//   }
+
+   if (verbose && !direct_solver) // iterative solver reports about its convergence
+   {
+      if (solver.GetConverged())
+         std::cout << "MINRES converged in " << solver.GetNumIterations()
+                   << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
+      else
+         std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+                   << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+      std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+   }
 
    ParGridFunction * sigma = new ParGridFunction(R_space);
    sigma->Distribute(&(trueX.GetBlock(0)));
