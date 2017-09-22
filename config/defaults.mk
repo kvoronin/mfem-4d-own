@@ -166,7 +166,7 @@ SUITESPARSE_LIB = -L$(SUITESPARSE_DIR)/lib -lklu -lbtf -lumfpack -lcholmod\
 SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_5.1.3
 SUPERLU_OPT = -I$(SUPERLU_DIR)/SRC
 PARMETIS_LIBDIR = -L$(METIS_DIR)/lib
-SUPERLU_LIB = -L$(SUPERLU_DIR)/lib -L$(PARMETIS_LIBDIR) -lparmetis -lsuperlu_dist
+SUPERLU_LIB = -L$(SUPERLU_DIR)/lib -lsuperlu_dist -L$(PARMETIS_LIBDIR) -lparmetis -Wl,-rpath=$(PARMETIS_LIBDIR)
 
 # SCOTCH library configuration
 SCOTCH_DIR = @MFEM_DIR@/../scotch_6.0.4
