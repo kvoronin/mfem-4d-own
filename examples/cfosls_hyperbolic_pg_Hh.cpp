@@ -817,10 +817,12 @@ int main(int argc, char *argv[])
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
 
     // solver options
-    int prec_option = 2; //defines whether to use preconditioner or not, and which one
+    int prec_option = 4; //defines whether to use preconditioner or not, and which one. (*) 4 and 5 produce almost the same results
     bool direct_solver = false;
-    bool with_prec; // to be defined from prec_option value
-    bool ADS_for_A11;  // whether to use ADS for A11 block
+    bool with_prec;           // to be defined from prec_option value
+    bool ADS_for_A11;         // whether to use ADS for A11 block
+    bool identity_Schur11;    // if true, uses identity for Schur complement
+    bool identity_Schur22;    // if true, uses identity for Schur complement
 
     // level gap between coarse an fine grid (T_H and T_h)
     int level_gap = 1;
@@ -910,17 +912,40 @@ int main(int argc, char *argv[])
 
     switch (prec_option)
     {
-    case 1: // smth simple like AMS
+    case 1:
         with_prec = true;
         ADS_for_A11 = false;
+        identity_Schur11 = false;
+        identity_Schur22 = false;
         break;
-    case 2: // MG
+    case 2: // ADS for H(div)
         with_prec = true;
         ADS_for_A11 = true;
+        identity_Schur11 = false;
+        identity_Schur22 = false;
+        break;
+    case 3:
+        with_prec = true;
+        ADS_for_A11 = false;
+        identity_Schur11 = true;
+        identity_Schur22 = false;
+        break;
+    case 4:
+        with_prec = true;
+        ADS_for_A11 = false;
+        identity_Schur11 = false;
+        identity_Schur22 = true;
+        break;
+    case 5:
+        with_prec = true;
+        ADS_for_A11 = false;
+        identity_Schur11 = true;
+        identity_Schur22 = true;
         break;
     default: // no preconditioner (default)
         with_prec = false;
         ADS_for_A11 = false;
+        identity_Schur11 = false;
         break;
     }
 
@@ -1463,27 +1488,42 @@ int main(int argc, char *argv[])
        HypreParVector *A22d = new HypreParVector(MPI_COMM_WORLD, A22->GetGlobalNumRows(), A22->GetRowStarts());
        A22->GetDiag(*A22d);
 
-       HypreParMatrix * Temp11 = B11->Transpose();
-       Temp11->InvScaleRows(*A11d);
-       HypreParMatrix * Tempp = ParMult(B11, Temp11);
-       HypreParMatrix * Temp12 = B12->Transpose();
-       Temp12->InvScaleRows(*A22d);
-       HypreParMatrix * Schur11 = ParMult(B12, Temp12);
-       //*Tempp += *Schur11; //->Add(1.0, *Schur11);
-       *Schur11 += *Tempp; // cannot interchange matrices, gives internal hypre error, maybe because of sparsity patterns
+       Operator * invLam;
+       if (!identity_Schur11)
+       {
+           HypreParMatrix * Temp11 = B11->Transpose();
+           Temp11->InvScaleRows(*A11d);
+           HypreParMatrix * Tempp = ParMult(B11, Temp11);
+           HypreParMatrix * Temp12 = B12->Transpose();
+           Temp12->InvScaleRows(*A22d);
+           HypreParMatrix * Schur11 = ParMult(B12, Temp12);
+           //*Tempp += *Schur11; //->Add(1.0, *Schur11);
+           *Schur11 += *Tempp; // cannot interchange matrices, gives internal hypre error, maybe because of sparsity patterns
 
-       //Solver * invLam = new HypreBoomerAMG(*Tempp);
-       Solver * invLam = new HypreBoomerAMG(*Schur11);
-       ((HypreBoomerAMG *)invLam)->SetPrintLevel(0);
-       ((HypreBoomerAMG *)invLam)->iterative_mode = false;
+           invLam = new HypreBoomerAMG(*Schur11);
+           ((HypreBoomerAMG *)invLam)->SetPrintLevel(0);
+           ((HypreBoomerAMG *)invLam)->iterative_mode = false;
+       }
+       else
+       {
+           invLam = new IdentityOperator(B12->Height());
+       }
 
-       HypreParMatrix * Temp22 = B21->Transpose();
-       Temp22->InvScaleRows(*A11d);
-       HypreParMatrix * Schur22 = ParMult(B21, Temp22);
-       Solver * invMu = new HypreBoomerAMG(*Schur22);
-       ((HypreBoomerAMG *)invMu)->SetPrintLevel(0);
-       ((HypreBoomerAMG *)invMu)->iterative_mode = false;
+       Operator * invMu;
+       if (!identity_Schur22)
+       {
+           HypreParMatrix * Temp22 = B21->Transpose();
+           Temp22->InvScaleRows(*A11d);
+           HypreParMatrix * Schur22 = ParMult(B21, Temp22);
 
+           invMu = new HypreBoomerAMG(*Schur22);
+           ((HypreBoomerAMG *)invMu)->SetPrintLevel(0);
+           ((HypreBoomerAMG *)invMu)->iterative_mode = false;
+       }
+       else
+       {
+           invMu = new IdentityOperator(B21->Height());
+       }
 
        prec.SetDiagonalBlock(0, invA11);
        prec.SetDiagonalBlock(1, invA22);
