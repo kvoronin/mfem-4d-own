@@ -34,6 +34,8 @@
 #include "divfree_solver_tools.hpp"
 
 //#define DEBUGGING
+//#define BBT_check
+#define BAinvBT_check
 
 #define MYZEROTOL (1.0e-13)
 
@@ -43,6 +45,84 @@ using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
 
+#ifdef BAinvBT_check
+
+// Some Operator inheriting classes used for analyzing the preconditioner
+class MyOperator : public Operator
+{
+private:
+    HypreParMatrix & leftmat;
+    HypreParMatrix & rightmat;
+    Operator & middleop;
+public:
+    // Constructor
+    MyOperator(HypreParMatrix& LeftMatrix, Operator& MiddleOp, HypreParMatrix& RightMatrix)
+        : middleop(MiddleOp), leftmat(LeftMatrix), rightmat(RightMatrix),
+          Operator(LeftMatrix.Height(),RightMatrix.Width())
+    {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = leftmat * middleop * rightmat * x
+void MyOperator::Mult(const Vector& x, Vector& y) const
+{
+    Vector tmp1(rightmat.Height());
+    rightmat.Mult(x, tmp1);
+    Vector tmp2(leftmat.Width());
+    middleop.Mult(tmp1, tmp2);
+    leftmat.Mult(tmp2, y);
+}
+
+class MyOperator2 : public Operator
+{
+private:
+    HypreParMatrix & leftmat1;
+    HypreParMatrix & rightmat1;
+    Operator & middleop1;
+    HypreParMatrix & leftmat2;
+    HypreParMatrix & rightmat2;
+    Operator & middleop2;
+public:
+    // Constructor
+    MyOperator2(HypreParMatrix& LeftMatrix1, Operator& MiddleOp1, HypreParMatrix& RightMatrix1,
+                HypreParMatrix& LeftMatrix2, Operator& MiddleOp2, HypreParMatrix& RightMatrix2)
+                : middleop1(MiddleOp1), leftmat1(LeftMatrix1), rightmat1(RightMatrix1),
+                  middleop2(MiddleOp2), leftmat2(LeftMatrix2), rightmat2(RightMatrix2),
+                  Operator(LeftMatrix1.Height(),RightMatrix1.Width())
+    {
+        MFEM_ASSERT(LeftMatrix1.Height() == LeftMatrix2.Height(), "LeftMatrix1(2) have different height \n");
+        MFEM_ASSERT(RightMatrix1.Width() == RightMatrix2.Width(), "RightMatrix1(2) have different width \n");
+    }
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = (leftmat1 * middleop1 * rightmat1 + leftmat2 * middleop2 * rightmat2) * x
+void MyOperator2::Mult(const Vector& x, Vector& y) const
+{
+    Vector tmp1(rightmat1.Height());
+    rightmat1.Mult(x, tmp1);
+    Vector tmp2(leftmat1.Width());
+    middleop1.Mult(tmp1, tmp2);
+    Vector tmp_res1(leftmat1.Height());
+    leftmat1.Mult(tmp2, tmp_res1);
+    // tmp_res1 = leftmat1 * middleop1 * rightmat1 * x
+
+    Vector tmp3(rightmat2.Height());
+    rightmat2.Mult(x, tmp3);
+    Vector tmp4(leftmat2.Width());
+    middleop2.Mult(tmp3, tmp4);
+    Vector tmp_res2(leftmat2.Height());
+    leftmat2.Mult(tmp4, tmp_res2);
+    // tmp_res2 = leftmat2 * middleop2 * rightmat2 * x
+
+    y = tmp_res1;
+    y += tmp_res2;
+}
+#endif
 
 // Some bilinear and linear form integrators used in the code
 
@@ -132,10 +212,11 @@ void ImproperDivDivIntegrator::AssembleElementMatrix(
     }
 }
 
+
 /// Integrator for (q * u, v)
 /// where q is a scalar coefficient, u and v are from vector FE space
 /// created from scalar FE collection (called improper vector FE)
-class ImproperVectorFEMassIntegrator : public BilinearFormIntegrator
+class ImproperVectorMassIntegrator : public BilinearFormIntegrator
 {
 private:
    Coefficient *Q;
@@ -148,16 +229,16 @@ private:
 #endif
 
 public:
-   ImproperVectorFEMassIntegrator() { Init(NULL); }
-   ImproperVectorFEMassIntegrator(Coefficient *_q) { Init(_q); }
-   ImproperVectorFEMassIntegrator(Coefficient &q) { Init(&q); }
+   ImproperVectorMassIntegrator() { Init(NULL); }
+   ImproperVectorMassIntegrator(Coefficient *_q) { Init(_q); }
+   ImproperVectorMassIntegrator(Coefficient &q) { Init(&q); }
 
    virtual void AssembleElementMatrix(const FiniteElement &el,
                                        ElementTransformation &Trans,
                                        DenseMatrix &elmat);
 };
 
-void ImproperVectorFEMassIntegrator::AssembleElementMatrix(
+void ImproperVectorMassIntegrator::AssembleElementMatrix(
    const FiniteElement &el, ElementTransformation &Trans, DenseMatrix &elmat)
 {
     MFEM_ASSERT(el.GetRangeType() == FiniteElement::SCALAR,
@@ -1001,16 +1082,19 @@ int main(int argc, char *argv[])
     int numsol          = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
-    const char *sigmaspace = "H1"; // or vector "H1"
+    const char *sigmaspace = "Hdiv"; // or vector "H1"
+    bool regularization = false;     // turned out to be a bad idea, since BBT turned out to be non-singular
 
     // solver options
-    int prec_option = 0; //defines whether to use preconditioner or not, and which one. (*) 4 and 5 produce almost the same results
+    int prec_option = 2; //defines whether to use preconditioner or not, and which one. (*) 4 and 5 produce almost the same results
+    bool ADS_for_A11 = true;  // whether to use ADS for A11 block
     bool direct_solver = false;
+
+    // variables(options) derived from prec_option
     bool with_prec;           // to be defined from prec_option value
-    bool ADS_for_A11;         // whether to use ADS for A11 block
     bool identity_Schur11;    // if true, uses identity for Schur complement
     bool identity_Schur22;    // if true, uses identity for Schur complement
 
@@ -1104,7 +1188,6 @@ int main(int argc, char *argv[])
     {
     case 1:
         with_prec = true;
-        ADS_for_A11 = false;
         identity_Schur11 = false;
         identity_Schur22 = false;
         break;
@@ -1116,26 +1199,23 @@ int main(int argc, char *argv[])
         break;
     case 3:
         with_prec = true;
-        ADS_for_A11 = false;
         identity_Schur11 = true;
         identity_Schur22 = false;
         break;
     case 4:
         with_prec = true;
-        ADS_for_A11 = false;
         identity_Schur11 = false;
         identity_Schur22 = true;
         break;
     case 5:
         with_prec = true;
-        ADS_for_A11 = false;
         identity_Schur11 = true;
         identity_Schur22 = true;
         break;
     default: // no preconditioner (default)
         with_prec = false;
-        ADS_for_A11 = false;
         identity_Schur11 = false;
+        identity_Schur22 = false;
         break;
     }
 
@@ -1202,6 +1282,27 @@ int main(int argc, char *argv[])
     {
        pmesh->UniformRefinement();
     }
+
+    double h_min, h_max, kappa_min, kappa_max;
+    pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+    if (verbose)
+        std::cout << "coarse mesh steps: min " << h_min << " max " << h_max << "\n";
+
+    double regparam;
+    if (regularization)
+    {
+        regparam = - h_min * h_min;
+        regparam *= 1.0;
+        if (verbose)
+        {
+            std::cout << "regularization is ON \n";
+            std::cout << "regularization parameter: " << regparam << "\n";
+        }
+    }
+    else
+        if (verbose)
+            std::cout << "regularization is OFF \n";
+
 
     int dim = nDimensions;
     FiniteElementCollection *l2_coll = new L2_FECollection(feorder, dim);
@@ -1380,13 +1481,17 @@ int main(int argc, char *argv[])
        std::cout << "***********************************************************\n";
        std::cout << "dim(R) = " << dimR << ", ";
        std::cout << "dim(H) = " << dimH << ", ";
-       std::cout << "dim(L) = " << dimL << ", ";
-       std::cout << "dim(W) = " << dimW << ", ";
-       std::cout << "dim(R+H+W+L) = " << dimR + dimH + dimL + dimW << "\n";
+       std::cout << "dim(L_fine) = " << dimL << ", ";
+       std::cout << "dim(W_fine) = " << dimW << ", ";
+       std::cout << "dim(L_coarse) = " << P_L->Width() << ", ";
+       std::cout << "dim(W_coarse) = " << P_W->Width() << ", ";
+       std::cout << "dim(R+H+W_coarse+L_coarse) = " << dimR + dimH + P_L->Width() + P_W->Width() << "\n";
        std::cout << "Number of primary unknowns (sigma and S): " << dimR + dimH << "\n";
        std::cout << "Number of equations in constraints: " << P_L->Width() + P_W->Width() << "\n";
        std::cout << "***********************************************************\n";
     }
+
+    MFEM_ASSERT(dimR +dimW > P_L->Width() + P_W->Width(), "Overconstrained system!");
 
     // 7. Define the two BlockStructure of the problem.  block_offsets is used
     //    for Vector based on dof (like ParGridFunction or ParLinearForm),
@@ -1588,21 +1693,192 @@ int main(int argc, char *argv[])
 
    B21T = B21->Transpose();
 
-#ifdef DEBUGGING
-   ParBilinearForm *L33_block(new ParBilinearForm(L_space));
    HypreParMatrix *L33;
-   L33_block->AddDomainIntegrator(new ImproperVectorFEMassIntegrator);
-   L33_block->Assemble();
-   L33_block->Finalize();
-   L33 = L33_block->ParallelAssemble();
-
-   ParBilinearForm *W44_block(new ParBilinearForm(W_space));
    HypreParMatrix *W44;
-   W44_block->AddDomainIntegrator(new MassIntegrator);
-   W44_block->Assemble();
-   W44_block->Finalize();
-   W44 = W44_block->ParallelAssemble();
+   if (regularization)
+   {
+       ConstantCoefficient h2coeff(regparam*regparam);
+       ParBilinearForm *L33_block(new ParBilinearForm(L_space));
+       L33_block->AddDomainIntegrator(new ImproperVectorMassIntegrator(h2coeff));
+       L33_block->Assemble();
+       L33_block->Finalize();
+       auto L33tmp = L33_block->ParallelAssemble();
+       auto L33tmp2 = ParMult(P_L->Transpose(), L33tmp);
+       L33 = ParMult(L33tmp2,P_L);
+
+       ParBilinearForm *W44_block(new ParBilinearForm(W_space));
+       W44_block->AddDomainIntegrator(new MassIntegrator(h2coeff));
+       W44_block->Assemble();
+       W44_block->Finalize();
+       auto W44tmp = W44_block->ParallelAssemble();
+       auto W44tmp2 = ParMult(P_W->Transpose(), W44tmp);
+       W44 = ParMult(W44tmp2,P_W);
+   }
+
+#ifdef BAinvBT_check
+   {
+       // 1. form BAinvBT as a block 2x2 matrix
+
+       // block operator approach
+       Array<int> blockBAinvBT_Offsets(3); // number of variables + 1
+       blockBAinvBT_Offsets[0] = 0;
+       blockBAinvBT_Offsets[1] = coarseL_space->TrueVSize();
+       blockBAinvBT_Offsets[2] = coarseW_space->TrueVSize();
+       blockBAinvBT_Offsets.PartialSum();
+
+       blockBAinvBT_Offsets.Print();
+
+       Solver * Ainv11;
+       if (ADS_for_A11)
+           Ainv11 = new HypreADS(*A11, R_space);
+       else
+       {
+           Ainv11 = new HypreBoomerAMG(*A11);
+           ((HypreBoomerAMG*)Ainv11)->SetPrintLevel(0);
+           ((HypreBoomerAMG*)Ainv11)->iterative_mode = false;
+       }
+
+       HypreBoomerAMG * Ainv22 = new HypreBoomerAMG(*A22);
+       Ainv22->iterative_mode = false;
+       Ainv22->SetPrintLevel(0);
+
+       // 12, 21, 22 blocks
+       MyOperator2 * BAinvBT_11op = new MyOperator2(*B11, *Ainv11, *B11T, *B12, *Ainv22, *B12T);
+       MyOperator * BAinvBT_12op = new MyOperator(*B11, *Ainv11, *B21T);
+       MyOperator * BAinvBT_21op = new MyOperator(*B21, *Ainv11, *B11T);
+       MyOperator * BAinvBT_22op = new MyOperator(*B21, *Ainv11, *B21T);
+
+       BlockOperator *blockBAinvBT = new BlockOperator(blockBAinvBT_Offsets);
+       blockBAinvBT->SetBlock(0,0, BAinvBT_11op);
+       blockBAinvBT->SetBlock(0,1, BAinvBT_12op);
+       blockBAinvBT->SetBlock(1,0, BAinvBT_21op);
+       blockBAinvBT->SetBlock(1,1, BAinvBT_22op);
+
+       // 3. call eigensolver to compute minimal eigenvalues of BAinvBT
+       Array<double> eigenvalues;
+       int nev = 20;
+       int seed = 75;
+       HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+
+       lobpcg->SetNumModes(nev);
+       lobpcg->SetRandomSeed(seed);
+       lobpcg->SetMaxIter(200);
+       lobpcg->SetTol(1e-8);
+       lobpcg->SetPrintLevel(1);
+       lobpcg->SetOperator(*blockBAinvBT);
+
+       // 9. Compute the eigenmodes and extract the array of eigenvalues. Define a
+       //    parallel grid function to represent each of the eigenmodes returned by
+       //    the solver.
+       lobpcg->Solve();
+       lobpcg->GetEigenvalues(eigenvalues);
+
+       std::cout << "The computed eigenvalues for BAinvBT are: \n";
+       eigenvalues.Print();
+
+       MPI_Finalize();
+       return 0;
+    }
 #endif
+
+#ifdef BBT_check
+   {
+       // 1. form BBT as a block 2x2 matrix
+
+       // block operator approach
+       Array<int> blockBBT_Offsets(3); // number of variables + 1
+       blockBBT_Offsets[0] = 0;
+       blockBBT_Offsets[1] = coarseL_space->TrueVSize();
+       blockBBT_Offsets[2] = coarseW_space->TrueVSize();
+       blockBBT_Offsets.PartialSum();
+
+       blockBBT_Offsets.Print();
+
+       // 12, 21, 22 blocks
+       HypreParMatrix * BBT_12 = ParMult(B11,B21T);
+       HypreParMatrix * BBT_21 = ParMult(B21,B11T);
+       HypreParMatrix * BBT_22 = ParMult(B21,B21T);
+
+       // 11 block
+       HypreParMatrix * Tempp = ParMult(B11, B11T);
+       HypreParMatrix * BBT_11 = ParMult(B12, B12T);
+       *BBT_11 += *Tempp; // cannot interchange matrices, gives internal hypre error, maybe because of sparsity patterns
+
+       BlockOperator *blockBBT = new BlockOperator(blockBBT_Offsets);
+       blockBBT->SetBlock(0,0, BBT_11);
+       blockBBT->SetBlock(0,1, BBT_12);
+       blockBBT->SetBlock(1,0, BBT_21);
+       blockBBT->SetBlock(1,1, BBT_22);
+
+       /*
+       // 2. convert BBT into a single HypreParMatrix
+       // ... (requires going to parelag in parallel case)
+       */
+
+       // 3. create a preconditioner for the eigenvalue problem
+       BlockDiagonalPreconditioner * precondBBT = new BlockDiagonalPreconditioner(blockBBT_Offsets);
+       HypreBoomerAMG * precBBT_11 = new HypreBoomerAMG(*BBT_11);
+       precBBT_11->iterative_mode = false;
+       precBBT_11->SetPrintLevel(0);
+       HypreBoomerAMG * precBBT_22 = new HypreBoomerAMG(*BBT_22);
+       precBBT_22->iterative_mode = false;
+       precBBT_22->SetPrintLevel(0);
+
+       precondBBT->SetDiagonalBlock(0,precBBT_11);
+       precondBBT->SetDiagonalBlock(1,precBBT_22);
+
+
+       // 4. call eigensolver to compute minimal eigenvalues of BBT
+       Array<double> eigenvalues;
+       int nev = 20;
+       int seed = 75;
+       HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+
+       lobpcg->SetNumModes(nev);
+       lobpcg->SetRandomSeed(seed);
+       //lobpcg->SetPreconditioner(*precondBBT);
+       lobpcg->SetMaxIter(200);
+       lobpcg->SetTol(1e-8);
+       //lobpcg->SetPrecondUsageMode(1);
+       lobpcg->SetPrintLevel(1);
+       lobpcg->SetMassMatrix(*precondBBT);
+       lobpcg->SetOperator(*blockBBT);
+
+       // 9. Compute the eigenmodes and extract the array of eigenvalues. Define a
+       //    parallel grid function to represent each of the eigenmodes returned by
+       //    the solver.
+       lobpcg->Solve();
+       lobpcg->GetEigenvalues(eigenvalues);
+
+       std::cout << "The computed eigenvalues for BBT are: \n";
+       eigenvalues.Print();
+
+       // 5. Special: call eigensolver to compute minimal eigenvalues of BBT
+       // Comment main part of 4 before that
+       /*
+
+       lobpcg->SetNumModes(nev);
+       lobpcg->SetRandomSeed(seed);
+       //lobpcg->SetPreconditioner(*precBBT_22);
+       lobpcg->SetMaxIter(200);
+       lobpcg->SetTol(1e-8);
+       //lobpcg->SetPrecondUsageMode(1);
+       lobpcg->SetPrintLevel(1);
+       lobpcg->SetMassMatrix(*W44);
+       lobpcg->SetOperator(*BBT_22);
+       lobpcg->Solve();
+       lobpcg->GetEigenvalues(eigenvalues);
+
+       std::cout << "The computed eigenvalues for BBT_22 are: \n";
+       eigenvalues.Print();
+       */
+
+       MPI_Finalize();
+       return 0;
+   }
+#endif
+
+
    //=======================================================
    // Assembling the righthand side
    //-------------------------------------------------------
@@ -1686,6 +1962,11 @@ int main(int argc, char *argv[])
   CFOSLSop->SetBlock(2,0, B11);
   CFOSLSop->SetBlock(2,1, B12);
   CFOSLSop->SetBlock(3,0, B21);
+  if (regularization)
+  {
+      CFOSLSop->SetBlock(2,2, L33);
+      CFOSLSop->SetBlock(3,3, W44);
+  }
 
    if (verbose)
        cout << "Final saddle point matrix assembled \n" << flush;
@@ -1711,9 +1992,9 @@ int main(int argc, char *argv[])
        else // BoomerAMG
        {
            invA11 = new HypreBoomerAMG(*A11);
+           ((HypreBoomerAMG*)invA11)->SetPrintLevel(0);
+           ((HypreBoomerAMG*)invA11)->iterative_mode = false;
        }
-       ((HypreBoomerAMG*)invA11)->SetPrintLevel(0);
-       ((HypreBoomerAMG*)invA11)->iterative_mode = false;
 
        HypreBoomerAMG * invA22 = new HypreBoomerAMG(*A22);
        invA22->iterative_mode = false;
@@ -1736,6 +2017,11 @@ int main(int argc, char *argv[])
            //*Tempp += *Schur11; //->Add(1.0, *Schur11);
            *Schur11 += *Tempp; // cannot interchange matrices, gives internal hypre error, maybe because of sparsity patterns
 
+           if (regularization)
+           {
+               *Schur11 += *L33;
+           }
+
            invLam = new HypreBoomerAMG(*Schur11);
            ((HypreBoomerAMG *)invLam)->SetPrintLevel(0);
            ((HypreBoomerAMG *)invLam)->iterative_mode = false;
@@ -1743,6 +2029,12 @@ int main(int argc, char *argv[])
        else
        {
            invLam = new IdentityOperator(B12->Height());
+           if (regularization)
+           {
+               std::cout << "Identity operator is not coupled with regularization case \n";
+               MPI_Finalize();
+               return 0;
+           }
        }
 
        Operator * invMu;
@@ -1751,6 +2043,8 @@ int main(int argc, char *argv[])
            HypreParMatrix * Temp22 = B21->Transpose();
            Temp22->InvScaleRows(*A11d);
            HypreParMatrix * Schur22 = ParMult(B21, Temp22);
+           if (regularization)
+               *Schur22 += *W44;
 
            invMu = new HypreBoomerAMG(*Schur22);
            ((HypreBoomerAMG *)invMu)->SetPrintLevel(0);
@@ -1759,6 +2053,12 @@ int main(int argc, char *argv[])
        else
        {
            invMu = new IdentityOperator(B21->Height());
+           if (regularization)
+           {
+               std::cout << "Identity operator is not coupled with regularization case \n";
+               MPI_Finalize();
+               return 0;
+           }
        }
 
        prec.SetDiagonalBlock(0, invA11);
