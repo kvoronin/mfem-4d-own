@@ -244,3 +244,4 @@ examples/cfosls_parab_divfree.cpp
 examples/local_ref4d.cpp
 examples/cfosls_hyperbolic_pg.cpp
 examples/cfosls_hyperbolic_pg_Hh.cpp
+examples/cfosls_hyperbolic_pg_Hh_nosigma.cpp
