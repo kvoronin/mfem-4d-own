@@ -30,8 +30,8 @@
 #include"cfosls_testsuite.hpp"
 #include "divfree_solver_tools.hpp"
 
-//#define BBT_check
-//#define BAinvBT_check
+#define BAinvBT_check
+//#define BhAinvBhT_spectral
 
 #define MYZEROTOL (1.0e-13)
 
@@ -40,6 +40,34 @@ using namespace mfem;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
+
+// Some Operator inheriting classes used for analyzing the preconditioner
+class MyOperator : public Operator
+{
+private:
+    HypreParMatrix & leftmat;
+    HypreParMatrix & rightmat;
+    Operator & middleop;
+public:
+    // Constructor
+    MyOperator(HypreParMatrix& LeftMatrix, Operator& MiddleOp, HypreParMatrix& RightMatrix)
+        : middleop(MiddleOp), leftmat(LeftMatrix), rightmat(RightMatrix),
+          Operator(LeftMatrix.Height(),RightMatrix.Width())
+    {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = leftmat * middleop * rightmat * x
+void MyOperator::Mult(const Vector& x, Vector& y) const
+{
+    Vector tmp1(rightmat.Height());
+    rightmat.Mult(x, tmp1);
+    Vector tmp2(leftmat.Width());
+    middleop.Mult(tmp1, tmp2);
+    leftmat.Mult(tmp2, y);
+}
 
 // Some bilinear and linear form integrators used in the code
 
@@ -999,9 +1027,9 @@ int main(int argc, char *argv[])
     int numsol          = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 3;
+    int par_ref_levels  = 2;
 
-    const char *formulation = "cfosls"; // "cfosls" or "fosls"
+    const char *formulation = "cfosls";
     bool regularization = false;     // turned out to be a bad idea, since BBT turned out to be non-singular
 
     // solver options
@@ -1192,7 +1220,7 @@ int main(int argc, char *argv[])
     int dim = nDimensions;
     FiniteElementCollection *l2_coll = new L2_FECollection(feorder, dim);
     if(verbose)
-        cout << "L2: order " << feorder << endl;
+        cout << "L2: order " << feorder << "\n";
 
     ParFiniteElementSpace *W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll); // space for mu
     ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll); // space for mu
@@ -1262,7 +1290,7 @@ int main(int argc, char *argv[])
     // 6. Define a parallel finite element space on the parallel mesh.
 
     if (dim == 4)
-        MFEM_ASSERT(feorder==0, "Only lowest order elements are support in 4D!");
+        MFEM_ASSERT(feorder==0, "Only lowest order elements are supported in 4D!");
     FiniteElementCollection *h1_coll;
     if (dim == 4)
     {
@@ -1345,13 +1373,11 @@ int main(int argc, char *argv[])
    // Setting boundary conditions.
    //----------------------------------------------------------
 
-   // for S boundary conditions are essential only for t = 0 in parabolic case
    Array<int> ess_bdrS(pmesh->bdr_attributes.Max());
    ess_bdrS = 0;
    ess_bdrS[0] = 1; // t = 0
    Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());
    ess_bdrSigma = 0;
-   //ess_bdr[1] = 1; // lateral boundary
    //-----------------------
 
    // 9. Define the parallel grid function and parallel linear forms, solution
@@ -1490,6 +1516,86 @@ int main(int argc, char *argv[])
    if (verbose)
        cout << "Final saddle point matrix assembled \n" << flush;
    MPI_Barrier(MPI_COMM_WORLD);
+
+#ifdef BAinvBT_check
+   {
+       // 1. form BAinvBT
+
+       Solver * Ainv;
+       Ainv = new HypreBoomerAMG(*A);
+       ((HypreBoomerAMG*)Ainv)->SetPrintLevel(0);
+       ((HypreBoomerAMG*)Ainv)->iterative_mode = false;
+
+#ifdef BhAinvBhT_spectral
+       HypreParMatrix *Bsp, *BspT;
+
+       ParMixedBilinearForm *Bsp_block(new ParMixedBilinearForm(H_space, W_space));
+       Bsp_block->AddDomainIntegrator(new MixedDirectionalDerivativeIntegrator(*Mytest.b));
+       Bsp_block->Assemble();
+       Bsp_block->EliminateTrialDofs(ess_bdrS, x.GetBlock(0), *rhslam_form);
+       Bsp_block->Finalize();
+       Bsp = Bsp_block->ParallelAssemble();
+       BspT = Bsp->Transpose();
+       MyOperator * BAinvBT_op = new MyOperator(*Bsp, *Ainv, *BspT);
+#else
+       MyOperator * BAinvBT_op = new MyOperator(*B, *Ainv, *BT);
+#endif
+
+       /*
+       Vector onesvec(dim);
+       onesvec = 1.0;
+       VectorConstantCoefficient onev(onesvec);
+
+       HypreParMatrix *Btest, *BtestT;
+       ParMixedBilinearForm *Btest_block(new ParMixedBilinearForm(H_space, W_space));
+       Btest_block->AddDomainIntegrator(new MixedDirectionalDerivativeIntegrator(onev));
+       Btest_block->Assemble();
+       Btest_block->EliminateTrialDofs(ess_bdrS, x.GetBlock(0), *rhslam_form);
+       Btest_block->Finalize();
+       auto Btest_tmp = Btest_block->ParallelAssemble();
+       Btest = ParMult(P_W->Transpose(), Btest_tmp);
+       BtestT = Btest->Transpose();
+
+       MyOperator * BAinvBT_op = new MyOperator(*Btest, *Ainv, *BtestT);
+       */
+
+       // 3. call eigensolver to compute minimal eigenvalues of BAinvBT
+       Array<double> eigenvalues;
+       int nev = 20;
+       int seed = 75;
+       HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+
+       lobpcg->SetNumModes(nev);
+       lobpcg->SetRandomSeed(seed);
+       lobpcg->SetMaxIter(600);
+       lobpcg->SetTol(1e-8);
+       lobpcg->SetPrintLevel(1);
+       // checking for B * Ainv * BT
+       lobpcg->SetOperator(*BAinvBT_op);
+
+       ParBilinearForm *M_block(new ParBilinearForm(W_space));
+       M_block->AddDomainIntegrator(new MassIntegrator);
+       M_block->Assemble();
+       M_block->Finalize();
+       auto Mtmp = M_block->ParallelAssemble();
+       auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
+       HypreParMatrix * M = ParMult(Mtmp2,P_W);
+
+       lobpcg->SetMassMatrix(*M);
+
+       // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+       //    parallel grid function to represent each of the eigenmodes returned by
+       //    the solver.
+       lobpcg->Solve();
+       lobpcg->GetEigenvalues(eigenvalues);
+
+       std::cout << "The computed eigenvalues for BAinvBT are: \n";
+       eigenvalues.Print();
+
+       MPI_Finalize();
+       return 0;
+    }
+#endif
 
    // 12. Solve the linear system with MINRES.
    //     Check the norm of the unpreconditioned residual.
