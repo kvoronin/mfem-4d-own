@@ -1636,7 +1636,7 @@ int main(int argc, char *argv[])
    }
 
    ParGridFunction * S = new ParGridFunction(H_space);
-   S->Distribute(&(trueX.GetBlock(1)));
+   S->Distribute(&(trueX.GetBlock(0)));
 
    // 13. Extract the parallel grid function corresponding to the finite element
    //     approximation X. This is the local solution on each processor. Compute
