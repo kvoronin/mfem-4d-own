@@ -30,8 +30,10 @@
 #include"cfosls_testsuite.hpp"
 #include "divfree_solver_tools.hpp"
 
-#define BAinvBT_check
+//#define BAinvBT_check
 //#define BhAinvBhT_spectral
+
+#define TIME_STEPPING
 
 #define MYZEROTOL (1.0e-13)
 
@@ -1010,10 +1012,571 @@ Transport_test::Transport_test (int Dim, int NumSol)
     } // end of setting test coefficients in correct case
 }
 
+// pmesh must be ParMesh for the coarse level
+int SolveTimeSlab(std::shared_ptr<ParMesh> pmesh, GridFunctionCoefficient * S_init, GridFunctionCoefficient * S_final,
+                  Array<int>& init_bdr_attrs, Array<int>& final_bdr_attrs,
+                  int feorder, int level_gap, bool regularization, int prec_option,
+                  Transport_test Mytest, bool visualization)
+{
+    int myid, num_procs;
+    MPI_Comm comm = MPI_COMM_WORLD;
+    MPI_Comm_size(comm, &num_procs);
+    MPI_Comm_rank(comm, &myid);
+    bool verbose = (myid == 0);
+
+    bool with_prec;
+    bool identity_Schur = false;
+    switch (prec_option)
+    {
+    case 1:
+        with_prec = true;
+        break;
+    default: // no preconditioner (default)
+        with_prec = false;
+        break;
+    }
+
+    double h_min, h_max, kappa_min, kappa_max;
+    pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+    if (verbose)
+        std::cout << "coarse mesh steps: min " << h_min << " max " << h_max << "\n";
+
+    double regparam;
+    if (regularization)
+    {
+        regparam = - h_min * h_min;
+        regparam *= 1.0;
+        if (verbose)
+        {
+            std::cout << "regularization is ON \n";
+            std::cout << "regularization parameter: " << regparam << "\n";
+        }
+    }
+    else
+        if (verbose)
+            std::cout << "regularization is OFF \n";
+
+    StopWatch chrono;
+
+    int dim = pmesh->Dimension();
+    FiniteElementCollection *l2_coll = new L2_FECollection(feorder, dim);
+    if(verbose)
+        cout << "L2: order " << feorder << "\n";
+
+    ParFiniteElementSpace *W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll); // space for mu
+    ParFiniteElementSpace *coarseW_space = new ParFiniteElementSpace(pmesh.get(), l2_coll); // space for mu
+
+    ParFiniteElementSpace *coarseW_space_help = new ParFiniteElementSpace(pmesh.get(), l2_coll); // space for mu
+
+    HypreParMatrix * P_W;
+    Array<HypreParMatrix*> P_Ws(level_gap);
+    for (int l = 0; l < level_gap; l++)
+    {
+        coarseW_space_help->Update();
+
+        pmesh->UniformRefinement();
+
+        W_space->Update();
+
+        {
+            auto d_td_coarse_W = coarseW_space_help->Dof_TrueDof_Matrix();
+            auto P_W_loc_tmp = (SparseMatrix *)W_space->GetUpdateOperator();
+            auto P_W_local = RemoveZeroEntries(*P_W_loc_tmp);
+            unique_ptr<SparseMatrix>RP_W_local(
+                        Mult(*W_space->GetRestrictionMatrix(), *P_W_local));
+
+            if (level_gap==1)
+            {
+                P_W = d_td_coarse_W->LeftDiagMult(
+                            *RP_W_local, W_space->GetTrueDofOffsets());
+                P_W->CopyColStarts();
+                P_W->CopyRowStarts();
+            }
+            else
+            {
+                P_Ws[l] = d_td_coarse_W->LeftDiagMult(
+                            *RP_W_local, W_space->GetTrueDofOffsets());
+                P_Ws[l]->CopyColStarts();
+                P_Ws[l]->CopyRowStarts();
+            }
+            delete P_W_local;
+        }
+    } // end of loop over mesh levels
+
+    // Combine the interpolation matrices from different levels
+    Array<HypreParMatrix*> help_Ws(level_gap-2);
+    if (level_gap > 2)
+    {
+        help_Ws[0] = ParMult(P_Ws[1],P_Ws[0]);
+    }
+    else if (level_gap == 2)
+    {
+        P_W = ParMult(P_Ws[1],P_Ws[0]);
+    }
+
+    for (int l = 0; l < level_gap-3; l++)
+    {
+        help_Ws[l+1] = ParMult(P_Ws[l+2],help_Ws[l]);
+    }
+    if (level_gap > 2)
+    {
+        P_W = ParMult(P_Ws[level_gap-1],help_Ws[level_gap-3]);
+    }
+
+    //if(dim==3) pmesh->ReorientTetMesh();
+
+    pmesh->PrintInfo(std::cout); if(verbose) cout << endl;
+
+    // 6. Define a parallel finite element space on the parallel mesh.
+
+    if (dim == 4)
+        MFEM_ASSERT(feorder==0, "Only lowest order elements are supported in 4D!");
+    FiniteElementCollection *h1_coll;
+    if (dim == 4)
+    {
+        h1_coll = new LinearFECollection;
+        if (verbose)
+            cout << "H1 in 4D: linear elements are used \n";
+    }
+    else
+    {
+        h1_coll = new H1_FECollection(feorder+1, dim);
+        if(verbose)
+            cout << "H1: order " << feorder + 1 << " for 3D \n";
+    }
+
+    ParFiniteElementSpace *H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
+
+    HYPRE_Int dimH = H_space->GlobalTrueVSize();
+    HYPRE_Int dimW = W_space->GlobalTrueVSize();
+
+    if (verbose)
+    {
+       std::cout << "***********************************************************\n";
+       std::cout << "dim(H) = " << dimH << ", ";
+       std::cout << "dim(W_fine) = " << dimW << ", ";
+       std::cout << "dim(W_coarse) = " << P_W->Width() << ", ";
+       std::cout << "dim(H+W_coarse) = " << dimH + P_W->Width() << "\n";
+       std::cout << "Number of primary unknowns (S): " << dimH << "\n";
+       std::cout << "Number of equations in the constraint: " << P_W->Width() << "\n";
+       std::cout << "***********************************************************\n";
+    }
+
+    MFEM_ASSERT(dimH > P_W->Width(), "Overconstrained system!");
+
+    // 7. Define the two BlockStructure of the problem.  block_offsets is used
+    //    for Vector based on dof (like ParGridFunction or ParLinearForm),
+    //    block_trueOffstes is used for Vector based on trueDof (HypreParVector
+    //    for the rhs and solution of the linear system).  The offsets computed
+    //    here are local to the processor.
+    int numblocks = 2;
+
+    Array<int> block_offsets(numblocks + 1); // number of variables + 1
+    block_offsets[0] = 0;
+    block_offsets[1] = H_space->GetVSize();
+    block_offsets[2] = W_space->GetVSize();
+    block_offsets.PartialSum();
+
+    Array<int> block_trueOffsets(numblocks + 1); // number of variables + 1
+    block_trueOffsets[0] = 0;
+    block_trueOffsets[1] = H_space->TrueVSize();
+    block_trueOffsets[2] = W_space->TrueVSize();
+    block_trueOffsets.PartialSum();
+
+    Array<int> block_finalOffsets(numblocks + 1); // number of variables + 1
+    block_finalOffsets[0] = 0;
+    block_finalOffsets[1] = H_space->TrueVSize();
+    block_finalOffsets[2] = coarseW_space->TrueVSize();
+    block_finalOffsets.PartialSum();
+
+    BlockVector x(block_offsets), rhs(block_offsets);
+    BlockVector trueX(block_finalOffsets), trueRhs(block_trueOffsets);
+    x = 0.0;
+    rhs = 0.0;
+    trueX = 0.0;
+    trueRhs = 0.0;
+
+    ParGridFunction *S_exact = new ParGridFunction(H_space);
+    S_exact->ProjectCoefficient(*(Mytest.scalarS));
+
+    // setting boundary conditions from the GridFunctionCoefficient given as a function input
+    ParGridFunction * S_initial = new ParGridFunction(H_space);
+
+    //GridFunctionCoefficient * S_initt = new GridFunctionCoefficient(S_exact);
+    //S_initial->ProjectCoefficient(*S_initt);
+
+    S_initial->ProjectCoefficient(*S_init);
+
+    x.GetBlock(0) = *S_initial;
+
+   // old variant which takes initial values directly from
+   // exact solution and not from the input
+   //x.GetBlock(0) = *S_exact;
+
+   // 8. Define the constant/function coefficients.
+   ConstantCoefficient zero(.0);
+   Vector zerovec(dim);
+   zerovec = 0.0;
+   VectorConstantCoefficient zerov(zerovec);
+
+   //----------------------------------------------------------
+   // Setting boundary conditions.
+   //----------------------------------------------------------
+
+   // 9. Define the parallel grid function and parallel linear forms, solution
+   //    vector and rhs.
+
+   ParLinearForm *rhsS_form(new ParLinearForm);
+   rhsS_form->Update(H_space, rhs.GetBlock(0), 0);
+   rhsS_form->AddDomainIntegrator(new DomainLFIntegrator(zero));
+   rhsS_form->Assemble();
+   //rhsS_form->Print(std::cout);
+
+   ParLinearForm *rhslam_form(new ParLinearForm);
+   rhslam_form->Update(W_space, rhs.GetBlock(1), 0);
+   rhslam_form->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+   rhslam_form->Assemble();
+
+   // 10. Assemble the finite element matrices for the CFOSLS operator
+
+   //---------------
+   //  A Block: block-diagonal with stiffness matrix for H1
+   //---------------
+
+   //----------------
+   //  A Block: (S, p) + (grad S, grad p) with S and p from H1
+   //-----------------
+
+   ParBilinearForm *A_block(new ParBilinearForm(H_space));
+   HypreParMatrix *A;
+   A_block->AddDomainIntegrator(new MassIntegrator);
+   A_block->AddDomainIntegrator(new DiffusionIntegrator);
+   A_block->Assemble();
+   A_block->EliminateEssentialBC(init_bdr_attrs, x.GetBlock(0), *rhsS_form);
+   A_block->Finalize();
+   A = A_block->ParallelAssemble();
+
+   //---------------
+   //  B Block: block with Lagrange multiplier's stuff
+   //---------------
+
+   //----------------
+   //  B Block: divergence constraint
+   //-----------------
+
+   HypreParMatrix *B, *BT;
+
+   ParMixedBilinearForm *B_block(new ParMixedBilinearForm(H_space, W_space));
+   // assuming that div b = 0, then div ([b,1]^T S) =  [b,1]^T * grad S
+   B_block->AddDomainIntegrator(new MixedDirectionalDerivativeIntegrator(*Mytest.b));
+   B_block->Assemble();
+   B_block->EliminateTrialDofs(init_bdr_attrs, x.GetBlock(0), *rhslam_form);
+   B_block->Finalize();
+   auto B_tmp = B_block->ParallelAssemble();
+   B = ParMult(P_W->Transpose(), B_tmp);
+
+   BT = B->Transpose();
+
+   HypreParMatrix *W11;
+   if (regularization)
+   {
+       ConstantCoefficient h2coeff(regparam*regparam);
+
+       ParBilinearForm *W11_block(new ParBilinearForm(W_space));
+       W11_block->AddDomainIntegrator(new MassIntegrator(h2coeff));
+       W11_block->Assemble();
+       W11_block->Finalize();
+       auto W11tmp = W11_block->ParallelAssemble();
+       auto W11tmp2 = ParMult(P_W->Transpose(), W11tmp);
+       W11 = ParMult(W11tmp2,P_W);
+   }
+
+   //=======================================================
+   // Assembling the righthand side
+   //-------------------------------------------------------
+
+  rhsS_form->ParallelAssemble(trueRhs.GetBlock(0));
+  rhslam_form->ParallelAssemble(trueRhs.GetBlock(1));
+
+  //========================================================
+  // Checking residuals in the constraints on exact solutions (serial version)
+  //--------------------------------------------------------
+
+  Vector TrueS(H_space->TrueVSize());
+  S_exact->ParallelProject(TrueS);
+
+  Vector resW(coarseW_space->TrueVSize());
+  Vector tempW(coarseW_space->TrueVSize());
+  B->Mult(TrueS, resW);
+  P_W->MultTranspose(trueRhs.GetBlock(1), tempW);
+  resW -= tempW;
+
+  double norm_resW = resW.Norml2() / sqrt (resW.Size());
+  double norm_rhsW = trueRhs.GetBlock(1).Norml2() / sqrt (trueRhs.GetBlock(1).Size());
+
+  std::cout << "Residuals in constraints for exact solution: \n";
+  std::cout << "norm_resW = " << norm_resW << "\n";
+  std::cout << "rel. norm_resW = " << norm_resW / norm_rhsW << "\n";
+
+  //if (verbose)
+      //std::cout << "Residual computation is not implemented for this problem \n";
+
+  //========================================================
+  // Checking functional on exact solutions
+  //--------------------------------------------------------
+
+  Vector energyS(H_space->TrueVSize());
+  A->Mult(TrueS, energyS);
+
+  double local_energyS = energyS * TrueS;
+
+  double global_energyS;
+  MPI_Reduce(&local_energyS, &global_energyS, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+  if (verbose)
+  {
+      std::cout << "TrueS H1 norm = " << global_energyS << "\n";
+      std::cout << "Quadratic functional on exact solution = " << global_energyS * global_energyS << "\n";
+  }
+
+  //MPI_Finalize();
+  //return 0;
+
+  //=======================================================
+  // Assembling the Matrix
+  //-------------------------------------------------------
+
+  BlockOperator *CFOSLSop = new BlockOperator(block_finalOffsets);
+  CFOSLSop->SetBlock(0,0, A);
+  CFOSLSop->SetBlock(0,1, BT);
+  CFOSLSop->SetBlock(1,0, B);
+  if (regularization)
+  {
+      CFOSLSop->SetBlock(1,1, W11);
+  }
+
+   if (verbose)
+       cout << "Final saddle point matrix assembled \n" << flush;
+   MPI_Barrier(MPI_COMM_WORLD);
+
+
+   // 12. Solve the linear system with MINRES.
+   //     Check the norm of the unpreconditioned residual.
+
+   BlockDiagonalPreconditioner prec(block_finalOffsets);
+   if (with_prec > 0)
+   {
+       // Construct the operators for preconditioner
+       if (verbose)
+           cout << "Using a block diagonal preconditioner \n";
+       chrono.Clear();
+       chrono.Start();
+
+       Solver * invA;
+       invA = new HypreBoomerAMG(*A);
+       ((HypreBoomerAMG*)invA)->SetPrintLevel(0);
+       ((HypreBoomerAMG*)invA)->iterative_mode = false;
+
+       Operator * invLam;
+       HypreParMatrix * Schur;
+       if (!identity_Schur)
+       {
+           HypreParVector *Ad = new HypreParVector(MPI_COMM_WORLD, A->GetGlobalNumRows(), A->GetRowStarts());
+           A->GetDiag(*Ad);
+           HypreParMatrix * Temp = B->Transpose();
+           Temp->InvScaleRows(*Ad);
+           Schur = ParMult(B, Temp);
+           if (regularization)
+               *Schur += *W11;
+
+           invLam = new HypreBoomerAMG(*Schur);
+           ((HypreBoomerAMG *)invLam)->SetPrintLevel(0);
+           ((HypreBoomerAMG *)invLam)->iterative_mode = false;
+       }
+       else
+       {
+           invLam = new IdentityOperator(B->Height());
+           if (regularization)
+           {
+               std::cout << "Identity operator is not coupled with regularization case \n";
+               MPI_Finalize();
+               return 0;
+           }
+       }
+
+       prec.SetDiagonalBlock(0, invA);
+       prec.SetDiagonalBlock(1, invLam);
+
+       if (verbose)
+           std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
+   }
+   else
+       if (verbose)
+           cout << "No preconditioner is used. \n";
+
+   // 12. Solve the linear system with MINRES.
+   //     Check the norm of the unpreconditioned residual.
+
+   chrono.Clear();
+   chrono.Start();
+
+   //DEFAULTED LINEAR SOLVER OPTIONS
+   int max_iter = 150000;
+   double rtol = 1e-12;//1e-7;//1e-9;
+   double atol = 1e-14;//1e-9;//1e-12;
+   //GMRESSolver solver(MPI_COMM_WORLD);    // too slow
+   MINRESSolver solver(MPI_COMM_WORLD);
+   solver.SetAbsTol(atol);
+   solver.SetRelTol(rtol);
+   solver.SetMaxIter(max_iter);
+   solver.SetOperator(*CFOSLSop); // overwritten in case of UMFPackSolver
+   solver.SetPrintLevel(0);
+   if (with_prec > 0)
+        solver.SetPreconditioner(prec);
+
+   trueX = 0.0;
+   BlockVector finalRhs(block_finalOffsets);
+   finalRhs = 0.0;
+   finalRhs.GetBlock(0) = trueRhs.GetBlock(0);
+   P_W->MultTranspose(trueRhs.GetBlock(1), finalRhs.GetBlock(1));
+   solver.Mult(finalRhs, trueX);
+
+   chrono.Stop();
+
+
+   if (verbose) // iterative solver reports about its convergence
+   {
+      if (solver.GetConverged())
+         std::cout << "MINRES converged in " << solver.GetNumIterations()
+                   << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
+      else
+         std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+                   << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+      std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+   }
+
+   ParGridFunction * S = new ParGridFunction(H_space);
+   S->Distribute(&(trueX.GetBlock(0)));
+
+   // Creating GridFunctionCoefficient which stores the output values;
+   Vector TrueStemp(H_space->GetTrueVSize());
+   TrueStemp = trueX.GetBlock(0);
+
+   Array<int> finalbdr_dofs;
+   H_space->GetEssentialTrueDofs(finalbdr_dofs, final_bdr_attrs);
+   TrueStemp.SetSubVectorComplement(finalbdr_dofs, 0.0);
+
+   ParGridFunction * S_temp = new ParGridFunction(H_space);
+   S_temp->Distribute(TrueStemp);
+
+   GridFunctionCoefficient * S_finaltemp = new GridFunctionCoefficient(S_temp);
+   S_final = S_finaltemp;
+
+   // 13. Extract the parallel grid function corresponding to the finite element
+   //     approximation X. This is the local solution on each processor. Compute
+   //     L2 error norms.
+
+   int order_quad = max(2, 2*feorder+1);
+   const IntegrationRule *irs[Geometry::NumGeom];
+   for (int i=0; i < Geometry::NumGeom; ++i)
+   {
+      irs[i] = &(IntRules.Get(i, order_quad));
+   }
+
+   // Computing error for S
+
+   double err_S = S->ComputeL2Error((*Mytest.scalarS), irs);
+   double norm_S = ComputeGlobalLpNorm(2, (*Mytest.scalarS), *pmesh, irs);
+   if (verbose)
+   {
+       std::cout << "|| S_h - S_ex || / || S_ex || = " <<
+                    err_S / norm_S << "\n";
+   }
+
+   {
+       FiniteElementCollection * hcurl_coll;
+       if(dim==4)
+           hcurl_coll = new ND1_4DFECollection;
+       else
+           hcurl_coll = new ND_FECollection(feorder+1, dim);
+       auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
+
+       DiscreteLinearOperator Grad(H_space, N_space);
+       Grad.AddDomainInterpolator(new GradientInterpolator());
+       ParGridFunction GradS(N_space);
+       Grad.Assemble();
+       Grad.Mult(*S, GradS);
+
+       if (Mytest.GetNumSol() != -34 && verbose)
+           std::cout << "For this norm we are using grad S for S from numsol = -34 \n";
+       VectorFunctionCoefficient GradS_coeff(dim, uFunTest_ex_gradxt);
+       double err_GradS = GradS.ComputeL2Error(GradS_coeff, irs);
+       double norm_GradS = ComputeGlobalLpNorm(2, GradS_coeff, *pmesh, irs);
+       if (verbose)
+       {
+           std::cout << "|| Grad_h (S_h - S_ex) || / || Grad S_ex || = " <<
+                        err_GradS / norm_GradS << "\n";
+           std::cout << "|| S_h - S_ex ||_H^1 / || S_ex ||_H^1 = " <<
+                        sqrt(err_S*err_S + err_GradS*err_GradS) / sqrt(norm_S*norm_S + norm_GradS*norm_GradS) << "\n";
+       }
+
+       delete hcurl_coll;
+       delete N_space;
+   }
+
+   if (verbose)
+       cout << "Computing projection errors" << endl;
+
+   double projection_error_S = S_exact->ComputeL2Error(*(Mytest.scalarS), irs);
+
+   if(verbose)
+       cout << "|| S_ex - Pi_h S_ex || / || S_ex || = "
+                       << projection_error_S / norm_S << endl;
+
+
+   if (visualization && dim < 4)
+   {
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      socketstream s_sock(vishost, visport);
+      s_sock << "parallel " << num_procs << " " << myid << "\n";
+      s_sock.precision(8);
+      MPI_Barrier(pmesh->GetComm());
+      s_sock << "solution\n" << *pmesh << *S_exact << "window_title 'S_exact'"
+              << endl;
+
+      socketstream ss_sock(vishost, visport);
+      ss_sock << "parallel " << num_procs << " " << myid << "\n";
+      ss_sock.precision(8);
+      MPI_Barrier(pmesh->GetComm());
+      ss_sock << "solution\n" << *pmesh << *S << "window_title 'S'"
+              << endl;
+
+      *S_exact -= *S;
+      socketstream sss_sock(vishost, visport);
+      sss_sock << "parallel " << num_procs << " " << myid << "\n";
+      sss_sock.precision(8);
+      MPI_Barrier(pmesh->GetComm());
+      sss_sock << "solution\n" << *pmesh << *S_exact
+               << "window_title 'difference for S'" << endl;
+
+      MPI_Barrier(pmesh->GetComm());
+   }
+
+   // 17. Free the used memory.
+   delete H_space;
+   delete W_space;
+   delete l2_coll;
+   delete h1_coll;
+
+   return 0;
+}
+
 int main(int argc, char *argv[])
 {
     int num_procs, myid;
-    bool visualization = 0;
+    bool visualization = 1;
 
     // 1. Initialize MPI
     MPI_Init(&argc, &argv);
@@ -1031,6 +1594,11 @@ int main(int argc, char *argv[])
 
     const char *formulation = "cfosls";
     bool regularization = false;     // turned out to be a bad idea, since BBT turned out to be non-singular
+
+    bool aniso_refine = false;
+    bool refine_t_first = false;
+    bool refine_only_t = false;
+    bool refine_only_x = true;
 
     // solver options
     int prec_option = 1; //defines whether to use preconditioner or not, and which one. (*) 4 and 5 produce almost the same results
@@ -1141,7 +1709,7 @@ int main(int argc, char *argv[])
 
     StopWatch chrono;
 
-    //DEFAULTED LINEAR SOLVER OPTIONS
+    //DEFAULT LINEAR SOLVER OPTIONS
     int max_iter = 150000;
     double rtol = 1e-12;//1e-7;//1e-9;
     double atol = 1e-14;//1e-9;//1e-12;
@@ -1150,6 +1718,8 @@ int main(int argc, char *argv[])
 
     shared_ptr<ParMesh> pmesh;
 
+    /*
+     * old, before anisotropic refinement
     if (nDimensions == 3 || nDimensions == 4)
     {
         if (verbose)
@@ -1176,8 +1746,37 @@ int main(int argc, char *argv[])
         return -1;
 
     }
-    //mesh = new Mesh(2, 2, 2, Element::HEXAHEDRON, 1);
+    */
+    mesh = new Mesh(10, 10, 1, Element::HEXAHEDRON, 1, 1.0, 1.0, 0.1);
+    Array<Refinement> refs(mesh->GetNE());
 
+    for (int l = 0; l < ser_ref_levels; l++)
+    {
+        if (aniso_refine)
+        {
+            if (refine_only_t)
+                for (int i = 0; i < mesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 4);
+            else if (refine_only_x)
+                for (int i = 0; i < mesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 3);
+            else
+            {
+                if (verbose)
+                    std::cout << "Don't know what to do \n";
+                MPI_Finalize();
+                return 0;
+            }
+            mesh->GeneralRefinement(refs, -1, -1);
+        }
+        else
+            mesh->UniformRefinement();
+    }
+
+    pmesh = make_shared<ParMesh>(comm, *mesh);
+    delete mesh;
+
+    /*
     if (mesh) // if only serial mesh was generated previously, parallel mesh is initialized here
     {
         for (int l = 0; l < ser_ref_levels; l++)
@@ -1189,12 +1788,87 @@ int main(int argc, char *argv[])
         pmesh = make_shared<ParMesh>(comm, *mesh);
         delete mesh;
     }
+    */
 
     MFEM_ASSERT(level_gap>0 && level_gap<=par_ref_levels, "invalid level_gap!");
     for (int l = 0; l < par_ref_levels-level_gap; l++)
     {
-       pmesh->UniformRefinement();
+        if (aniso_refine)
+        {
+            Array<Refinement> refs(pmesh->GetNE());
+            if (refine_only_t)
+                for (int i = 0; i < pmesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 4);
+            else if (refine_only_x)
+                for (int i = 0; i < pmesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 3);
+            else
+            {
+                if (verbose)
+                    std::cout << "Don't know what to do \n";
+                MPI_Finalize();
+                return 0;
+            }
+            pmesh->GeneralRefinement(refs, -1, -1);
+        }
+        else
+            pmesh->UniformRefinement();
     }
+
+#ifdef TIME_STEPPING
+    if (verbose)
+        std::cout << "Calling SolveTimeSlab routine... \n";
+    {
+        int dim = pmesh->Dimension();
+        if (dim == 4)
+            MFEM_ASSERT(feorder==0, "Only lowest order elements are supported in 4D!");
+        FiniteElementCollection *h1_coll_help;
+        if (dim == 4)
+        {
+            h1_coll_help = new LinearFECollection;
+            if (verbose)
+                cout << "H1 in 4D: linear elements are used \n";
+        }
+        else
+        {
+            h1_coll_help = new H1_FECollection(feorder+1, dim);
+            if(verbose)
+                cout << "H1: order " << feorder + 1 << " for 3D \n";
+        }
+
+        ParFiniteElementSpace *H_space_coarse = new ParFiniteElementSpace(pmesh.get(), h1_coll_help);
+
+        Transport_test Mytest(nDimensions,numsol);
+
+        ParGridFunction *S_exact  = new ParGridFunction(H_space_coarse);
+        S_exact->ProjectCoefficient(*(Mytest.scalarS));
+
+        GridFunctionCoefficient * S_init = new GridFunctionCoefficient(S_exact);
+
+        // testing something about projecting GridFunctionCoefficient
+        /*
+        pmesh->UniformRefinement();
+        H_space_coarse->Update();
+        ParGridFunction * S_initial = new ParGridFunction(H_space_coarse);
+        S_initial->ProjectCoefficient(*S_init);
+        */
+
+        GridFunctionCoefficient * S_final;
+
+        Array<int> init_bdr_attrs(pmesh->bdr_attributes.Max());
+        init_bdr_attrs = 0;
+        init_bdr_attrs[0] = 1;
+        Array<int> final_bdr_attrs(pmesh->bdr_attributes.Max());
+        init_bdr_attrs = 0;
+        init_bdr_attrs[pmesh->bdr_attributes.Max()-1] = 1;
+
+        SolveTimeSlab(pmesh, S_init, S_final, init_bdr_attrs, final_bdr_attrs,
+                          feorder, level_gap, regularization, prec_option,
+                          Mytest, visualization);
+    }
+    MPI_Finalize();
+    return 0;
+#else
 
     double h_min, h_max, kappa_min, kappa_max;
     pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
@@ -1233,7 +1907,27 @@ int main(int argc, char *argv[])
     {
         coarseW_space_help->Update();
 
-        pmesh->UniformRefinement();
+        if (aniso_refine)
+        {
+            Array<Refinement> refs(pmesh->GetNE());
+            if (refine_only_t)
+                for (int i = 0; i < pmesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 4);
+            else if (refine_only_x)
+                for (int i = 0; i < pmesh->GetNE(); i++)
+                    refs[i] = Refinement(i, 3);
+            else
+            {
+                if (verbose)
+                    std::cout << "Don't know what to do \n";
+                MPI_Finalize();
+                return 0;
+            }
+            pmesh->GeneralRefinement(refs, -1, -1);
+        }
+        else
+            pmesh->UniformRefinement();
+        //pmesh->UniformRefinement();
 
         W_space->Update();
 
@@ -1842,8 +2536,8 @@ int main(int argc, char *argv[])
    delete h1_coll;
 
    MPI_Finalize();
-
    return 0;
+#endif
 }
 
 template <void (*bvecfunc)(const Vector&, Vector& )> \
