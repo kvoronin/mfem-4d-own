@@ -33,7 +33,9 @@
 #include"cfosls_testsuite.hpp"
 #include "divfree_solver_tools.hpp"
 
-#define BBT_instead_H1norm
+//#define BBT_instead_H1norm
+//#define EPSILON_SHIFT (0.2)
+
 //#define BoomerAMG_BBT_check
 //#define BAinvBT_check
 //#define BBT_check
@@ -853,6 +855,10 @@ template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), \
         void(*bvec)(const Vector & x, Vector & vec), double (*divbfunc)(const Vector & xt) > \
         double divsigmaTemplate(const Vector& xt);
 
+#ifdef BBT_instead_H1norm
+template <void (*bvec)(const Vector&, Vector& )>
+       void bbTepsTemplate(const Vector& xt, DenseMatrix& bbT);
+#endif
 class Transport_test
 {
     protected:
@@ -1680,6 +1686,8 @@ int main(int argc, char *argv[])
     const char *formulation = "cfosls";
     bool regularization = false;     // turned out to be a bad idea, since BBT turned out to be non-singular
 
+    bool with_epsilon = true;
+
     bool aniso_refine = false;
     bool refine_t_first = false;
     bool refine_only_t = false;
@@ -2194,9 +2202,13 @@ int main(int argc, char *argv[])
    HypreParMatrix *A;
    A_block->AddDomainIntegrator(new MassIntegrator);
 #ifdef BBT_instead_H1norm
+   MatrixFunctionCoefficient bbTeps_matcoeff(dim, bbTepsTemplate<bFunRect2D_ex>);
    if (verbose)
        std::cout << "Using bbT as a matrix coefficient for diffusion integrator \n";
-   A_block->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
+   if (with_epsilon)
+       A_block->AddDomainIntegrator(new DiffusionIntegrator(bbTeps_matcoeff));
+   else
+       A_block->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
 #else
    A_block->AddDomainIntegrator(new DiffusionIntegrator);
 #endif
@@ -2929,6 +2941,30 @@ void bbTTemplate(const Vector& xt, DenseMatrix& bbT)
     bvecfunc(xt,b);
     MultVVt(b, bbT);
 }
+
+#ifdef BBT_instead_H1norm
+template <void (*bvecfunc)(const Vector&, Vector& )> \
+void bbTepsTemplate(const Vector& xt, DenseMatrix& bbT)
+{
+//    int nDimensions = xt.Size();
+    Vector b;
+    bvecfunc(xt,b);
+    MultVVt(b, bbT);
+
+    DenseMatrix Epsterm(xt.Size());
+    Epsterm.Diag(1.0, xt.Size());
+    Epsterm *= EPSILON_SHIFT;
+    Epsterm(xt.Size()-1, xt.Size()-1) = 0;
+
+    //std::cout << "bbT before adding Epsterm \n";
+    //bbT.Print();
+    //std::cout << "Epsterm \n";
+    //Epsterm.Print();
+
+    bbT += Epsterm;
+}
+#endif
+
 
 template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )> \
 void sigmaTemplate(const Vector& xt, Vector& sigma)
