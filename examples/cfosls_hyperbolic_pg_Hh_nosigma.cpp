@@ -27,13 +27,22 @@
 #include <iomanip>
 #include <list>
 
+//#define TSHIFTING
+//#define TSHIFT (0.9)
+
 #include"cfosls_testsuite.hpp"
 #include "divfree_solver_tools.hpp"
 
+#define BBT_instead_H1norm
+//#define BoomerAMG_BBT_check
 //#define BAinvBT_check
+//#define BBT_check
+
+//#define BoomerAMG_check
+//#define M_cond
 //#define BhAinvBhT_spectral
 
-#define TIME_STEPPING
+//#define TIME_STEPPING // not ready yet, problems with interpolation
 
 #define MYZEROTOL (1.0e-13)
 
@@ -44,17 +53,70 @@ using std::shared_ptr;
 using std::make_shared;
 
 // Some Operator inheriting classes used for analyzing the preconditioner
+
+// class for Op_new = beta * Identity  + gamma * Op
+class MyAXPYOperator : public Operator
+{
+private:
+    Operator & op;
+    double beta;
+    double gamma;
+public:
+    MyAXPYOperator(Operator& Op, double Beta = 0.0, double Gamma = 1.0)
+        : Operator(Op.Height(),Op.Width()), op(Op), beta(Beta), gamma(Gamma) {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = beta * x + gamma * Op  * x
+void MyAXPYOperator::Mult(const Vector& x, Vector& y) const
+{
+    op.Mult(x, y);
+    y *= gamma; // y = gamma * Op * x
+
+    Vector tmp(x.Size());
+    tmp = x;
+    tmp *= beta; // tmp = beta * x
+
+    y += tmp;    // y +=  beta * x, finally
+}
+
+// class for Op_new = scale * Op
+class MyScaledOperator : public Operator
+{
+private:
+    Operator& op;
+    double scale;
+public:
+    MyScaledOperator(Operator& Op, double Scale = 1.0)
+        : Operator(Op.Height(),Op.Width()), op(Op), scale(Scale) {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+
+};
+
+// Computes y = scale * Op  * x
+void MyScaledOperator::Mult(const Vector& x, Vector& y) const
+{
+    op.Mult(x, y);
+    y *= scale;
+}
+
 class MyOperator : public Operator
 {
 private:
     HypreParMatrix & leftmat;
     HypreParMatrix & rightmat;
     Operator & middleop;
+    //int inner_niter;
 public:
     // Constructor
-    MyOperator(HypreParMatrix& LeftMatrix, Operator& MiddleOp, HypreParMatrix& RightMatrix)
-        : middleop(MiddleOp), leftmat(LeftMatrix), rightmat(RightMatrix),
-          Operator(LeftMatrix.Height(),RightMatrix.Width())
+    MyOperator(HypreParMatrix& LeftMatrix, Operator& MiddleOp, HypreParMatrix& RightMatrix/*, int Inner_NIter = 1*/)
+        : Operator(LeftMatrix.Height(),RightMatrix.Width()),
+          leftmat(LeftMatrix), rightmat(RightMatrix), middleop(MiddleOp)//,
+          //inner_niter(Inner_NIter)
     {}
 
     // Operator application
@@ -67,6 +129,20 @@ void MyOperator::Mult(const Vector& x, Vector& y) const
     Vector tmp1(rightmat.Height());
     rightmat.Mult(x, tmp1);
     Vector tmp2(leftmat.Width());
+    /*
+    if (inner_niter > 1)
+    {
+        std::cout << "Implementation is wrong \n";
+        for ( int iter = 0; iter < inner_niter; ++iter)
+        {
+            middleop.Mult(tmp1, tmp2);
+            if (iter < inner_niter - 1)
+                tmp1 = tmp2;
+        }
+    }
+    else
+        middleop.Mult(tmp1, tmp2);
+    */
     middleop.Mult(tmp1, tmp2);
     leftmat.Mult(tmp2, y);
 }
@@ -1012,6 +1088,7 @@ Transport_test::Transport_test (int Dim, int NumSol)
     } // end of setting test coefficients in correct case
 }
 
+#ifdef TIME_STEPPING
 // pmesh must be ParMesh for the coarse level
 int SolveTimeSlab(std::shared_ptr<ParMesh> pmesh, GridFunctionCoefficient * S_init, GridFunctionCoefficient * S_final,
                   Array<int>& init_bdr_attrs, Array<int>& final_bdr_attrs,
@@ -1572,6 +1649,7 @@ int SolveTimeSlab(std::shared_ptr<ParMesh> pmesh, GridFunctionCoefficient * S_in
 
    return 0;
 }
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -1588,6 +1666,13 @@ int main(int argc, char *argv[])
 
     int nDimensions     = 3;
     int numsol          = 0;
+    double sx = 1.0;
+    double sy = 1.0;
+    double sz = 0.1;
+    int Nx = 10;
+    int Ny = 10;
+    int Nz = 1;
+    //double st = 0.0;
 
     int ser_ref_levels  = 1;
     int par_ref_levels  = 2;
@@ -1606,7 +1691,8 @@ int main(int argc, char *argv[])
 
     // variables(options) derived from prec_option
     bool with_prec;           // to be defined from prec_option value
-    bool identity_Schur = false;
+    bool identity_Schur ;     // to be defined from prec_option value
+    double identity_scale;
 
     // level gap between coarse an fine grid (T_H and T_h)
     int level_gap = 1;
@@ -1698,9 +1784,15 @@ int main(int argc, char *argv[])
     {
     case 1:
         with_prec = true;
+        identity_Schur = false;
+        break;
+    case 2:
+        with_prec = true;
+        identity_Schur = true;
         break;
     default: // no preconditioner (default)
         with_prec = false;
+        identity_Schur = false;
         break;
     }
 
@@ -1719,7 +1811,7 @@ int main(int argc, char *argv[])
     shared_ptr<ParMesh> pmesh;
 
     /*
-     * old, before anisotropic refinement
+     * old, before anisotropic refinement & Cartesian grid
     if (nDimensions == 3 || nDimensions == 4)
     {
         if (verbose)
@@ -1747,7 +1839,7 @@ int main(int argc, char *argv[])
 
     }
     */
-    mesh = new Mesh(10, 10, 1, Element::HEXAHEDRON, 1, 1.0, 1.0, 0.1);
+    mesh = new Mesh(Nx, Ny, Nz, Element::HEXAHEDRON, 1, sx, sy, sz);
     Array<Refinement> refs(mesh->GetNE());
 
     for (int l = 0; l < ser_ref_levels; l++)
@@ -2101,7 +2193,13 @@ int main(int argc, char *argv[])
    ParBilinearForm *A_block(new ParBilinearForm(H_space));
    HypreParMatrix *A;
    A_block->AddDomainIntegrator(new MassIntegrator);
+#ifdef BBT_instead_H1norm
+   if (verbose)
+       std::cout << "Using bbT as a matrix coefficient for diffusion integrator \n";
+   A_block->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
+#else
    A_block->AddDomainIntegrator(new DiffusionIntegrator);
+#endif
    A_block->Assemble();
    A_block->EliminateEssentialBC(ess_bdrS, x.GetBlock(0), *rhsS_form);
    A_block->Finalize();
@@ -2185,8 +2283,10 @@ int main(int argc, char *argv[])
   MPI_Reduce(&local_energyS, &global_energyS, 1,
              MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
+  global_energyS = sqrt(global_energyS);
   if (verbose)
   {
+      std::cout << "Maybe without dividing by the vector size: \n";
       std::cout << "TrueS H1 norm = " << global_energyS << "\n";
       std::cout << "Quadratic functional on exact solution = " << global_energyS * global_energyS << "\n";
   }
@@ -2198,6 +2298,7 @@ int main(int argc, char *argv[])
   // Assembling the Matrix
   //-------------------------------------------------------
 
+
   BlockOperator *CFOSLSop = new BlockOperator(block_finalOffsets);
   CFOSLSop->SetBlock(0,0, A);
   CFOSLSop->SetBlock(0,1, BT);
@@ -2207,19 +2308,183 @@ int main(int argc, char *argv[])
       CFOSLSop->SetBlock(1,1, W11);
   }
 
+
    if (verbose)
        cout << "Final saddle point matrix assembled \n" << flush;
    MPI_Barrier(MPI_COMM_WORLD);
 
-#ifdef BAinvBT_check
-   {
-       // 1. form BAinvBT
 
+#ifdef BoomerAMG_BBT_check
+   {
+       auto BBT = ParMult(B,BT);
+
+       if (verbose)
+           std::cout << "Checking iteration count for BoomerAMG for matrix BBT \n";
+
+       MINRESSolver solver(MPI_COMM_WORLD);
+       solver.SetAbsTol(1.0e-10);
+       solver.SetRelTol(1.0e-10);
+       solver.SetMaxIter(100000);
+       solver.SetOperator(*BBT);
        Solver * Ainv;
+       // using BoomerAMG
+       Ainv = new HypreBoomerAMG(*BBT);
+       ((HypreBoomerAMG*)Ainv)->SetPrintLevel(0);
+       ((HypreBoomerAMG*)Ainv)->iterative_mode = true;
+       solver.SetPreconditioner(*Ainv);
+
+       Vector testX(BBT->Height());
+       testX = 0.0;
+       Vector testRhs(BBT->Height());
+       testRhs = 1.0;
+       for ( int i = 0; i < BBT->Height(); ++i)
+           testRhs(i) = i * 1.0 / (i + 3.0) * (3.0 * i - 4.0);
+
+       solver.SetPrintLevel(0);
+       solver.Mult(testRhs, testX);
+
+       chrono.Stop();
+
+
+       if (verbose) // iterative solver reports about its convergence
+       {
+          if (solver.GetConverged())
+             std::cout << "MINRES for BBT with BoomerAMG preconditioner converged in " << solver.GetNumIterations()
+                       << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
+          else
+             std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+                       << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+          std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+       }
+
+       //MPI_Finalize();
+       //return 0;
+   }
+#endif
+
+
+#ifdef BoomerAMG_check
+   {
+       if (verbose)
+           std::cout << "Checking iteration count for BoomerAMG for matrix A \n";
+
+       MINRESSolver solver(MPI_COMM_WORLD);
+       solver.SetAbsTol(atol);
+       solver.SetRelTol(rtol);
+       solver.SetMaxIter(max_iter);
+       solver.SetOperator(*A);
+       Solver * Ainv;
+       // using BoomerAMG
        Ainv = new HypreBoomerAMG(*A);
        ((HypreBoomerAMG*)Ainv)->SetPrintLevel(0);
        ((HypreBoomerAMG*)Ainv)->iterative_mode = false;
+       solver.SetPreconditioner(*Ainv);
 
+       Vector testX(A->Height());
+       testX = 0.0;
+       Vector testRhs(A->Height());
+       testRhs = 1.0;
+
+       solver.SetPrintLevel(0);
+       solver.Mult(testRhs, testX);
+
+       chrono.Stop();
+
+
+       if (verbose) // iterative solver reports about its convergence
+       {
+          if (solver.GetConverged())
+             std::cout << "MINRES converged in " << solver.GetNumIterations()
+                       << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
+          else
+             std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+                       << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+          std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+       }
+
+       MPI_Finalize();
+       return 0;
+   }
+#endif
+
+#ifdef M_cond
+   {
+       ParBilinearForm *M_block(new ParBilinearForm(W_space));
+       M_block->AddDomainIntegrator(new MassIntegrator);
+       M_block->Assemble();
+       M_block->Finalize();
+       auto Mtmp = M_block->ParallelAssemble();
+       auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
+       HypreParMatrix * M = ParMult(Mtmp2,P_W);
+
+       Array<double> eigenvalues;
+       int nev = 20;
+       int seed = 75;
+       {
+
+           HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+
+           lobpcg->SetNumModes(nev);
+           lobpcg->SetRandomSeed(seed);
+           lobpcg->SetMaxIter(600);
+           lobpcg->SetTol(1e-8);
+           lobpcg->SetPrintLevel(1);
+           // checking for M
+           lobpcg->SetOperator(*M);
+
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg->Solve();
+           lobpcg->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed minimal eigenvalues for M are: \n";
+           eigenvalues.Print();
+       }
+
+       double beta = eigenvalues[0] * 1000.0; // should be enough
+       Operator * revM_op = new MyAXPYOperator(*M, beta, -1.0);
+       {
+           HypreLOBPCG * lobpcg2 = new HypreLOBPCG(MPI_COMM_WORLD);
+
+           lobpcg2->SetNumModes(nev);
+           lobpcg2->SetRandomSeed(seed);
+           lobpcg2->SetMaxIter(600);
+           lobpcg2->SetTol(1e-10);
+           lobpcg2->SetPrintLevel(1);
+           // checking for beta * Id - B * Ainv * BT
+           lobpcg2->SetOperator(*revM_op);
+
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg2->Solve();
+           lobpcg2->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed maximal eigenvalues for M are: \n";
+           for ( int i = 0; i < nev; ++i)
+               eigenvalues[i] = beta - eigenvalues[i];
+           eigenvalues.Print();
+       }
+
+   }
+
+#endif
+
+#ifdef BAinvBT_check
+   {
+       // 1. form BAinvBT
+#ifndef BBT_check
+       Solver * Ainv;
+       // using BoomerAMG
+       //Ainv = new HypreBoomerAMG(*A);
+       //((HypreBoomerAMG*)Ainv)->SetPrintLevel(0);
+       //((HypreBoomerAMG*)Ainv)->iterative_mode = false;
+       // using HyprePCG
+       Ainv = new HyprePCG(*A);
+       ((HyprePCG*)Ainv)->SetTol(1.0e-8);
+#endif
+       //int inner_niter = 10;
 #ifdef BhAinvBhT_spectral
        HypreParMatrix *Bsp, *BspT;
 
@@ -2232,7 +2497,14 @@ int main(int argc, char *argv[])
        BspT = Bsp->Transpose();
        MyOperator * BAinvBT_op = new MyOperator(*Bsp, *Ainv, *BspT);
 #else
+       //MyOperator * BAinvBT_op = new MyOperator(*B, *Ainv, *BT, inner_niter);
+#ifdef BBT_check
+       IdentityOperator * Id_op = new IdentityOperator(B->Height());
+       MyOperator * BAinvBT_op = new MyOperator(*B, *Id_op, *BT);
+#else
        MyOperator * BAinvBT_op = new MyOperator(*B, *Ainv, *BT);
+#endif
+
 #endif
 
        /*
@@ -2257,34 +2529,78 @@ int main(int argc, char *argv[])
        Array<double> eigenvalues;
        int nev = 20;
        int seed = 75;
-       HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+       {
+           HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
 
-       lobpcg->SetNumModes(nev);
-       lobpcg->SetRandomSeed(seed);
-       lobpcg->SetMaxIter(600);
-       lobpcg->SetTol(1e-8);
-       lobpcg->SetPrintLevel(1);
-       // checking for B * Ainv * BT
-       lobpcg->SetOperator(*BAinvBT_op);
+           lobpcg->SetNumModes(nev);
+           lobpcg->SetRandomSeed(seed);
+           lobpcg->SetMaxIter(600);
+           lobpcg->SetTol(1e-12);
+           lobpcg->SetPrintLevel(1);
+           // checking for B * Ainv * BT
+           lobpcg->SetOperator(*BAinvBT_op);
 
-       ParBilinearForm *M_block(new ParBilinearForm(W_space));
-       M_block->AddDomainIntegrator(new MassIntegrator);
-       M_block->Assemble();
-       M_block->Finalize();
-       auto Mtmp = M_block->ParallelAssemble();
-       auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
-       HypreParMatrix * M = ParMult(Mtmp2,P_W);
+           /*
+           ParBilinearForm *M_block(new ParBilinearForm(W_space));
+           M_block->AddDomainIntegrator(new MassIntegrator);
+           M_block->Assemble();
+           M_block->Finalize();
+           auto Mtmp = M_block->ParallelAssemble();
+           auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
+           HypreParMatrix * M = ParMult(Mtmp2,P_W);
 
-       lobpcg->SetMassMatrix(*M);
+           lobpcg->SetMassMatrix(*M);
+           */
 
-       // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
-       //    parallel grid function to represent each of the eigenmodes returned by
-       //    the solver.
-       lobpcg->Solve();
-       lobpcg->GetEigenvalues(eigenvalues);
 
-       std::cout << "The computed eigenvalues for BAinvBT are: \n";
-       eigenvalues.Print();
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg->Solve();
+           lobpcg->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed minimal eigenvalues for BAinvBT are: \n";
+           eigenvalues.Print();
+       }
+
+       // 5. form beta * Id - BAinvBT
+       double beta = eigenvalues[0] * 1000.0; // should be enough
+       Operator * revBAinvBT_op = new MyAXPYOperator(*BAinvBT_op, beta, -1.0);
+       {
+           HypreLOBPCG * lobpcg2 = new HypreLOBPCG(MPI_COMM_WORLD);
+
+           lobpcg2->SetNumModes(nev);
+           lobpcg2->SetRandomSeed(seed);
+           lobpcg2->SetMaxIter(600);
+           lobpcg2->SetTol(1e-12);
+           lobpcg2->SetPrintLevel(1);
+           // checking for beta * Id - B * Ainv * BT
+           lobpcg2->SetOperator(*revBAinvBT_op);
+
+           /*
+           ParBilinearForm *M_block(new ParBilinearForm(W_space));
+           M_block->AddDomainIntegrator(new MassIntegrator);
+           M_block->Assemble();
+           M_block->Finalize();
+           auto Mtmp = M_block->ParallelAssemble();
+           auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
+           HypreParMatrix * M = ParMult(Mtmp2,P_W);
+           lobpcg2->SetMassMatrix(*M);
+           */
+
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg2->Solve();
+           lobpcg2->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed maximal eigenvalues for BAinvBT are: \n";
+           for ( int i = 0; i < nev; ++i)
+               eigenvalues[i] = beta - eigenvalues[i];
+           eigenvalues.Print();
+       }
+
+
 
        MPI_Finalize();
        return 0;
@@ -2309,7 +2625,9 @@ int main(int argc, char *argv[])
        ((HypreBoomerAMG*)invA)->iterative_mode = false;
 
        Operator * invLam;
+       Operator * Identity_op;
        HypreParMatrix * Schur;
+
        if (!identity_Schur)
        {
            HypreParVector *Ad = new HypreParVector(MPI_COMM_WORLD, A->GetGlobalNumRows(), A->GetRowStarts());
@@ -2326,7 +2644,48 @@ int main(int argc, char *argv[])
        }
        else
        {
-           invLam = new IdentityOperator(B->Height());
+           ParBilinearForm *M_block(new ParBilinearForm(W_space));
+           M_block->AddDomainIntegrator(new MassIntegrator);
+           M_block->Assemble();
+           M_block->Finalize();
+           auto Mtmp = M_block->ParallelAssemble();
+           auto Mtmp2 = ParMult(P_W->Transpose(), Mtmp);
+           HypreParMatrix * M = ParMult(Mtmp2,P_W);
+
+           SparseMatrix Mdiag;
+           M->GetDiag(Mdiag);
+           Vector diagMdiag;
+           Mdiag.GetDiag(diagMdiag);
+
+           //diagMdiag.Print();
+
+           double local_appr_Mscale = diagMdiag.Max();
+           double global_appr_Mscale;
+
+           // so, we set identity_scale to be coarse_h^2 * || M ||_inf
+           //double h_min, h_max, kappa_min, kappa_max;
+           //pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+           //identity_scale = h_min * h_min;
+           MPI_Reduce(&local_appr_Mscale, &global_appr_Mscale, 1,
+                      MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+           MPI_Bcast( &global_appr_Mscale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+           if (verbose)
+               std::cout << "global_appr_Mscale = " << global_appr_Mscale << "\n";
+
+           //identity_scale = (1.0/ (h_min * h_min * global_appr_Mscale));
+           //identity_scale = (1.0/ global_appr_Mscale);
+
+           //identity_scale = 1.0;
+           identity_scale = 1.0 / (0.05 * global_appr_Mscale);
+           //identity_scale = 1.0 / 0.000005; // for pref = 1
+           //identity_scale = 1.0 / 0.00001; // for pref = 2
+
+           if (identity_Schur && verbose)
+               std::cout << "identity_scale = " << identity_scale << "\n";
+
+           Identity_op = new IdentityOperator(B->Height());
+           invLam = new MyScaledOperator(*Identity_op, identity_scale);
            if (regularization)
            {
                std::cout << "Identity operator is not coupled with regularization case \n";
@@ -2334,6 +2693,9 @@ int main(int argc, char *argv[])
                return 0;
            }
        }
+
+       // only for debugging
+       //invLam = new MyOperator(*B, *invA, *BT);
 
        prec.SetDiagonalBlock(0, invA);
        prec.SetDiagonalBlock(1, invLam);
@@ -2518,13 +2880,21 @@ int main(int argc, char *argv[])
       ss_sock << "solution\n" << *pmesh << *S << "window_title 'S'"
               << endl;
 
+      double S_local_max_norm = S_exact->Normlinf();
+      double S_global_max_norm;
+      MPI_Reduce(&S_local_max_norm, &S_global_max_norm, 1,
+                 MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+      if (verbose)
+          std::cout << "|| S ||_inf = " << S_global_max_norm << "\n";
+
       *S_exact -= *S;
+      *S_exact /= S_global_max_norm;
       socketstream sss_sock(vishost, visport);
       sss_sock << "parallel " << num_procs << " " << myid << "\n";
       sss_sock.precision(8);
       MPI_Barrier(pmesh->GetComm());
       sss_sock << "solution\n" << *pmesh << *S_exact
-               << "window_title 'difference for S'" << endl;
+               << "window_title 'difference for S scaled by ||S||_inf'" << endl;
 
       MPI_Barrier(pmesh->GetComm());
    }
