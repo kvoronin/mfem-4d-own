@@ -828,11 +828,12 @@ int main(int argc, char *argv[])
     int par_ref_levels  = 1;
 
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
-    const char *space_for_S = "H1";     // "H1" or "L2"
-    bool eliminateS = false;            // in case space_for_S = "L2", defines whether we eliminate S from the system
+    const char *space_for_S = "L2";     // "H1" or "L2"
+    bool eliminateS = false;             // in case space_for_S = "L2" defines whether we eliminate S from the system
+    bool keep_divdiv = true;           // in case space_for_S = "L2" defines whether we keep div-div term in the system
 
     // solver options
-    int prec_option = 1; //defines whether to use preconditioner or not, and which one
+    int prec_option = 2; //defines whether to use preconditioner or not, and which one
     bool use_ADS;
 
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
@@ -841,10 +842,6 @@ int main(int argc, char *argv[])
     //const char *mesh_file = "../data/cube4d_low.MFEM";
     //const char *mesh_file = "../data/cube4d.MFEM";
     //const char *mesh_file = "dsadsad";
-    //const char *mesh_file = "../build3/pmesh_2_mwe_0.mesh";
-    //const char *mesh_file = "../build3/mesh_par1_id0_np_1.mesh";
-    //const char *mesh_file = "../build3/mesh_par1_id0_np_2.mesh";
-    //const char *mesh_file = "../data/tempmesh_frompmesh.mesh";
     //const char *mesh_file = "../data/orthotope3D_moderate.mesh";
     //const char *mesh_file = "../data/sphere3D_0.1to0.2.mesh";
     //const char * mesh_file = "../data/orthotope3D_fine.mesh";
@@ -883,9 +880,17 @@ int main(int argc, char *argv[])
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
     args.AddOption(&prec_option, "-precopt", "--prec-option",
-                   "Preconditioner choice.");
+                   "Preconditioner choice (0, 1 or 2 for now).");
     args.AddOption(&formulation, "-form", "--formul",
-                   "Formulation to use.");
+                   "Formulation to use (cfosls or fosls).");
+    args.AddOption(&space_for_S, "-sspace", "--sspace",
+                   "Space for S (H1 or L2).");
+    args.AddOption(&eliminateS, "-elims", "--eliminateS", "-no-elims",
+                   "--no-eliminateS",
+                   "Turn on/off elimination of S in L2 formulation.");
+    args.AddOption(&keep_divdiv, "-divdiv", "--divdiv", "-no-divdiv",
+                   "--no-divdiv",
+                   "Defines if div-div term is/ is not kept in the system.");
     args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                    "--no-visualization",
                    "Enable or disable GLVis visualization.");
@@ -903,6 +908,35 @@ int main(int argc, char *argv[])
     if (verbose)
     {
        args.PrintOptions(cout);
+    }
+
+    MFEM_ASSERT(strcmp(formulation,"cfosls") == 0 || strcmp(formulation,"fosls") == 0, "Formulation must be cfosls or fosls!\n");
+    MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
+
+    if (verbose)
+    {
+        if (strcmp(formulation,"cfosls") == 0)
+            std::cout << "formulation: CFOSLS \n";
+        else
+            std::cout << "formulation: FOSLS \n";
+
+        if (strcmp(space_for_S,"H1") == 0)
+            std::cout << "Space for S: H1 \n";
+        else
+            std::cout << "Space for S: L2 \n";
+
+        if (strcmp(space_for_S,"L2") == 0)
+        {
+            std::cout << "S is ";
+            if (!eliminateS)
+                std::cout << "not ";
+            std::cout << "eliminated from the system \n";
+        }
+
+        std::cout << "div-div term is ";
+        if (keep_divdiv)
+            std::cout << "not ";
+        std::cout << "eliminated \n";
     }
 
     if (verbose)
@@ -1171,16 +1205,20 @@ int main(int argc, char *argv[])
    ess_bdrS[0] = 1; // t = 0
    Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());
    ess_bdrSigma = 0;
-   //ess_bdrSigma[0] = 1;
-   ess_bdrSigma = 1;
-   ess_bdrSigma[pmesh->bdr_attributes.Max()-1] = 0;
+   ess_bdrSigma[0] = 1;
+   //ess_bdrSigma = 1;
+   //ess_bdrSigma[pmesh->bdr_attributes.Max()-1] = 0;
    //-----------------------
 
    // 9. Define the parallel grid function and parallel linear forms, solution
    //    vector and rhs.
 
    ParLinearForm *fform = new ParLinearForm(R_space);
-   fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
+   if (strcmp(space_for_S,"L2") == 0 && keep_divdiv) // if L2 for S and we keep div-div term
+       fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(*Mytest.scalardivsigma));
+   else
+       fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
+
    fform->Assemble();
 
    ParLinearForm *qform;
@@ -1222,6 +1260,8 @@ int main(int argc, char *argv[])
    else // "L2" & eliminateS
    {
        Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+       if (keep_divdiv)
+           Ablock->AddDomainIntegrator(new DivDivIntegrator);
 #ifdef REGULARIZE_A
        if (verbose)
            std::cout << "regularization is ON \n";
@@ -1464,7 +1504,7 @@ int main(int argc, char *argv[])
        ((HypreBoomerAMG*)invC)->SetPrintLevel(0);
        ((HypreBoomerAMG*)invC)->iterative_mode = false;
    }
-   else
+   else // S from L2
    {
        if (!eliminateS) // S is from L2 and not eliminated
        {
