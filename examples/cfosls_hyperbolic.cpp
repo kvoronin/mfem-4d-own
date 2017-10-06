@@ -29,6 +29,10 @@
 
 #include"cfosls_testsuite.hpp"
 
+//#define REGULARIZE_A
+
+//#define EIGENVALUE_STUDY
+
 #define MYZEROTOL (1.0e-13)
 
 using namespace std;
@@ -36,6 +40,102 @@ using namespace mfem;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
+
+
+// Some Operator inheriting classes used for analyzing the preconditioner
+
+// class for Op_new = beta * Identity  + gamma * Op
+class MyAXPYOperator : public Operator
+{
+private:
+    Operator & op;
+    double beta;
+    double gamma;
+public:
+    MyAXPYOperator(Operator& Op, double Beta = 0.0, double Gamma = 1.0)
+        : Operator(Op.Height(),Op.Width()), op(Op), beta(Beta), gamma(Gamma) {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = beta * x + gamma * Op  * x
+void MyAXPYOperator::Mult(const Vector& x, Vector& y) const
+{
+    op.Mult(x, y);
+    y *= gamma; // y = gamma * Op * x
+
+    Vector tmp(x.Size());
+    tmp = x;
+    tmp *= beta; // tmp = beta * x
+
+    y += tmp;    // y +=  beta * x, finally
+}
+
+// class for Op_new = scale * Op
+class MyScaledOperator : public Operator
+{
+private:
+    Operator& op;
+    double scale;
+public:
+    MyScaledOperator(Operator& Op, double Scale = 1.0)
+        : Operator(Op.Height(),Op.Width()), op(Op), scale(Scale) {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+
+};
+
+// Computes y = scale * Op  * x
+void MyScaledOperator::Mult(const Vector& x, Vector& y) const
+{
+    op.Mult(x, y);
+    y *= scale;
+}
+
+class MyOperator : public Operator
+{
+private:
+    HypreParMatrix & leftmat;
+    HypreParMatrix & rightmat;
+    Operator & middleop;
+    //int inner_niter;
+public:
+    // Constructor
+    MyOperator(HypreParMatrix& LeftMatrix, Operator& MiddleOp, HypreParMatrix& RightMatrix/*, int Inner_NIter = 1*/)
+        : Operator(LeftMatrix.Height(),RightMatrix.Width()),
+          leftmat(LeftMatrix), rightmat(RightMatrix), middleop(MiddleOp)//,
+          //inner_niter(Inner_NIter)
+    {}
+
+    // Operator application
+    void Mult(const Vector& x, Vector& y) const;
+};
+
+// Computes y = leftmat * middleop * rightmat * x
+void MyOperator::Mult(const Vector& x, Vector& y) const
+{
+    Vector tmp1(rightmat.Height());
+    rightmat.Mult(x, tmp1);
+    Vector tmp2(leftmat.Width());
+    /*
+    if (inner_niter > 1)
+    {
+        std::cout << "Implementation is wrong \n";
+        for ( int iter = 0; iter < inner_niter; ++iter)
+        {
+            middleop.Mult(tmp1, tmp2);
+            if (iter < inner_niter - 1)
+                tmp1 = tmp2;
+        }
+    }
+    else
+        middleop.Mult(tmp1, tmp2);
+    */
+    middleop.Mult(tmp1, tmp2);
+    leftmat.Mult(tmp2, y);
+}
 
 //********* NEW STUFF FOR 4D CFOSLS
 //-----------------------
@@ -728,9 +828,12 @@ int main(int argc, char *argv[])
     int par_ref_levels  = 1;
 
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
+    const char *space_for_S = "H1";     // "H1" or "L2"
+    bool eliminateS = false;            // in case space_for_S = "L2", defines whether we eliminate S from the system
 
     // solver options
     int prec_option = 1; //defines whether to use preconditioner or not, and which one
+    bool use_ADS;
 
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
     //const char *mesh_file = "../data/square_2d_moderate.mesh";
@@ -763,7 +866,7 @@ int main(int argc, char *argv[])
     int feorder         = 0;
 
     if (verbose)
-        cout << "Solving (С)FOSLS Transport equation with MFEM & hypre" << endl;
+        cout << "Solving (С)FOSLS Transport equation with MFEM & hypre \n";
 
     OptionsParser args(argc, argv);
     //args.AddOption(&mesh_file, "-m", "--mesh",
@@ -821,9 +924,26 @@ int main(int argc, char *argv[])
                   << ", mesh_file = " << mesh_file << "\n";
 
 
+    switch (prec_option)
+    {
+    case 1: // smth simple like AMS
+        use_ADS = false;
+        break;
+    case 2: // MG
+        use_ADS = true;
+        break;
+    default: // no preconditioner
+        break;
+    }
 
     if (verbose)
-        cout << "Number of mpi processes: " << num_procs << endl << flush;
+    {
+        std::cout << "use_ADS = " << use_ADS << "\n";
+    }
+
+
+    if (verbose)
+        std::cout << "Number of mpi processes: " << num_procs << "\n";
 
     StopWatch chrono;
 
@@ -925,6 +1045,11 @@ int main(int argc, char *argv[])
     ParFiniteElementSpace *R_space = new ParFiniteElementSpace(pmesh.get(), hdiv_coll);
     ParFiniteElementSpace *H_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
     ParFiniteElementSpace *W_space = new ParFiniteElementSpace(pmesh.get(), l2_coll);
+    ParFiniteElementSpace * S_space;
+    if (strcmp(space_for_S,"H1") == 0)
+        S_space = H_space;
+    else // "L2"
+        S_space = W_space;
 
     HYPRE_Int dimR = R_space->GlobalTrueVSize();
     HYPRE_Int dimH = H_space->GlobalTrueVSize();
@@ -933,15 +1058,18 @@ int main(int argc, char *argv[])
     if (verbose)
     {
        std::cout << "***********************************************************\n";
-       std::cout << "dim(R) = " << dimR << ", ";
-       std::cout << "dim(H) = " << dimH << ", ";
+       std::cout << "dim H(div)_h = " << dimR << ", ";
+       std::cout << "dim H1_h = " << dimH << ", ";
+       std::cout << "dim L2_h = " << dimW << "\n";
+       std::cout << "Spaces we use: \n";
+       std::cout << "H(div)";
+       if (strcmp(space_for_S,"H1") == 0)
+           std::cout << " x H1";
+       else // "L2"
+           if (!eliminateS)
+               std::cout << " x L2";
        if (strcmp(formulation,"cfosls") == 0)
-       {
-            std::cout << "dim(W) = " << dimW << ", ";
-            std::cout << "dim(R+H+W) = " << dimR + dimH + dimW << "\n";
-       }
-       else // fosls
-           std::cout << "dim(R+H) = " << dimR + dimH << "\n";
+           std::cout << " x L2 \n";
        std::cout << "***********************************************************\n";
     }
 
@@ -950,28 +1078,71 @@ int main(int argc, char *argv[])
     //    block_trueOffstes is used for Vector based on trueDof (HypreParVector
     //    for the rhs and solution of the linear system).  The offsets computed
     //    here are local to the processor.
-    int numblocks = 2;
+    int numblocks = 1;
+
+    if (strcmp(space_for_S,"H1") == 0)
+        numblocks++;
+    else // "L2"
+        if (!eliminateS)
+            numblocks++;
     if (strcmp(formulation,"cfosls") == 0)
-        numblocks = 3;
+        numblocks++;
+
+    std::cout << "Number of blocks in the formulation: " << numblocks << "\n";
 
     Array<int> block_offsets(numblocks + 1); // number of variables + 1
+    int tempblknum = 0;
     block_offsets[0] = 0;
-    block_offsets[1] = R_space->GetVSize();
-    block_offsets[2] = H_space->GetVSize();
+    tempblknum++;
+    block_offsets[tempblknum] = R_space->GetVSize();
+    tempblknum++;
+
+    if (strcmp(space_for_S,"H1") == 0)
+    {
+        block_offsets[tempblknum] = H_space->GetVSize();
+        tempblknum++;
+    }
+    else // "L2"
+        if (!eliminateS)
+        {
+            block_offsets[tempblknum] = W_space->GetVSize();
+            tempblknum++;
+        }
     if (strcmp(formulation,"cfosls") == 0)
-        block_offsets[3] = W_space->GetVSize();
+    {
+        block_offsets[tempblknum] = W_space->GetVSize();
+        tempblknum++;
+    }
     block_offsets.PartialSum();
 
     Array<int> block_trueOffsets(numblocks + 1); // number of variables + 1
+    tempblknum = 0;
     block_trueOffsets[0] = 0;
-    block_trueOffsets[1] = R_space->TrueVSize();
-    block_trueOffsets[2] = H_space->TrueVSize();
+    tempblknum++;
+    block_trueOffsets[tempblknum] = R_space->TrueVSize();
+    tempblknum++;
+
+    if (strcmp(space_for_S,"H1") == 0)
+    {
+        block_trueOffsets[tempblknum] = H_space->TrueVSize();
+        tempblknum++;
+    }
+    else // "L2"
+        if (!eliminateS)
+        {
+            block_trueOffsets[tempblknum] = W_space->TrueVSize();
+            tempblknum++;
+        }
     if (strcmp(formulation,"cfosls") == 0)
-        block_trueOffsets[3] = W_space->TrueVSize();
+    {
+        block_trueOffsets[tempblknum] = W_space->TrueVSize();
+        tempblknum++;
+    }
     block_trueOffsets.PartialSum();
 
     BlockVector x(block_offsets), rhs(block_offsets);
-    BlockVector trueX(block_trueOffsets), trueRhs(block_trueOffsets);
+    BlockVector trueX(block_trueOffsets);
+    BlockVector trueRhs(block_trueOffsets);
     x = 0.0;
     rhs = 0.0;
     trueX = 0.0;
@@ -979,7 +1150,7 @@ int main(int argc, char *argv[])
 
     Transport_test Mytest(nDimensions,numsol);
 
-    ParGridFunction *S_exact = new ParGridFunction(H_space);
+    ParGridFunction *S_exact = new ParGridFunction(S_space);
     S_exact->ProjectCoefficient(*(Mytest.scalarS));
 
     ParGridFunction * sigma_exact = new ParGridFunction(R_space);
@@ -995,33 +1166,50 @@ int main(int argc, char *argv[])
    // Setting boundary conditions.
    //----------------------------------------------------------
 
-   // for S boundary conditions are essential only for t = 0 in parabolic case
    Array<int> ess_bdrS(pmesh->bdr_attributes.Max());
    ess_bdrS = 0;
    ess_bdrS[0] = 1; // t = 0
-   //ess_bdr[1] = 1; // lateral boundary
+   Array<int> ess_bdrSigma(pmesh->bdr_attributes.Max());
+   ess_bdrSigma = 0;
+   //ess_bdrSigma[0] = 1;
+   ess_bdrSigma = 1;
+   ess_bdrSigma[pmesh->bdr_attributes.Max()-1] = 0;
    //-----------------------
 
    // 9. Define the parallel grid function and parallel linear forms, solution
    //    vector and rhs.
 
-   ParLinearForm *fform(new ParLinearForm);
-   fform->Update(R_space, rhs.GetBlock(0), 0);
+   ParLinearForm *fform = new ParLinearForm(R_space);
    fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
    fform->Assemble();
 
-   ParLinearForm *qform(new ParLinearForm);
-   qform->Update(H_space, rhs.GetBlock(1), 0);
-   qform->AddDomainIntegrator(new GradDomainLFIntegrator(*Mytest.bf));
-   qform->Assemble();//qform->Print();
+   ParLinearForm *qform;
+   if (strcmp(space_for_S,"H1") == 0 || !eliminateS)
+   {
+       qform = new ParLinearForm(S_space);
+       qform->Update(S_space, rhs.GetBlock(1), 0);
+   }
 
-   ParLinearForm *gform(new ParLinearForm);
+   if (strcmp(space_for_S,"H1") == 0)
+   {
+       qform->AddDomainIntegrator(new GradDomainLFIntegrator(*Mytest.bf));
+       qform->Assemble();//qform->Print();
+   }
+   else // "L2"
+   {
+       if (!eliminateS)
+       {
+           qform->AddDomainIntegrator(new DomainLFIntegrator(zero));
+           qform->Assemble();
+       }
+   }
+
+   ParLinearForm *gform;
    if (strcmp(formulation,"cfosls") == 0)
    {
-       gform->Update(W_space, rhs.GetBlock(2), 0);
+       gform = new ParLinearForm(W_space);
        gform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
        gform->Assemble();
-       //gform->ParallelAssemble(trueRhs.GetBlock(2));
    }
 
    // 10. Assemble the finite element matrices for the CFOSLS operator  A
@@ -1029,38 +1217,141 @@ int main(int argc, char *argv[])
 
    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
    HypreParMatrix *A;
-   Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+   if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+        Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+   else // "L2" & eliminateS
+   {
+       Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+#ifdef REGULARIZE_A
+       if (verbose)
+           std::cout << "regularization is ON \n";
+       double h_min, h_max, kappa_min, kappa_max;
+       pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+       if (verbose)
+           std::cout << "coarse mesh steps: min " << h_min << " max " << h_max << "\n";
+
+       double reg_param;
+       reg_param = 0.1 * h_min * h_min;
+       if (verbose)
+           std::cout << "regularization parameter: " << reg_param << "\n";
+       ConstantCoefficient reg_coeff(reg_param);
+       Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(reg_coeff)); // reduces the convergence rate but helps with iteration count
+       //Ablock->AddDomainIntegrator(new DivDivIntegrator(reg_coeff)); // doesn't change much in the iteration count
+#endif
+   }
    Ablock->Assemble();
+   Ablock->EliminateEssentialBC(ess_bdrSigma, x.GetBlock(0), *fform);
    Ablock->Finalize();
    A = Ablock->ParallelAssemble();
+
+#ifdef EIGENVALUE_STUDY
+   if (verbose)
+       std::cout << "Studying eigenvalues of (weighted) mass matrix which is A block \n";
+
+   {
+       Array<double> eigenvalues;
+       int nev = 20;
+       int seed = 75;
+       int maxiter = 600;
+       double eigtol = 1.0e-8;
+       {
+
+           HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);
+
+           lobpcg->SetNumModes(nev);
+           lobpcg->SetRandomSeed(seed);
+           lobpcg->SetMaxIter(maxiter);
+           lobpcg->SetTol(eigtol);
+           lobpcg->SetPrintLevel(1);
+           // checking for A
+           lobpcg->SetOperator(*A);
+
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg->Solve();
+           lobpcg->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed minimal eigenvalues for M are: \n";
+           if (verbose)
+               eigenvalues.Print();
+       }
+
+       double beta = eigenvalues[0] * 10000.0; // should be enough
+       Operator * revA_op = new MyAXPYOperator(*A, beta, -1.0);
+       {
+           HypreLOBPCG * lobpcg2 = new HypreLOBPCG(MPI_COMM_WORLD);
+
+           lobpcg2->SetNumModes(nev);
+           lobpcg2->SetRandomSeed(seed);
+           lobpcg2->SetMaxIter(maxiter);
+           lobpcg2->SetTol(eigtol*1.0e-4);
+           lobpcg2->SetPrintLevel(1);
+           // checking for beta * Id - A
+           lobpcg2->SetOperator(*revA_op);
+
+           // 4. Compute the eigenmodes and extract the array of eigenvalues. Define a
+           //    parallel grid function to represent each of the eigenmodes returned by
+           //    the solver.
+           lobpcg2->Solve();
+           lobpcg2->GetEigenvalues(eigenvalues);
+
+           std::cout << "The computed maximal eigenvalues for M are: \n";
+           for ( int i = 0; i < nev; ++i)
+               eigenvalues[i] = beta - eigenvalues[i];
+           if (verbose)
+                eigenvalues.Print();
+       }
+
+}
+
+#endif
 
    //---------------
    //  C Block:
    //---------------
 
-   ParBilinearForm *Cblock(new ParBilinearForm(H_space));
+   ParBilinearForm *Cblock;
    HypreParMatrix *C;
-   Cblock->AddDomainIntegrator(new MassIntegrator(*Mytest.bTb));
-   Cblock->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
-   Cblock->Assemble();
-   Cblock->EliminateEssentialBC(ess_bdrS, x.GetBlock(1),*qform);
-   Cblock->Finalize();
-   C = Cblock->ParallelAssemble();
+   if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+   {
+       Cblock = new ParBilinearForm(S_space);
+       if (strcmp(space_for_S,"H1") == 0)
+       {
+           Cblock->AddDomainIntegrator(new MassIntegrator(*Mytest.bTb));
+           Cblock->AddDomainIntegrator(new DiffusionIntegrator(*Mytest.bbT));
+       }
+       else // "L2" & !eliminateS
+       {
+           Cblock->AddDomainIntegrator(new MassIntegrator(*(Mytest.bTb)));
+       }
+       Cblock->Assemble();
+       Cblock->EliminateEssentialBC(ess_bdrS, x.GetBlock(1), *qform);
+       Cblock->Finalize();
+       C = Cblock->ParallelAssemble();
+   }
 
    //---------------
    //  B Block:
    //---------------
 
-   ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, H_space));
+   ParMixedBilinearForm *Bblock;
    HypreParMatrix *B;
-   Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
-   Bblock->Assemble();
-   //Bblock->EliminateTrialDofs(ess_bdr, x.GetBlock(0), *qform);
-   Bblock->EliminateTestDofs(ess_bdrS);
-   Bblock->Finalize();
-   B = Bblock->ParallelAssemble();
-   *B *= -1.;
-   HypreParMatrix *BT = B->Transpose();
+   HypreParMatrix *BT;
+   if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+   {
+       Bblock = new ParMixedBilinearForm(R_space, S_space);
+       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
+       Bblock->Assemble();
+       Bblock->EliminateTrialDofs(ess_bdrSigma, x.GetBlock(0), *qform);
+       Bblock->EliminateTestDofs(ess_bdrS);
+       Bblock->Finalize();
+
+       B = Bblock->ParallelAssemble();
+       *B *= -1.;
+       BT = B->Transpose();
+   }
+
 
    //----------------
    //  D Block:
@@ -1074,40 +1365,76 @@ int main(int argc, char *argv[])
       ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
       Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
       Dblock->Assemble();
+      Dblock->EliminateTrialDofs(ess_bdrSigma, x.GetBlock(0), *gform);
       Dblock->Finalize();
       D = Dblock->ParallelAssemble();
       DT = D->Transpose();
    }
 
    //=======================================================
-   // Assembling the Matrix
+   // Setting up the block system Matrix
    //-------------------------------------------------------
 
-  fform->ParallelAssemble(trueRhs.GetBlock(0));
-  qform->ParallelAssemble(trueRhs.GetBlock(1));
+  tempblknum = 0;
+  fform->ParallelAssemble(trueRhs.GetBlock(tempblknum));
+  tempblknum++;
+  if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+  {
+    qform->ParallelAssemble(trueRhs.GetBlock(tempblknum));
+    tempblknum++;
+  }
   if (strcmp(formulation,"cfosls") == 0)
-     gform->ParallelAssemble(trueRhs.GetBlock(2));
+     gform->ParallelAssemble(trueRhs.GetBlock(tempblknum));
+
   BlockOperator *CFOSLSop = new BlockOperator(block_trueOffsets);
   CFOSLSop->SetBlock(0,0, A);
-  CFOSLSop->SetBlock(0,1, BT);
-  CFOSLSop->SetBlock(1,0, B);
-  CFOSLSop->SetBlock(1,1, C);
-  if (strcmp(formulation,"cfosls") == 0)
+  if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
   {
-    CFOSLSop->SetBlock(0,2, DT);
-    CFOSLSop->SetBlock(2,0, D);
+      CFOSLSop->SetBlock(0,1, BT);
+      CFOSLSop->SetBlock(1,0, B);
+      CFOSLSop->SetBlock(1,1, C);
+      if (strcmp(formulation,"cfosls") == 0)
+      {
+        CFOSLSop->SetBlock(0,2, DT);
+        CFOSLSop->SetBlock(2,0, D);
+      }
   }
+  else // no S
+      if (strcmp(formulation,"cfosls") == 0)
+      {
+        CFOSLSop->SetBlock(0,1, DT);
+        CFOSLSop->SetBlock(1,0, D);
+      }
 
    if (verbose)
-       cout<< "Final saddle point matrix assembled"<<endl << flush;
+       cout << "Final saddle point matrix assembled \n";
    MPI_Barrier(MPI_COMM_WORLD);
 
-   // 12. Solve the linear system with MINRES.
-   //     Check the norm of the unpreconditioned residual.
+   //=======================================================
+   // Setting up the preconditioner
+   //-------------------------------------------------------
 
    // Construct the operators for preconditioner
    if (verbose)
-       cout << "Using Diag(A) + BoomerAMG(C) + BoomerAMG(D Diag^(-1)(A) D^t) as a preconditioner" << endl;
+   {
+       std::cout << "Block diagonal preconditioner: \n";
+       if (use_ADS)
+           std::cout << "ADS(A) for H(div) \n";
+       else
+            std::cout << "Diag(A) for H(div) \n";
+       if (strcmp(space_for_S,"H1") == 0) // S is from H1
+           std::cout << "BoomerAMG(C) for H1 \n";
+       else
+       {
+           if (!eliminateS) // S is from L2 and not eliminated
+                std::cout << "Diag(C) for L2 \n";
+       }
+       if (strcmp(formulation,"cfosls") == 0 )
+       {
+           std::cout << "BoomerAMG(D Diag^(-1)(A) D^t) for L2 lagrange multiplier \n";
+       }
+       std::cout << "\n";
+   }
    chrono.Clear();
    chrono.Start();
 
@@ -1122,10 +1449,29 @@ int main(int argc, char *argv[])
       Schur = ParMult(D, AinvDt);
    }
 
-   HypreDiagScale * invA = new HypreDiagScale(*A);
+   Solver * invA;
+   if (use_ADS)
+       invA = new HypreADS(*A, R_space);
+   else // using Diag(A);
+        invA = new HypreDiagScale(*A);
 
-   HypreBoomerAMG * invC = new HypreBoomerAMG(*C);
-   invC->SetPrintLevel(0);
+   invA->iterative_mode = false;
+
+   Solver * invC;
+   if (strcmp(space_for_S,"H1") == 0) // S is from H1
+   {
+       invC = new HypreBoomerAMG(*C);
+       ((HypreBoomerAMG*)invC)->SetPrintLevel(0);
+       ((HypreBoomerAMG*)invC)->iterative_mode = false;
+   }
+   else
+   {
+       if (!eliminateS) // S is from L2 and not eliminated
+       {
+           invC = new HypreDiagScale(*C);
+           ((HypreDiagScale*)invC)->iterative_mode = false;
+       }
+   }
 
    Solver * invS;
    if (strcmp(formulation,"cfosls") == 0 )
@@ -1135,23 +1481,26 @@ int main(int argc, char *argv[])
         ((HypreBoomerAMG *)invS)->iterative_mode = false;
    }
 
-   invA->iterative_mode = false;
-   invC->iterative_mode = false;
-
    BlockDiagonalPreconditioner prec(block_trueOffsets);
    if (prec_option > 0)
    {
-       prec.SetDiagonalBlock(0, invA);
-       prec.SetDiagonalBlock(1, invC);
+       tempblknum = 0;
+       prec.SetDiagonalBlock(tempblknum, invA);
+       tempblknum++;
+       if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+       {
+           prec.SetDiagonalBlock(tempblknum, invC);
+           tempblknum++;
+       }
        if (strcmp(formulation,"cfosls") == 0)
-            prec.SetDiagonalBlock(2, invS);
+            prec.SetDiagonalBlock(tempblknum, invS);
 
        if (verbose)
            std::cout << "Preconditioner built in " << chrono.RealTime() << "s. \n";
    }
    else
        if (verbose)
-           cout << "No preconditioner is used." << endl;
+           cout << "No preconditioner is used. \n";
 
    // 12. Solve the linear system with MINRES.
    //     Check the norm of the unpreconditioned residual.
@@ -1184,8 +1533,30 @@ int main(int argc, char *argv[])
    ParGridFunction * sigma = new ParGridFunction(R_space);
    sigma->Distribute(&(trueX.GetBlock(0)));
 
-   ParGridFunction * S = new ParGridFunction(H_space);
-   S->Distribute(&(trueX.GetBlock(1)));
+   ParGridFunction * S = new ParGridFunction(S_space);
+   if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+       S->Distribute(&(trueX.GetBlock(1)));
+   else // no S in the formulation
+   {
+       ParBilinearForm *Cblock(new ParBilinearForm(S_space));
+       Cblock->AddDomainIntegrator(new MassIntegrator(*(Mytest.bTb)));
+       Cblock->Assemble();
+       Cblock->Finalize();
+       HypreParMatrix * C = Cblock->ParallelAssemble();
+
+       ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, S_space));
+       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*(Mytest.conv)));
+       Bblock->Assemble();
+       Bblock->Finalize();
+       HypreParMatrix * B = Bblock->ParallelAssemble();
+       Vector bTsigma(C->Height());
+       B->Mult(trueX.GetBlock(0),bTsigma);
+
+       Vector trueS(C->Height());
+
+       CG(*C, bTsigma, trueS, 0, 5000, 1e-9, 1e-12);
+       S->Distribute(trueS);
+   }
 
    // 13. Extract the parallel grid function corresponding to the finite element
    //     approximation X. This is the local solution on each processor. Compute
@@ -1236,6 +1607,7 @@ int main(int argc, char *argv[])
                     err_S / norm_S << "\n";
    }
 
+   if (strcmp(space_for_S,"H1") == 0) // S is from H1
    {
        FiniteElementCollection * hcurl_coll;
        if(dim==4)
@@ -1244,7 +1616,7 @@ int main(int argc, char *argv[])
            hcurl_coll = new ND_FECollection(feorder+1, dim);
        auto *N_space = new ParFiniteElementSpace(pmesh.get(), hcurl_coll);
 
-       DiscreteLinearOperator Grad(H_space, N_space);
+       DiscreteLinearOperator Grad(S_space, N_space);
        Grad.AddDomainInterpolator(new GradientInterpolator());
        ParGridFunction GradS(N_space);
        Grad.Assemble();
@@ -1268,10 +1640,13 @@ int main(int argc, char *argv[])
    }
 
    // Check value of functional and mass conservation
+   if (strcmp(formulation,"cfosls") == 0) // if CFOSLS, otherwise code requires some changes
    {
-       double localFunctional = -2.0*(trueX.GetBlock(1)*trueRhs.GetBlock(1));
+       double localFunctional = 0.0;//-2.0*(trueX.GetBlock(0)*trueRhs.GetBlock(0));
+       if (strcmp(space_for_S,"H1") == 0) // S is present
+            localFunctional += -2.0*(trueX.GetBlock(1)*trueRhs.GetBlock(1));
 
-       trueX.GetBlock(2) = 0.0;
+       trueX.GetBlock(numblocks - 1) = 0.0;
        trueRhs = 0.0;;
        CFOSLSop->Mult(trueX, trueRhs);
        localFunctional += trueX*(trueRhs);
@@ -1281,9 +1656,21 @@ int main(int argc, char *argv[])
                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
        if (verbose)
        {
-           cout << "|| sigma_h - L(S_h) ||^2 + || div_h (bS_h) - f ||^2 = " << globalFunctional+norm_div*norm_div<< "\n";
-           cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
-           cout << "Relative Energy Error = " << sqrt(globalFunctional+norm_div*norm_div)/norm_div<< "\n";
+           //cout << "|| sigma_h - L(S_h) ||^2 + || div_h (bS_h) - f ||^2 = " << globalFunctional+err_div*err_div << "\n";
+           //cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+           //cout << "Relative Energy Error = " << sqrt(globalFunctional+err_div*err_div)/norm_div << "\n";
+
+           if (strcmp(space_for_S,"H1") == 0) // S is present
+           {
+               cout << "|| sigma_h - L(S_h) ||^2 + || div_h (bS_h) - f ||^2 = " << globalFunctional+norm_div*norm_div << "\n";
+               cout << "|| f ||^2 = " << norm_div*norm_div  << "\n";
+               cout << "Relative Energy Error = " << sqrt(globalFunctional+norm_div*norm_div)/norm_div << "\n";
+           }
+           else // if S is from L2
+           {
+               cout << "|| sigma_h - L(S_h) ||^2 + || div_h (sigma_h) - f ||^2 = " << globalFunctional+err_div*err_div << "\n";
+               cout << "Energy Error = " << sqrt(globalFunctional+err_div*err_div) << "\n";
+           }
        }
 
        ParLinearForm massform(W_space);
@@ -1297,17 +1684,17 @@ int main(int argc, char *argv[])
        if (verbose)
            cout << "Sum of local mass = " << mass<< "\n";
 
-       trueRhs.GetBlock(2) -= massform;
-       double mass_loss_loc = trueRhs.GetBlock(2).Norml1();
+       trueRhs.GetBlock(numblocks - 1) -= massform;
+       double mass_loss_loc = trueRhs.GetBlock(numblocks - 1).Norml1();
        double mass_loss;
        MPI_Reduce(&mass_loss_loc, &mass_loss, 1,
                   MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
        if (verbose)
-           cout << "Sum of local mass loss = " << mass_loss<< "\n";
+           cout << "Sum of local mass loss = " << mass_loss << "\n";
    }
 
    if (verbose)
-       cout << "Computing projection errors" << endl;
+       cout << "Computing projection errors \n";
 
    double projection_error_sigma = sigma_exact->ComputeL2Error(*(Mytest.sigma), irs);
 
@@ -1382,6 +1769,8 @@ int main(int argc, char *argv[])
    //delete A;
 
    //delete Ablock;
+   if (strcmp(space_for_S,"H1") == 0) // S was from H1
+        delete H_space;
    delete W_space;
    delete R_space;
    delete l2_coll;
