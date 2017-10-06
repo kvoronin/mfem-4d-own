@@ -29,6 +29,8 @@
 
 #include"cfosls_testsuite.hpp"
 
+//#define TESTING
+
 //#define REGULARIZE_A
 
 //#define EIGENVALUE_STUDY
@@ -550,7 +552,7 @@ double uFun10_ex(const Vector& x); // Exact Solution
 double uFun10_ex_dt(const Vector& xt);
 void uFun10_ex_gradx(const Vector& xt, Vector& grad);
 
-template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
+template <double (*Sfunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
     void sigmaTemplate(const Vector& xt, Vector& sigma);
 template <void (*bvecfunc)(const Vector&, Vector& )>
     void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda);
@@ -558,8 +560,8 @@ template <void (*bvecfunc)(const Vector&, Vector& )>
         void bbTTemplate(const Vector& xt, DenseMatrix& bbT);
 template <void (*bvecfunc)(const Vector&, Vector& )>
     double bTbTemplate(const Vector& xt);
-template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )>
-    void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma);
+template<void(*bvec)(const Vector & x, Vector & vec)>
+    void minbTemplate(const Vector& xt, Vector& minb);
 
 template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx), \
          void(*bvec)(const Vector & x, Vector & vec), double (*divbfunc)(const Vector & xt) > \
@@ -587,7 +589,8 @@ class Transport_test
         FunctionCoefficient * scalardivsigma;         // = dS/dt + div (bS) = div sigma
         FunctionCoefficient * bTb;
         VectorFunctionCoefficient * sigma;
-        VectorFunctionCoefficient * conv;
+        VectorFunctionCoefficient * b;
+        VectorFunctionCoefficient * minb;
         VectorFunctionCoefficient * bf;
         MatrixFunctionCoefficient * Ktilda;
         MatrixFunctionCoefficient * bbT;
@@ -609,20 +612,24 @@ class Transport_test
         void SetScalarSFun( double (*S)(const Vector & xt))
         { scalarS = new FunctionCoefficient(S);}
 
-        template< void(*f2)(const Vector & x, Vector & vec)>  \
+        template< void(*bvec)(const Vector & x, Vector & vec)>  \
         void SetScalarBtB()
         {
-            bTb = new FunctionCoefficient(bTbTemplate<f2>);
+            bTb = new FunctionCoefficient(bTbTemplate<bvec>);
         }
 
-        template<double (*f1)(const Vector & xt), void(*f2)(const Vector & x, Vector & vec)> \
+        template<double (*S)(const Vector & xt), void(*bvec)(const Vector & x, Vector & vec)> \
         void SetSigmaVec()
         {
-            sigma = new VectorFunctionCoefficient(dim, sigmaTemplate<f1,f2>);
+            sigma = new VectorFunctionCoefficient(dim, sigmaTemplate<S,bvec>);
         }
 
-        void SetConvVec( void(*f)(const Vector & x, Vector & vec))
-        { conv = new VectorFunctionCoefficient(dim, f);}
+        void SetbVec( void(*bvec)(const Vector & x, Vector & vec))
+        { b = new VectorFunctionCoefficient(dim, bvec);}
+
+        template<void(*bvec)(const Vector & x, Vector & vec)> \
+        void SetminbVec()
+        { minb = new VectorFunctionCoefficient(dim, minbTemplate<bvec>);}
 
         template< void(*f2)(const Vector & x, Vector & vec)>  \
         void SetKtildaMat()
@@ -638,7 +645,7 @@ class Transport_test
 
         template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx), \
                  void(*bvec)(const Vector & x, Vector & vec), double (*divbfunc)(const Vector & xt) > \
-        void SetConvfFunVec()
+        void SetbfVec()
         { bf = new VectorFunctionCoefficient(dim, bfTemplate<S,dSdt,Sgradxvec,bvec,divbfunc>);}
 
         template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx), \
@@ -653,8 +660,9 @@ class Transport_test
     void Transport_test::SetTestCoeffs ()
     {
         SetScalarSFun(S);
-        SetConvVec(bvec);
-        SetConvfFunVec<S, dSdt, Sgradxvec, bvec, divbfunc>();
+        SetbVec(bvec);
+        SetminbVec<bvec>();
+        SetbfVec<S, dSdt, Sgradxvec, bvec, divbfunc>();
         SetSigmaVec<S,bvec>();
         SetKtildaMat<bvec>();
         SetScalarBtB<bvec>();
@@ -830,10 +838,10 @@ int main(int argc, char *argv[])
     const char *formulation = "cfosls"; // "cfosls" or "fosls"
     const char *space_for_S = "L2";     // "H1" or "L2"
     bool eliminateS = false;             // in case space_for_S = "L2" defines whether we eliminate S from the system
-    bool keep_divdiv = true;           // in case space_for_S = "L2" defines whether we keep div-div term in the system
+    bool keep_divdiv = false;           // in case space_for_S = "L2" defines whether we keep div-div term in the system
 
     // solver options
-    int prec_option = 2; //defines whether to use preconditioner or not, and which one
+    int prec_option = 1; //defines whether to use preconditioner or not, and which one
     bool use_ADS;
 
     const char *mesh_file = "../data/cube_3d_moderate.mesh";
@@ -912,6 +920,8 @@ int main(int argc, char *argv[])
 
     MFEM_ASSERT(strcmp(formulation,"cfosls") == 0 || strcmp(formulation,"fosls") == 0, "Formulation must be cfosls or fosls!\n");
     MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
+    MFEM_ASSERT(!(strcmp(formulation,"fosls") == 0 && !keep_divdiv), "For FOSLS formulation div-div term must be present!\n");
+    MFEM_ASSERT(!(strcmp(space_for_S,"H1") == 0 && keep_divdiv), "For S from H1 div-div term must not be present for sigma!\n");
 
     if (verbose)
     {
@@ -927,13 +937,13 @@ int main(int argc, char *argv[])
 
         if (strcmp(space_for_S,"L2") == 0)
         {
-            std::cout << "S is ";
+            std::cout << "S: is ";
             if (!eliminateS)
                 std::cout << "not ";
             std::cout << "eliminated from the system \n";
         }
 
-        std::cout << "div-div term is ";
+        std::cout << "div-div term: is ";
         if (keep_divdiv)
             std::cout << "not ";
         std::cout << "eliminated \n";
@@ -1208,6 +1218,15 @@ int main(int argc, char *argv[])
    ess_bdrSigma[0] = 1;
    //ess_bdrSigma = 1;
    //ess_bdrSigma[pmesh->bdr_attributes.Max()-1] = 0;
+
+   if (verbose)
+   {
+       std::cout << "Boundary conditions: \n";
+       std::cout << "ess bdr Sigma: \n";
+       ess_bdrSigma.Print(std::cout, pmesh->bdr_attributes.Max());
+       std::cout << "ess bdr S: \n";
+       ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
+   }
    //-----------------------
 
    // 9. Define the parallel grid function and parallel linear forms, solution
@@ -1255,11 +1274,16 @@ int main(int argc, char *argv[])
 
    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
    HypreParMatrix *A;
-   if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
-        Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
-   else // "L2" & eliminateS
+   if (strcmp(space_for_S,"H1") == 0) // S is from H1
    {
-       Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+        Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+   }
+   else // "L2"
+   {
+       if (eliminateS) // S is eliminated
+           Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+       else // S is present
+           Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
        if (keep_divdiv)
            Ablock->AddDomainIntegrator(new DivDivIntegrator);
 #ifdef REGULARIZE_A
@@ -1381,16 +1405,69 @@ int main(int argc, char *argv[])
    if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
    {
        Bblock = new ParMixedBilinearForm(R_space, S_space);
-       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.conv));
+       //Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.b));
+       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.minb));
        Bblock->Assemble();
        Bblock->EliminateTrialDofs(ess_bdrSigma, x.GetBlock(0), *qform);
        Bblock->EliminateTestDofs(ess_bdrS);
        Bblock->Finalize();
 
        B = Bblock->ParallelAssemble();
-       *B *= -1.;
+       //*B *= -1.;
        BT = B->Transpose();
    }
+
+#ifdef TESTING
+    Array<int> block_truetestOffsets(3); // number of variables + 1
+    block_truetestOffsets[0] = 0;
+    //block_truetestOffsets[1] = C_space->TrueVSize();
+    block_truetestOffsets[1] = R_space->TrueVSize();
+    if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
+        block_truetestOffsets[2] = S_space->TrueVSize();
+    block_truetestOffsets.PartialSum();
+
+    BlockOperator *TestOp = new BlockOperator(block_truetestOffsets);
+
+    TestOp->SetBlock(0,0, A);
+    TestOp->SetBlock(0,1, BT);
+    TestOp->SetBlock(1,0, B);
+    TestOp->SetBlock(1,1, C);
+
+    IterativeSolver * testsolver;
+    testsolver = new CGSolver(comm);
+    if (verbose)
+        cout << "Linear test solver: CG \n";
+
+    testsolver->SetAbsTol(atol);
+    testsolver->SetRelTol(rtol);
+    testsolver->SetMaxIter(max_iter);
+    testsolver->SetOperator(*TestOp);
+
+    testsolver->SetPrintLevel(0);
+
+    BlockVector truetestX(block_truetestOffsets), truetestRhs(block_truetestOffsets);
+    truetestX = 0.0;
+    truetestRhs = 1.0;
+
+    truetestX = 0.0;
+    testsolver->Mult(truetestRhs, truetestX);
+
+    chrono.Stop();
+
+    if (verbose)
+    {
+        if (testsolver->GetConverged())
+            std::cout << "Linear solver converged in " << testsolver->GetNumIterations()
+                      << " iterations with a residual norm of " << testsolver->GetFinalNorm() << ".\n";
+        else
+            std::cout << "Linear solver did not converge in " << testsolver->GetNumIterations()
+                      << " iterations. Residual norm is " << testsolver->GetFinalNorm() << ".\n";
+        std::cout << "Linear solver took " << chrono.RealTime() << "s. \n";
+    }
+
+    MPI_Finalize();
+    return 0;
+#endif
 
 
    //----------------
@@ -1585,7 +1662,7 @@ int main(int argc, char *argv[])
        HypreParMatrix * C = Cblock->ParallelAssemble();
 
        ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, S_space));
-       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*(Mytest.conv)));
+       Bblock->AddDomainIntegrator(new VectorFEMassIntegrator(*(Mytest.b)));
        Bblock->Assemble();
        Bblock->Finalize();
        HypreParMatrix * B = Bblock->ParallelAssemble();
@@ -1857,24 +1934,6 @@ void sigmaTemplate(const Vector& xt, Vector& sigma)
     return;
 }
 
-template <double (*ufunc)(const Vector&), void (*bvecfunc)(const Vector&, Vector& )> \
-void sigmaNonHomoTemplate(const Vector& xt, Vector& sigma) // sigmaNonHomo = (b u, u) for u = S(t=0)
-{
-    Vector xteq0(xt.Size()); // xt with t = 0
-    xteq0 = xt;
-    xteq0(xteq0.Size()-1) = 0.0;
-
-    Vector b;
-    bvecfunc(xt, b);
-    sigma.SetSize(xt.Size());
-    sigma(xt.Size()-1) = ufunc(xteq0);
-    for (int i = 0; i < xt.Size()-1; i++)
-        sigma(i) = b(i) * sigma(xt.Size()-1);
-
-    return;
-}
-
-
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 double bTbTemplate(const Vector& xt)
 {
@@ -1883,6 +1942,15 @@ double bTbTemplate(const Vector& xt)
     return b*b;
 }
 
+template<void(*bvec)(const Vector & x, Vector & vec)>
+void minbTemplate(const Vector& xt, Vector& minb)
+{
+    minb.SetSize(xt.Size());
+
+    bvec(xt,minb);
+
+    minb *= -1;
+}
 
 template<double (*S)(const Vector & xt), double (*dSdt)(const Vector & xt), void(*Sgradxvec)(const Vector & x, Vector & gradx), \
          void(*bvec)(const Vector & x, Vector & vec), double (*divbfunc)(const Vector & xt) > \
