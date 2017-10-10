@@ -1,7 +1,175 @@
 #include "mfem.hpp"
 
 using namespace mfem;
+using namespace std;
 using std::unique_ptr;
+
+
+#define NEW_STUFF
+
+#ifdef NEW_STUFF
+// Implements a multilevel solver for a minimization problem
+// J(sigma,S) -> min under the constraint div sigma = f
+// The solver is implemented algebraically, i.e.
+// it takes the functional derivative as a 2x2 block operator
+class GeneralMinConstrSolver : public IterativeSolver
+{
+private:
+    //const int num_levels;
+    //const int strategy; // reserved parameter for minimzation strategy
+    int current_loop;   // the behaviour is slightly different for the first loop
+protected:
+    SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l);
+    SolveLocalProblems();
+    SetUpCoarseProblem();
+    SolveCoarseProblem();
+public:
+    // constructor (empty for now)
+    GeneralMinConstrSolver() : IterativeSolver() {}
+    // main solving routine
+    void Solve(int num_levels, const BlockOperator& Funct, const Vector& div_rhs,  Vector& sigma, Vector& S,
+               Array< SparseMatrix*> &Element_Elementc,
+               Array< SparseMatrix*> &P_R,
+               Array< SparseMatrix*> &P_H,
+               Array< SparseMatrix*> &P_W);
+
+};
+
+void GeneralMinConstrSolver::Solve(int num_levels, const BlockOperator& Funct, const Vector& div_rhs,  Vector& sigma, Vector& S,
+                                   Array< SparseMatrix*> &Element_Elementc,
+                                   Array< SparseMatrix*> &P_R,
+                                   Array< SparseMatrix*> &P_H,
+                                   Array< SparseMatrix*> &P_W)
+{
+    // 0. preliminaries
+
+    // righthand side at level l
+    Vector rhs_l(div_rhs.Size());
+    rhs_l = div_rhs;
+    // temporary storage for Q_{l-1} f
+    Vector Qlminus1_f(div_rhs.Size());
+    Qlminus1_f = div_rhs;
+
+    // 1. loop over levels
+    for (int l=0; l < num_levels - 1; l++)
+    {
+        // 1.1 set up the righthand side at level l
+        SetUpRhs(Qlminus1_f, rhs_l);
+
+        // 1.2 solve the local problems at level l
+        SolveLocalProblems();
+
+    } // end of loop over levels
+
+    // 2. set up coarse problem
+    SetUpCoarseProblem();
+
+    // 3. solve coarse problem
+    SolveCoarseProblem();
+
+    // 4. assemble the final solution
+
+    return;
+}
+
+// Righthand side at level l is of the form:
+//   rhs_l = (Q_l - Q_{l+1}) where Q_k is an orthogonal L2-projector: W -> W_k
+// or, equivalently,
+//   rhs_l = (I - Pi_{l-1,l}) rhs_{l-1},
+// where Pi_{k,k+1} is an orthogonal L2-projector W_{k+1} -> W_k,
+// and rhs_{l-1} = Q_{l-1} f (setting Q_0 = Id)
+// Hence,
+//   Pi_{l-1,l} = P_l * inv(P_l^T P_l) * P_l^T
+// where P_l columns compose the basis of the coarser space.
+void GeneralMinConstrSolver::SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l)
+{
+    // 1.
+    rhs_l = Qlminus1_f;
+
+    // 2. Computing Qlminus1_f (new): = Q_l f = Pi_{l-1,l} * (Q_{l-1} f)
+    // FIXME: memory efficiency can be increased by using pre-allocated work array here
+    Vector temp(P_W[l]->Height());
+
+    P_W[l]->MultTranspose(Qlminus1_f,temp);
+
+    // FIXME: Cant this be done in a local way, without large mat-mat multiplication?
+    SparseMatrix * P_WT = Transpose(*P_W[l]);
+    SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[l]);
+    Vector Diag(P_WTxP_W->Size());
+    Vector invDiag(P_WTxP_W->Size());
+    P_WTxP_W->GetDiag(Diag);
+
+    for ( int m = 0; m < P_WTxP_W->Size(); ++m)
+        invDiag(m) = temp(m) / Diag(m);
+
+    P_W[l]->Mult(invDiag,F_coarse);
+
+    // 3. Setting rhs_l = Q_{l-1} f - Pi_{l-1,l} * Q_{l-1} f
+    rhs_l -= Qlminus1_f;
+
+    return;
+}
+
+void GeneralMinConstrSolver::SolveLocalProblems()
+{
+    DenseMatrix sub_M;
+    DenseMatrix sub_B;
+    DenseMatrix sub_BT;
+
+    // loop over all AE
+    for( int AE = 0; AE < nAE; ++AE)
+    {
+        Array<int> Rtmp_j(AE_R->GetRowColumns(AE), AE_R->RowSize(AE));
+        Array<int> Htmp_j(AE_H->GetRowColumns(AE), AE_H->RowSize(AE));
+        Array<int> Wtmp_j(AE_W->GetRowColumns(AE), AE_W->RowSize(AE));
+
+        // Setting size of Dense Matrices
+        sub_M.SetSize(Rtmp_j.Size());
+        sub_B.SetSize(Wtmp_j.Size(),Rtmp_j.Size());
+        sub_BT.SetSize(Rtmp_j.Size(),Wtmp_j.Size());
+//                sub_G.SetSize(Rtmp_j.Size());
+//                sub_F.SetSize(Wtmp_j.Size());
+
+        // Obtaining submatrices:
+        M_fine->GetSubMatrix(Rtmp_j,Rtmp_j, sub_M);
+        B_fine->GetSubMatrix(Wtmp_j,Rtmp_j, sub_B);
+        sub_BT.Transpose(sub_B);
+
+//                sub_G  = .0;
+//                sub_F  = .0;
+
+        rhs_l.GetSubVector(Wtmp_j, sub_F);
+
+
+        Vector sub_sig(Rtmp_j.Size());
+        Vector sub_s(Htmp_j.Size());
+
+        MFEM_ASSERT(sub_F.Sum()<= 9e-11, "checking local average at each level " << sub_F.Sum());
+
+        // Solving local problem at agglomerate element AE:
+        SolveLocalProblem(sub_M, sub_B, sub_G, sub_F, sub_sig, sub_s);
+
+        p_loc_vec.AddElementVector(Rtmp_j,sig);
+        p_loc_vec.AddElementVector(Rtmp_j,sig);
+    }
+
+    std::cout << "SolveLocalProblems is not implemented yet! \n";
+    return;
+}
+
+void GeneralMinConstrSolver::SetUpCoarseProblem()
+{
+    std::cout << "SetUpCoarseProblem is not implemented yet! \n";
+    return;
+}
+
+void GeneralMinConstrSolver::SolveCoarseProblem()
+{
+    std::cout << "SolveCoarseProblem is not implemented yet! \n";
+    return;
+}
+
+#endif
 
 class DivPart
 {
