@@ -4,10 +4,103 @@ using namespace mfem;
 using namespace std;
 using std::unique_ptr;
 
-
 #define NEW_STUFF
 
 #ifdef NEW_STUFF
+
+#if 0
+// DenseBlockMatrix class
+class BlockDenseMatrix : public DenseMatrix
+{
+public:
+   //! Constructor for BlockDenseMatrices with the same block-structure for rows and
+   //! columns.
+   /**
+    *  offsets: offsets that mark the start of each row/column block (size
+    *  nRowBlocks+1).  Note: BlockDenseMatrix will not own/copy the data contained
+    *  in offsets.
+    */
+   BlockDenseMatrix(const Array<int> & offsets);
+   //! Constructor for general BlockDenseMatrices.
+   /**
+    *  row_offsets: offsets that mark the start of each row block (size
+    *  nRowBlocks+1).  col_offsets: offsets that mark the start of each column
+    *  block (size nColBlocks+1).  Note: BlockDenseMatrix will not own/copy the
+    *  data contained in offsets.
+    */
+   BlockDenseMatrix(const Array<int> & row_offsets, const Array<int> & col_offsets);
+
+   //! Add block op in the block-entry (iblock, iblock).
+   /**
+    * iblock: The block will be inserted in location (iblock, iblock).
+    * op: the Operator to be inserted.
+    * c: optional scalar multiple for this block.
+    */
+   void SetDiagonalBlock(int iblock, DenseMatrix *op, double c = 1.0);
+   //! Add a block op in the block-entry (iblock, jblock).
+   /**
+    * irow, icol: The block will be inserted in location (irow, icol).
+    * op: the Operator to be inserted.
+    * c: optional scalar multiple for this block.
+    */
+   void SetBlock(int iRow, int iCol, Operator *op, double c = 1.0);
+
+   //! Return the number of row blocks
+   int NumRowBlocks() const { return nRowBlocks; }
+   //! Return the number of column blocks
+   int NumColBlocks() const { return nColBlocks; }
+
+   //! Check if block (i,j) is a zero block
+   int IsZeroBlock(int i, int j) const { return (op(i,j)==NULL) ? 1 : 0; }
+   //! Return a reference to block i,j
+   Operator & GetBlock(int i, int j)
+   { MFEM_VERIFY(op(i,j), ""); return *op(i,j); }
+   //! Return the coefficient for block i,j
+   double GetBlockCoef(int i, int j) const
+   { MFEM_VERIFY(op(i,j), ""); return coef(i,j); }
+   //! Set the coefficient for block i,j
+   void SetBlockCoef(int i, int j, double c)
+   { MFEM_VERIFY(op(i,j), ""); coef(i,j) = c; }
+
+   //! Return the row offsets for block starts
+   Array<int> & RowOffsets() { return row_offsets; }
+   //! Return the columns offsets for block starts
+   Array<int> & ColOffsets() { return col_offsets; }
+
+   /// Operator application
+   virtual void Mult (const Vector & x, Vector & y) const;
+
+   /// Action of the transpose operator
+   virtual void MultTranspose (const Vector & x, Vector & y) const;
+
+   ~BlockOperator();
+
+   //! Controls the ownership of the blocks: if nonzero, BlockOperator will
+   //! delete all blocks that are set (non-NULL); the default value is zero.
+   int owns_blocks;
+
+private:
+   //! Number of block rows
+   int nRowBlocks;
+   //! Number of block columns
+   int nColBlocks;
+   //! Row offsets for the starting position of each block
+   Array<int> row_offsets;
+   //! Column offsets for the starting position of each block
+   Array<int> col_offsets;
+   //! 2D array that stores each block of the operator.
+   Array2D<Operator *> op;
+   //! 2D array that stores a coefficient for each block of the operator.
+   Array2D<double> coef;
+
+   //! Temporary Vectors used to efficiently apply the Mult and MultTranspose methods.
+   mutable BlockVector xblock;
+   mutable BlockVector yblock;
+   mutable Vector tmp;
+};
+#endif
+
+
 // Implements a multilevel solver for a minimization problem
 // J(sigma,S) -> min under the constraint div sigma = f
 // The solver is implemented algebraically, i.e.
@@ -15,49 +108,79 @@ using std::unique_ptr;
 class GeneralMinConstrSolver : public IterativeSolver
 {
 private:
-    //const int num_levels;
-    //const int strategy; // reserved parameter for minimzation strategy
-    int current_loop;   // the behaviour is slightly different for the first loop
+    const int strategy;    // reserved parameter for minimzation strategy
+    int num_levels;
+    int current_iterate;   // the behaviour is slightly different for the first iterate
+    const Array< SparseMatrix*>& AE_e;
+    const Array< SparseMatrix*>& el_to_dofs_R;
+    const Array< SparseMatrix*>& el_to_dofs_H;
+    const Array< SparseMatrix*>& el_to_dofs_W;
+    const Array< SparseMatrix*>& P_R;
+    const Array< SparseMatrix*>& P_H;
+    const Array< SparseMatrix*>& P_W;
+    const BlockMatrix& Funct;
+    const SparseMatrix& Constr;
+
+    bool higher_order;
+
+    // temporary variables
+    // FIXME: is it a good practice? should they be mutable?
+    mutable SparseMatrix *AE_edofs_W;
+    mutable SparseMatrix *AE_eintdofs_R;
+    mutable SparseMatrix *AE_eintdofs_H;
+
 protected:
-    SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l);
-    SolveLocalProblems();
-    SetUpCoarseProblem();
-    SolveCoarseProblem();
+    void SetUpRhsConstr(int level, Vector& Qlminus1_f, Vector& rhs_l);
+    void SetUpLocal(int level);
+    void SolveLocalProblems(int level, Vector &rhs_l);
+    void SetUpCoarseProblem();
+    void SolveCoarseProblem();
+    SparseMatrix* GetElToIntDofs(int level, const char* Space);
+    void SolveLocalProblem(DenseMatrix& sub_A, DenseMatrix& sub_B, Vector& sub_F, Vector& sub_G, Vector& sub_sig,
+                           DenseMatrix& sub_C, DenseMatrix& sub_D, Vector& sub_s );
 public:
     // constructor (empty for now)
-    GeneralMinConstrSolver() : IterativeSolver() {}
+    GeneralMinConstrSolver(int NumLevels,
+                           const Array< SparseMatrix*> &AE_to_e,
+                           const Array< SparseMatrix*> &El_to_dofs_R, const Array< SparseMatrix*> &El_to_dofs_H, const Array< SparseMatrix*> &El_to_dofs_W,
+                           const Array< SparseMatrix*> &Proj_R, const Array< SparseMatrix*> &Proj_H, const Array< SparseMatrix*> &Proj_W,
+                           const BlockMatrix& FunctBlockMat, const SparseMatrix& ConstrMat,
+                           bool Higher_Order_Elements = false)
+         : IterativeSolver(), strategy(0), num_levels(NumLevels), current_iterate(0),
+           AE_e(AE_to_e),
+           el_to_dofs_R(El_to_dofs_R), el_to_dofs_H(El_to_dofs_H), el_to_dofs_W(El_to_dofs_W),
+           P_R(Proj_R), P_H(Proj_H), P_W(Proj_W),
+           Funct(FunctBlockMat),
+           Constr(ConstrMat),
+           higher_order(Higher_Order_Elements)
+    {}
     // main solving routine
-    void Solve(int num_levels, const BlockOperator& Funct, const Vector& div_rhs,  Vector& sigma, Vector& S,
-               Array< SparseMatrix*> &Element_Elementc,
-               Array< SparseMatrix*> &P_R,
-               Array< SparseMatrix*> &P_H,
-               Array< SparseMatrix*> &P_W);
+    void Solve(const Vector& rhs, Vector& sigma, Vector& S);
 
 };
 
-void GeneralMinConstrSolver::Solve(int num_levels, const BlockOperator& Funct, const Vector& div_rhs,  Vector& sigma, Vector& S,
-                                   Array< SparseMatrix*> &Element_Elementc,
-                                   Array< SparseMatrix*> &P_R,
-                                   Array< SparseMatrix*> &P_H,
-                                   Array< SparseMatrix*> &P_W)
+void GeneralMinConstrSolver::Solve(const Vector& rhs, Vector& sigma, Vector& S)
 {
     // 0. preliminaries
 
-    // righthand side at level l
-    Vector rhs_l(div_rhs.Size());
-    rhs_l = div_rhs;
+    // righthand side (from the divergence constraint) at level l
+    Vector rhs_l(rhs.Size());
+    rhs_l = rhs;
     // temporary storage for Q_{l-1} f
-    Vector Qlminus1_f(div_rhs.Size());
-    Qlminus1_f = div_rhs;
+    Vector Qlminus1_f(rhs.Size());
+    Qlminus1_f = rhs;
 
     // 1. loop over levels
-    for (int l=0; l < num_levels - 1; l++)
+    for (int l = 0; l < num_levels - 1; ++l)
     {
         // 1.1 set up the righthand side at level l
-        SetUpRhs(Qlminus1_f, rhs_l);
+        SetUpRhsConstr(l, Qlminus1_f, rhs_l);
+
+        SetUpLocal(l);
 
         // 1.2 solve the local problems at level l
-        SolveLocalProblems();
+        // FIXME: all factors of local matrices can be stored after the first solver iteration
+        SolveLocalProblems(l, rhs_l);
 
     } // end of loop over levels
 
@@ -68,6 +191,8 @@ void GeneralMinConstrSolver::Solve(int num_levels, const BlockOperator& Funct, c
     SolveCoarseProblem();
 
     // 4. assemble the final solution
+
+    ++current_iterate;
 
     return;
 }
@@ -81,20 +206,20 @@ void GeneralMinConstrSolver::Solve(int num_levels, const BlockOperator& Funct, c
 // Hence,
 //   Pi_{l-1,l} = P_l * inv(P_l^T P_l) * P_l^T
 // where P_l columns compose the basis of the coarser space.
-void GeneralMinConstrSolver::SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l)
+void GeneralMinConstrSolver::SetUpRhsConstr(int level, Vector& Qlminus1_f, Vector& rhs_l)
 {
     // 1.
     rhs_l = Qlminus1_f;
 
     // 2. Computing Qlminus1_f (new): = Q_l f = Pi_{l-1,l} * (Q_{l-1} f)
     // FIXME: memory efficiency can be increased by using pre-allocated work array here
-    Vector temp(P_W[l]->Height());
+    Vector temp(P_W[level]->Height());
 
-    P_W[l]->MultTranspose(Qlminus1_f,temp);
+    P_W[level]->MultTranspose(Qlminus1_f,temp);
 
-    // FIXME: Cant this be done in a local way, without large mat-mat multiplication?
-    SparseMatrix * P_WT = Transpose(*P_W[l]);
-    SparseMatrix * P_WTxP_W = Mult(*P_WT,*P_W[l]);
+    // FIXME: Can't this be done in a local way, without large mat-mat multiplication?
+    SparseMatrix * P_WT = Transpose(*P_W[level]);
+    SparseMatrix * P_WTxP_W = mfem::Mult(*P_WT,*P_W[level]);
     Vector Diag(P_WTxP_W->Size());
     Vector invDiag(P_WTxP_W->Size());
     P_WTxP_W->GetDiag(Diag);
@@ -102,7 +227,13 @@ void GeneralMinConstrSolver::SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l)
     for ( int m = 0; m < P_WTxP_W->Size(); ++m)
         invDiag(m) = temp(m) / Diag(m);
 
-    P_W[l]->Mult(invDiag,F_coarse);
+    // FIXME: Unchecked alternative is below
+    // something like temp (new) (AE) = temp(AE) / number of fine elements inside given AE
+    // which is a corresponding row size in AE_E
+    // and using temp intead if invDiag
+
+    Vector F_coarse;
+    P_W[level]->Mult(invDiag,F_coarse);
 
     // 3. Setting rhs_l = Q_{l-1} f - Pi_{l-1,l} * Q_{l-1} f
     rhs_l -= Qlminus1_f;
@@ -110,50 +241,234 @@ void GeneralMinConstrSolver::SetUpRhs(Vector& Qlminus1_f, Vector& rhs_l)
     return;
 }
 
-void GeneralMinConstrSolver::SolveLocalProblems()
+// Returns a pointer to a SparseMatrix which stores
+// the relation between agglomareated elements (AEs)
+// and fine-grid internal (w.r.t. to AEs) dofs.
+// FIXME: for now works only for the lowest order case
+// For higher order RT elements there will be two parts,
+// one for boundary dofs at fine-grid element faces (implemented like here)
+// and a different treatment for internal (w.r.t. to fine elements) dofs
+// And don't forget about the boundary dofs!
+SparseMatrix * GeneralMinConstrSolver::GetElToIntDofs(int level, const char* Space)
 {
-    DenseMatrix sub_M;
+    SparseMatrix *el_to_dofs;
+    if (strcmp(Space,"R") == 0)
+        el_to_dofs = el_to_dofs_R[level];
+    else if (strcmp(Space,"H") == 0)
+        el_to_dofs = el_to_dofs_H[level];
+    else
+        MFEM_ABORT("Bad value of Space, must be W or H!");
+
+
+    // creating dofs_to_AE relation table
+    SparseMatrix * dofs_AE_R = Transpose(*mfem::Mult(*AE_e[level], *el_to_dofs));
+    int ndofs = dofs_AE_R->Height();
+
+    /*
+     * out-dated
+    // creating a vector which marks internal (w.r.t to fine-grid elements) dofs
+    // over all fine-grid dofs
+    Array<bool> dof_is_inside;
+    if (higher_order)
+    {
+        // FIXME: actually, one needs only to know the values at the diagonal
+        SparseMatrix * dofs_el_dofs = mfem::Mult(*el_to_dofs_R[level], *Transpose(*el_to_dofs_R[level]));
+        double * dofs_el_dofs_data = dofs_el_dofs->GetData();
+        int * dofs_el_dofs_i = dofs_el_dofs->GetI();
+
+        dof_is_inside.SetSize(ndofs);
+        for (int dof = 0; dof < ndofs; ++dof)
+        {
+            dof_is_inside[dof] = false;
+            if (dofs_el_dofs_data[dofs_el_dofs_i[dof]] == 1)
+                dof_is_inside[dof] = true;
+        }
+
+        delete dofs_el_dofs;
+    }
+    */
+
+    // stores for each dof true if it is at the boundary of the entire domain
+    // or false otherwise.
+    Array<bool> boundary_dofs;
+    if (higher_order)
+    {
+        for (int dof = 0; dof < ndofs; ++dof)
+        {
+            // FIXME: maybe it should be an input parameter for the class, boundary dofs for all levels, obtained from the f.e. spaces
+            boundary_dofs[dof] = false;
+        }
+    }
+
+    int * dofs_AE_R_i = dofs_AE_R->GetI();
+    int * dofs_AE_R_j = dofs_AE_R->GetJ();
+    double * dofs_AE_R_data = dofs_AE_R->GetData();
+
+    int * innerdofs_AE_i = new int [ndofs + 1];
+
+    // computing the number of internal degrees of freedom in all AEs
+    int nnz = 0;
+    for (int dof = 0; dof < ndofs; ++dof)
+    {
+        innerdofs_AE_i[dof]= nnz;
+        for (int j = dofs_AE_R_i[dof]; j < dofs_AE_R_i[dof+1]; ++j)
+            /*
+            if (higher_order)
+            {
+                // if a dof is shared by two fine grid elements inside a single AE
+                // OR (!) it is inside a fine-grid element,
+                // then it is an internal dof for this AE
+                if (dofs_AE_R_data[j] == 2 || dof_is_inside[dof])
+                    nnz++;
+            }
+            else
+            {
+                // if a dof is shared by two fine grid elements inside a single AE,
+                // then it is an internal dof for this AE
+                if (dofs_AE_R_data[j] == 2)
+                    nnz++;
+            }
+            */
+
+            // if a dof is shared by two fine grid elements inside a single AE
+            // OR [ if a dof belongs to only one AE and to only one fine-grid element
+            // and is not at the domain boundary],
+            // then it is an internal dof for this AE
+            if (dofs_AE_R_data[j] == 2 || (higher_order && !boundary_dofs[dof] && dofs_AE_R_i[dof+1] - dofs_AE_R_i[dof] == 1 && dofs_AE_R_data[j] == 1))
+                nnz++;
+
+    }
+    innerdofs_AE_i[ndofs] = nnz;
+
+    // allocating j and data arrays for the created relation table
+    int * innerdofs_AE_j = new int[nnz];
+    double * innerdofs_AE_data = new double[nnz];
+
+    int nnz_count = 0;
+    for (int dof = 0; dof < ndofs; ++dof)
+        for (int j = dofs_AE_R_i[dof]; j < dofs_AE_R_i[dof+1]; ++j)
+            if (dofs_AE_R_data[j] == 2)
+                innerdofs_AE_j[nnz_count++] = dofs_AE_R_j[j];
+
+    std::fill_n(innerdofs_AE_data, nnz, 1);
+
+    // creating a relation between internal fine-grid dofs (w.r.t to AE) and AEs,
+    // keeeping zero rows for non-internal dofs
+    SparseMatrix * innerdofs_AE = new SparseMatrix(innerdofs_AE_i, innerdofs_AE_j, innerdofs_AE_data,
+                                                   dofs_AE_R->Height(), dofs_AE_R->Width());
+
+    delete dofs_AE_R; // FIXME: or it can be saved and re-used if needed
+
+    return Transpose(*innerdofs_AE);
+}
+
+// Computes prerequisites required for solving local problems at level l
+// such as relation tables between AEs and internal fine-grid dofs
+// and maybe smth else ... ?
+void GeneralMinConstrSolver::SetUpLocal(int level)
+{
+    SparseMatrix* el_to_intdofs_R = GetElToIntDofs(level, "R");
+    SparseMatrix* el_to_intdofs_H = GetElToIntDofs(level, "W");
+
+    AE_edofs_W = mfem::Mult(*AE_e[level], *el_to_dofs_W[level]);
+    AE_eintdofs_R = mfem::Mult(*AE_e[level], *el_to_intdofs_R);
+    AE_eintdofs_H = mfem::Mult(*AE_e[level], *el_to_intdofs_H);
+
+    return;
+}
+
+
+void GeneralMinConstrSolver::SolveLocalProblems(int level, Vector& rhs_l)
+{
+    // FIXME: factorization can be done only at the first solver iterate, stored and then re-used
+    DenseMatrix sub_A;
+    DenseMatrix sub_C;
+    DenseMatrix sub_D;
+    DenseMatrix sub_DT;
     DenseMatrix sub_B;
     DenseMatrix sub_BT;
 
-    // loop over all AE
+    Vector sub_F;
+    Vector sub_G;
+
+    // vectors for assembled solution at level l
+    Vector sig_loc_vec(AE_eintdofs_R->Width());
+    sig_loc_vec = 0.0;
+
+    Vector s_loc_vec(AE_eintdofs_H->Width());
+    s_loc_vec = 0.0;
+
+    SparseMatrix A_fine = Funct.GetBlock(0,0);
+    SparseMatrix B_fine = Constr;
+    SparseMatrix *C_fine, *D_fine;
+    int nblocks = Funct.NumRowBlocks();
+    if (nblocks > 1 && strategy == 0) // we have sigma and S in the functional and minimize over both
+    {
+        *C_fine = Funct.GetBlock(1,1);
+        *D_fine = Funct.GetBlock(0,1);
+    }
+
+    // loop over all AE, solving a local problem in each AE
+    int nAE = AE_edofs_W->Height();
     for( int AE = 0; AE < nAE; ++AE)
     {
-        Array<int> Rtmp_j(AE_R->GetRowColumns(AE), AE_R->RowSize(AE));
-        Array<int> Htmp_j(AE_H->GetRowColumns(AE), AE_H->RowSize(AE));
-        Array<int> Wtmp_j(AE_W->GetRowColumns(AE), AE_W->RowSize(AE));
+        Array<int> Rtmp_j(AE_eintdofs_R->GetRowColumns(AE), AE_eintdofs_R->RowSize(AE));
+        Array<int> * Htmp_j_pt;
+        if (nblocks > 1 && strategy == 0) // we have sigma and S in the functional and minimize over both
+            Htmp_j_pt = new Array<int> (AE_eintdofs_H->GetRowColumns(AE), AE_eintdofs_H->RowSize(AE));
+        Array<int> Wtmp_j(AE_edofs_W->GetRowColumns(AE), AE_edofs_W->RowSize(AE));
 
         // Setting size of Dense Matrices
-        sub_M.SetSize(Rtmp_j.Size());
+        sub_A.SetSize(Rtmp_j.Size());
         sub_B.SetSize(Wtmp_j.Size(),Rtmp_j.Size());
-        sub_BT.SetSize(Rtmp_j.Size(),Wtmp_j.Size());
-//                sub_G.SetSize(Rtmp_j.Size());
-//                sub_F.SetSize(Wtmp_j.Size());
+        //sub_BT.SetSize(Rtmp_j.Size(),Wtmp_j.Size());
+        if (nblocks > 1 && strategy == 0) // we have sigma and S in the functional and minimize over both
+        {
+            sub_C.SetSize(Htmp_j_pt->Size());
+            sub_D.SetSize(Htmp_j_pt->Size(),Rtmp_j.Size());
+            //sub_DT.SetSize(Rtmp_j.Size(), Htmp_j_pt->Size());
+        }
+
+        //sub_G.SetSize(Rtmp_j.Size());
+        //sub_F.SetSize(Wtmp_j.Size());
 
         // Obtaining submatrices:
-        M_fine->GetSubMatrix(Rtmp_j,Rtmp_j, sub_M);
-        B_fine->GetSubMatrix(Wtmp_j,Rtmp_j, sub_B);
+        A_fine.GetSubMatrix(Rtmp_j,Rtmp_j, sub_A);
+        B_fine.GetSubMatrix(Wtmp_j,Rtmp_j, sub_B);
         sub_BT.Transpose(sub_B);
+        if (nblocks > 1 && strategy == 0) // we have sigma and S in the functional and minimize over both
+        {
+            C_fine->GetSubMatrix(*Htmp_j_pt,*Htmp_j_pt, sub_C);
+            D_fine->GetSubMatrix(*Htmp_j_pt,Rtmp_j, sub_D);
+            sub_DT.Transpose(sub_D);
+        }
 
-//                sub_G  = .0;
-//                sub_F  = .0;
+        sub_G  = .0;
 
         rhs_l.GetSubVector(Wtmp_j, sub_F);
 
-
         Vector sub_sig(Rtmp_j.Size());
-        Vector sub_s(Htmp_j.Size());
+        Vector sub_s(Htmp_j_pt->Size());
 
         MFEM_ASSERT(sub_F.Sum()<= 9e-11, "checking local average at each level " << sub_F.Sum());
 
-        // Solving local problem at agglomerate element AE:
-        SolveLocalProblem(sub_M, sub_B, sub_G, sub_F, sub_sig, sub_s);
+        // Solving local problem at the agglomerate element AE:
+        SolveLocalProblem(sub_A, sub_B, sub_F, sub_G, sub_sig, sub_C, sub_D, sub_s );
 
-        p_loc_vec.AddElementVector(Rtmp_j,sig);
-        p_loc_vec.AddElementVector(Rtmp_j,sig);
+        sig_loc_vec.AddElementVector(Rtmp_j,sub_sig);
+        s_loc_vec.AddElementVector(Rtmp_j,sub_s);
+
+        // FIXME: is this a right way to delete Htmp_j?
+        delete Htmp_j_pt;
     }
 
     std::cout << "SolveLocalProblems is not implemented yet! \n";
+    return;
+}
+
+void GeneralMinConstrSolver::SolveLocalProblem (DenseMatrix& sub_A, DenseMatrix& sub_B, Vector& sub_F, Vector& sub_G, Vector& sub_sig,
+                                                DenseMatrix& sub_C, DenseMatrix& sub_D, Vector& sub_s )
+{
     return;
 }
 
