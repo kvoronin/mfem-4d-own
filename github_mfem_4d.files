@@ -237,3 +237,5 @@ examples/cfosls_parab_divfree.cpp
 examples/cfosls_wave_divfree.cpp
 examples/cfosls_wave.cpp
 examples/cfosls_hyperbolic.cpp
+examples/divfree_solver_tools.hpp
+examples/cfosls_hyperbolic_newsolver.cpp
