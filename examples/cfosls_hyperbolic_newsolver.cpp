@@ -15,6 +15,8 @@
 
 #include "divfree_solver_tools.hpp"
 
+//#undef NEW_STUFF
+
 #define USE_CURLMATRIX
 
 //#define DEBUGGING // should be switched off in general
@@ -1100,11 +1102,22 @@ int main(int argc, char *argv[])
 #ifdef NEW_STUFF
     Array<int> ess_allbdr(pmesh->bdr_attributes.Max());
     ess_allbdr = 1;
-    Array<Array<int>*> BdrDofs_R;
-    for (int i = 0; i < ref_levels; ++i)
+    std::vector<Array<Array<int>*> > BdrDofs_R(1);
+    Array<Array<int>*> temparray(ref_levels);
+    for (int lvl = 0; lvl < ref_levels; ++lvl)
+        temparray[lvl] = new Array<int>;
+
+    for (int i = 0; i < BdrDofs_R.size(); ++i)
     {
-        BdrDofs_R = new Array<int>;
+        BdrDofs_R[i].SetSize(ref_levels);
+        //for (int lvl = 0; lvl < ref_levels; ++lvl)
+            //BdrDofs_R[i][lvl].SetSize(R_space->GetVSize());
+
+        //BdrDofs_R[i][0] = new Array<int>(R_space->GetVSize());
+        //BdrDofs_R[i][0]->SetSize(R_space->GetVSize());
+        //BdrDofs_R[i][0] = new Array<int>;
     }
+    //Array<int> * temparray;
 #endif
 
     chrono.Clear();
@@ -1137,7 +1150,23 @@ int main(int argc, char *argv[])
                 }
 
 #ifdef NEW_STUFF
-                R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l-1]);
+                //temparray = new Array<int>();
+                //R_space->GetEssentialVDofs(ess_allbdr, *temparray );
+                //BdrDofs_R[l-1][0] = temparray;
+                /*
+                if (l == 1)
+                    BdrDofs_R[l-1][0]->MakeRef(ess_dof_coarsestlvl_list);
+                else
+                    R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l-1][0] );
+                */
+                //R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l-1][0] );
+                //BdrDofs_R[l-1][0]->MakeRef(temp);
+                //R_space->GetEssentialVDofs(ess_allbdr, *(BdrDofs_R[l-1][0]) );
+                //if (l == 1)
+                    //BdrDofs_R[0][l-1].MakeRef(ess_dof_coarsestlvl_list);
+                //else
+                    //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l-1]);
+                R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
 #endif
 
                 if (prec_is_MG)
@@ -1280,7 +1309,8 @@ int main(int argc, char *argv[])
                 W_space->Update();
             R_space->Update();
 #ifdef NEW_STUFF
-            R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l]);
+            R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
+            //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l]);
 #endif
             C_space->Update();
             H_space->Update();
@@ -1317,6 +1347,9 @@ int main(int argc, char *argv[])
     if (verbose)
         cout << "MG hierarchy constructed in " << chrono.RealTime() << " seconds.\n";
 
+#ifdef NEW_STUFF
+    BdrDofs_R[0].MakeRef(temparray);
+#endif
     //if(dim==3) pmesh->ReorientTetMesh();
 
     pmesh->PrintInfo(std::cout); if(verbose) cout << "\n";
@@ -1428,6 +1461,32 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "Creating an instance of the new multilevel solver \n";
 
+    Array<BlockMatrix*> Element_dofs_Func(ref_levels);
+    for (int i = 0; i < ref_levels; ++i)
+    {
+        Array<int> row_offsets(2);
+        row_offsets[0] = 0;
+        row_offsets[1] = Element_dofs_R[i]->Height();
+        Array<int> col_offsets(2);
+        col_offsets[0] = 0;
+        col_offsets[1] = Element_dofs_R[i]->Width();
+        Element_dofs_Func[i] = new BlockMatrix(row_offsets, col_offsets);
+        Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
+    }
+
+    Array<BlockMatrix*> P_Func(ref_levels);
+    for (int i = 0; i < ref_levels; ++i)
+    {
+        Array<int> row_offsets(2);
+        row_offsets[0] = 0;
+        row_offsets[1] = P_R[i]->Height();
+        Array<int> col_offsets(2);
+        col_offsets[0] = 0;
+        col_offsets[1] = P_R[i]->Width();
+        P_Func[i] = new BlockMatrix(row_offsets, col_offsets);
+        P_Func[i]->SetBlock(0,0, P_R[i]);
+    }
+
     Array<SparseMatrix*> P_WT(ref_levels); //AE_e matrices
     for (int i = 0; i < ref_levels; ++i)
     {
@@ -1437,6 +1496,8 @@ int main(int argc, char *argv[])
     ParGridFunction * sigma_exact_temp = new ParGridFunction(R_space);
     sigma_exact_temp->ProjectCoefficient(*(Mytest.sigma));
 
+    ParLinearForm *fform = new ParLinearForm(R_space);
+
     ParBilinearForm *Ablock(new ParBilinearForm(R_space));
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
     Ablock->Assemble();
@@ -1444,13 +1505,17 @@ int main(int argc, char *argv[])
     Ablock->Finalize();
     auto tempA = Ablock->ParallelAssemble();
     SparseMatrix Aloc = Ablock->SpMat();
-    BlockMatrix Ablockmat(offsets1);
+    Array<int> offsets(2);
+    offsets[0] = 0;
+    offsets[1] = Aloc.Height();
+    BlockMatrix Ablockmat(offsets);
     Ablockmat.SetBlock(0,0,&Aloc);
 
+    ParLinearForm *ggform = new ParLinearForm(W_space);
     ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
     Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
     Bblock->Assemble();
-    Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_temp, *gform);
+    Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_temp, *ggform);
     Bblock->Finalize();
     auto tempB = Bblock->ParallelAssemble();
     SparseMatrix Bloc = Bblock->SpMat();
@@ -1472,12 +1537,25 @@ int main(int argc, char *argv[])
                            const BlockMatrix& FunctBlockMat, const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            bool Higher_Order_Elements = false);
     */
-    BaseGeneralMinConstrSolver NewSolver(ref_levels,
+
+    BaseGeneralMinConstrSolver NewSolver(ref_levels + 1,
                                          P_WT,
-                                         Element_dofs_R, Element_dofs_W,
-                                         P_R, P_W,
+                                         Element_dofs_Func, Element_dofs_W,
+                                         P_Func, P_W,
                                          BdrDofs_R,
                                          Ablockmat, Bloc, Floc);
+
+    if (verbose)
+        std::cout << "Calling the new multilevel solver for the first iteration \n";
+
+    Vector Tempx(sigma_exact_temp->Size());
+    Tempx = 0.0;
+    Vector Tempy(Tempx.Size());
+    Tempy = 0.0;
+    NewSolver.Mult(Tempx, Tempy);
+
+    if (verbose)
+        std::cout << "First iteration completed successfully!\n";
 
     MPI_Finalize();
     return 0;
