@@ -1462,28 +1462,30 @@ int main(int argc, char *argv[])
         std::cout << "Creating an instance of the new multilevel solver \n";
 
     Array<BlockMatrix*> Element_dofs_Func(ref_levels);
+    Array<int> row_offsets_El_dofs(2);
+    Array<int> col_offsets_El_dofs(2);
     for (int i = 0; i < ref_levels; ++i)
     {
-        Array<int> row_offsets(2);
-        row_offsets[0] = 0;
-        row_offsets[1] = Element_dofs_R[i]->Height();
-        Array<int> col_offsets(2);
-        col_offsets[0] = 0;
-        col_offsets[1] = Element_dofs_R[i]->Width();
-        Element_dofs_Func[i] = new BlockMatrix(row_offsets, col_offsets);
+        row_offsets_El_dofs[0] = 0;
+        row_offsets_El_dofs[1] = Element_dofs_R[i]->Height();
+        col_offsets_El_dofs[0] = 0;
+        col_offsets_El_dofs[1] = Element_dofs_R[i]->Width();
+        Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs, col_offsets_El_dofs);
         Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
     }
 
     Array<BlockMatrix*> P_Func(ref_levels);
+    Array<int> row_offsets_P_Func(2);
+    Array<int> col_offsets_P_Func(2);
     for (int i = 0; i < ref_levels; ++i)
     {
-        Array<int> row_offsets(2);
-        row_offsets[0] = 0;
-        row_offsets[1] = P_R[i]->Height();
-        Array<int> col_offsets(2);
-        col_offsets[0] = 0;
-        col_offsets[1] = P_R[i]->Width();
-        P_Func[i] = new BlockMatrix(row_offsets, col_offsets);
+        row_offsets_P_Func[0] = 0;
+        row_offsets_P_Func[1] = P_R[i]->Height();
+        col_offsets_P_Func[0] = 0;
+        col_offsets_P_Func[1] = P_R[i]->Width();
+        P_Func[i] = new BlockMatrix(row_offsets_P_Func, col_offsets_P_Func);
+        //row_offsets.Print();
+        //col_offsets.Print();
         P_Func[i]->SetBlock(0,0, P_R[i]);
     }
 
@@ -1538,9 +1540,17 @@ int main(int argc, char *argv[])
                            bool Higher_Order_Elements = false);
     */
 
-    BaseGeneralMinConstrSolver NewSolver(ref_levels + 1,
+    //std::cout << "Debugging P_Func: \n";
+    //P_Func[0]->RowOffsets().Print();
+    //P_Func[0]->ColOffsets().Print();
+
+    std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
+    Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
+
+    MinConstrSolver NewSolver(ref_levels + 1,
                                          P_WT,
                                          Element_dofs_Func, Element_dofs_W,
+                                         Dof_TrueDof_coarse_Func, *d_td_coarse_W,
                                          P_Func, P_W,
                                          BdrDofs_R,
                                          Ablockmat, Bloc, Floc);
