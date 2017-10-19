@@ -61,8 +61,12 @@ protected:
     mutable BlockVector* sol_update;
     mutable BlockVector* sol_coarse;
 
+    mutable Array<BlockVector*> * tempvec_lvls;
+
 protected:
     void ProjectFinerToCoarser(Vector& in, Vector &out, const SparseMatrix& Proj) const;
+    void InterpolateBack(int start_level, BlockVector &vec_start, int end_level, BlockVector &vec_end) const;
+
     // It is virtual because one might want a complicated strategy where
     // e.g., there are sigma and S in the functional, but minimize each iteration
     // only over one of the variables, thus requiring rhs coimputation more
@@ -139,6 +143,8 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
     *current_iterate = 0;
     Funct_lvls = new Array<BlockMatrix*>(num_levels - 1);
     Constr_lvls = new Array<SparseMatrix*>(num_levels - 1);
+    tempvec_lvls = new Array<BlockVector*>(num_levels);
+    tempvec_lvls[0] = new BlockVector(Funct.RowOffsets());
     //std::cout << "Debugging ProjR: \n";
     //Proj_R[0]->RowOffsets().Print();
     //Proj_R[0]->ColOffsets().Print();
@@ -194,9 +200,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& rhs_func, BlockVector& sol) 
 
         // 1.2 set up dofs related data at level l during the first iteration
         if (*current_iterate == 0)
-        {
             SetUpLvl(l);
-        }
 
         // 1.3 solve local problems at level l
         // FIXME: all factors of local matrices can be stored after the first solver iteration
@@ -265,6 +269,25 @@ void BaseGeneralMinConstrSolver::ProjectFinerToCoarser(Vector& in, Vector &out, 
     Proj.Mult(invDiag, out);
     return;
 }
+
+// start_level and end_level must be in 0-based indexing
+// (*) uses tempvec_lvls for storing intermediate results
+void BaseGeneralMinConstrSolver::InterpolateBack(int start_level, BlockVector& vec_start, int end_level, BlockVector& vec_end) const
+{
+    MFEM_ASSERT(start_level > end_level, "Interpolation makes sense only to the finer levels \n");
+
+    *((*tempvec_lvls)[start_level]) = vec_start;
+
+    for (int lvl = start_level; lvl > end_level; --lvl)
+    {
+        P_R[lvl-1]->Mult(*((*tempvec_lvls)[lvl]), *((*tempvec_lvls)[lvl-1]));
+    }
+
+    vec_end = *((*tempvec_lvls)[end_level]);
+
+    return;
+}
+
 
 // Righthand side at level l is of the form:
 //   rhs_l = (Q_l - Q_{l+1}) where Q_k is an orthogonal L2-projector: W -> W_k
@@ -357,6 +380,8 @@ void BaseGeneralMinConstrSolver::SetUpLvl(int level) const
     else
         Constr_PR = mfem::Mult(*(*Constr_lvls)[level - 1], P_R[level]->GetBlock(0,0));
     Constr_lvls[level] = mfem::Mult(*P_WT, *Constr_PR);
+
+    (*tempvec_lvls)[level + 1] = new BlockVector((*Funct_lvls[level])->RowOffsets());
 
     delete Funct_PR;
     delete Constr_PR;
@@ -566,19 +591,22 @@ void BaseGeneralMinConstrSolver::SetUpCoarseRhsConstr(Vector & Qlminus1_f_arg, V
 void BaseGeneralMinConstrSolver::SetUpCoarseLvl() const
 {
     // 1. eliminating boundary conditions at coarse level
-    (*Constr_lvls)[num_levels-1]->EliminateCols(*bdrdofs_R[0][num_levels-1]);
+    //bdrdofs_R[0][1]->Print();
+    //(*Constr_lvls)[num_levels-1-1]->Print();
+    (*Constr_lvls)[num_levels-1-1]->EliminateCols(*(bdrdofs_R[0][num_levels-1]));
 
     for ( int blk = 0; blk < numblocks; ++blk)
     {
         for ( int dof = 0; dof < bdrdofs_R[blk][num_levels-1]->Size(); ++dof)
-            if (bdrdofs_R[blk][num_levels-1][dof] !=0)
-                (*Funct_lvls)[num_levels-1]->GetBlock(blk,blk).EliminateRowCol(dof);
+            if (bdrdofs_R[blk][num_levels-1][dof] != 0)
+                (*Funct_lvls)[num_levels-1-1]->GetBlock(blk,blk).EliminateRowCol(dof);
     }
 
     // 2. Creating the block matrix from the local parts using dof_truedof relation
 
-    HypreParMatrix * Constr_global = dof_trueDof_W.LeftDiagMult(
-                *(*Constr_lvls)[num_levels-1], dof_trueDof_W.GetColStarts());
+    // FIXME: Is this right?
+    HypreParMatrix * Constr_global = dof_trueDof_Func[0]->LeftDiagMult(
+                *(*Constr_lvls)[num_levels-1-1], dof_trueDof_W.GetColStarts());
 
     HypreParMatrix *ConstrT_global = Constr_global->Transpose();
 
@@ -587,18 +615,19 @@ void BaseGeneralMinConstrSolver::SetUpCoarseLvl() const
     std::vector<HypreParMatrix*> Funct_global(numblocks);
     for ( int blk = 0; blk < numblocks; ++blk)
     {
-        Funct_d_td[blk] = dof_trueDof_Func[blk]->LeftDiagMult((*Funct_lvls)[num_levels-1]->GetBlock(blk,blk));
+        Funct_d_td[blk] = dof_trueDof_Func[blk]->LeftDiagMult((*Funct_lvls)[num_levels-1-1]->GetBlock(blk,blk));
         d_td_T[blk] = dof_trueDof_Func[blk]->Transpose();
 
         Funct_global[blk] = ParMult(d_td_T[blk], Funct_d_td[blk]);
     }
 
     coarse_offsets = new Array<int>(numblocks + 2);
-    coarse_offsets[0] = 0;
+    (*coarse_offsets)[0] = 0;
     for ( int blk = 0; blk < numblocks; ++blk)
-        coarse_offsets[blk + 1] = Funct_global[blk]->Height();
-    coarse_offsets[numblocks + 1] = Constr_global->Height();
-    coarse_offsets->PartialSum();
+        (*coarse_offsets)[blk + 1] = Funct_global[blk]->Height();
+    (*coarse_offsets)[numblocks + 1] = Constr_global->Height();
+    (*coarse_offsets).PartialSum();
+
 
     coarse_matrix = new BlockOperator(*coarse_offsets);
     for ( int blk = 0; blk < numblocks; ++blk)
@@ -760,20 +789,17 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& rhs_func, Vector& rhs_cons
 
     // 4. convert solution from truedof to dof
 
-    Vector temp_coarse(dof_trueDof_Func[0]->Height());
-    Vector Truesol_coarse(trueX.GetBlock(0));
-    dof_trueDof_Func[0]->MultTranspose(Truesol_coarse, temp_coarse); //FIXME: Why is it simply Mult in DivPart implementation?
+    //Vector temp_coarse(dof_trueDof_Func[0]->Height());
+    //Vector Truesol_coarse(trueX.GetBlock(0));
 
-    // 5. interpolate the solution back to the finest level
-    for (int k = ref_levels-1; k>=0; k--){
-
-        vec1.SetSize(P_R[k]->Height());
-        P_R[k]->Mult(sig_c, vec1);
-        sig_c.SetSize(P_R[k]->Height());
-        sig_c = vec1;
+    for ( int blk = 0; blk < numblocks; ++blk)
+    {
+        //dof_trueDof_Func[0]->Mult(trueX.GetBlock(blk), (*(*tempvec_lvls[num_levels-1])).GetBlock(blk));
+        dof_trueDof_Func[0]->Mult(trueX.GetBlock(blk), ((*tempvec_lvls)[num_levels-1])->GetBlock(blk));
     }
 
-    sol_coarse.GetBlock(0) = temp_coarse;
+    // 5. interpolate the solution at coarse level back to the finest level
+    InterpolateBack(num_levels - 1, *((*tempvec_lvls)[num_levels-1]), 0, sol_coarse);
 
     return;
 }

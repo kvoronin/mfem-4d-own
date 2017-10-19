@@ -1103,13 +1103,14 @@ int main(int argc, char *argv[])
     Array<int> ess_allbdr(pmesh->bdr_attributes.Max());
     ess_allbdr = 1;
     std::vector<Array<Array<int>*> > BdrDofs_R(1);
-    Array<Array<int>*> temparray(ref_levels);
-    for (int lvl = 0; lvl < ref_levels; ++lvl)
+    int num_levels = ref_levels + 1;
+    Array<Array<int>*> temparray(num_levels);
+    for (int lvl = 0; lvl < num_levels; ++lvl)
         temparray[lvl] = new Array<int>;
 
     for (int i = 0; i < BdrDofs_R.size(); ++i)
     {
-        BdrDofs_R[i].SetSize(ref_levels);
+        BdrDofs_R[i].SetSize(num_levels);
         //for (int lvl = 0; lvl < ref_levels; ++lvl)
             //BdrDofs_R[i][lvl].SetSize(R_space->GetVSize());
 
@@ -1150,23 +1151,7 @@ int main(int argc, char *argv[])
                 }
 
 #ifdef NEW_STUFF
-                //temparray = new Array<int>();
-                //R_space->GetEssentialVDofs(ess_allbdr, *temparray );
-                //BdrDofs_R[l-1][0] = temparray;
-                /*
-                if (l == 1)
-                    BdrDofs_R[l-1][0]->MakeRef(ess_dof_coarsestlvl_list);
-                else
-                    R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l-1][0] );
-                */
-                //R_space->GetEssentialVDofs(ess_allbdr, *BdrDofs_R[l-1][0] );
-                //BdrDofs_R[l-1][0]->MakeRef(temp);
-                //R_space->GetEssentialVDofs(ess_allbdr, *(BdrDofs_R[l-1][0]) );
-                //if (l == 1)
-                    //BdrDofs_R[0][l-1].MakeRef(ess_dof_coarsestlvl_list);
-                //else
-                    //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l-1]);
-                R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
+                R_space->GetEssentialVDofs(ess_allbdr, *temparray[num_levels - l]);
 #endif
 
                 if (prec_is_MG)
@@ -1254,6 +1239,11 @@ int main(int argc, char *argv[])
 
                 Element_dofs_R[ref_levels - l] = R_Element_to_dofs1;
                 Element_dofs_W[ref_levels - l] = W_Element_to_dofs1;
+
+#ifdef NEW_STUFF
+                if (l == ref_levels)
+                    R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
+#endif
             }
         } // end of loop over levels
     }
@@ -1307,10 +1297,18 @@ int main(int argc, char *argv[])
 
             if (withDiv)
                 W_space->Update();
-            R_space->Update();
+
 #ifdef NEW_STUFF
-            R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
+            R_space->GetEssentialVDofs(ess_allbdr, *temparray[num_levels - l - 1]);
+#endif
+
+            R_space->Update();
+
+#ifdef NEW_STUFF
+            //R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
             //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l]);
+            if (l == par_ref_levels - 1)
+                R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
 #endif
             C_space->Update();
             H_space->Update();
@@ -1529,31 +1527,25 @@ int main(int argc, char *argv[])
     constrfform->Assemble();
     Floc = *constrfform;
 
-
-    /*
-    BaseGeneralMinConstrSolver(int NumLevels,
-                           const Array< SparseMatrix*> &AE_to_e,
-                           const Array< SparseMatrix*> &El_to_dofs_R, const Array< SparseMatrix*> &El_to_dofs_W,
-                           const Array< SparseMatrix*> &Proj_R, const Array< SparseMatrix*> &Proj_W,
-                           const Array<Array<int>*>& BdrDofs_R,
-                           const BlockMatrix& FunctBlockMat, const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
-                           bool Higher_Order_Elements = false);
-    */
-
     //std::cout << "Debugging P_Func: \n";
     //P_Func[0]->RowOffsets().Print();
     //P_Func[0]->ColOffsets().Print();
 
+    /*
+    std::cout << "Debugging BdrDofs_R: \n";
+    std::cout << "BdrDofs_R[0] size = " << BdrDofs_R[0].Size() << "\n";
+    std::cout << "BdrDofs_R[0][0] (size " << BdrDofs_R[0][0]->Size() << ")\n";
+    BdrDofs_R[0][0]->Print();
+    */
+    //std::cout << "BdrDofs_R[0][1] (size " << BdrDofs_R[0][1]->Size() << ")\n";
+    //BdrDofs_R[0][1]->Print();
+
     std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
     Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
 
-    MinConstrSolver NewSolver(ref_levels + 1,
-                                         P_WT,
-                                         Element_dofs_Func, Element_dofs_W,
-                                         Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                                         P_Func, P_W,
-                                         BdrDofs_R,
-                                         Ablockmat, Bloc, Floc);
+    MinConstrSolver NewSolver(ref_levels + 1, P_WT,
+                     Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
+                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc);
 
     if (verbose)
         std::cout << "Calling the new multilevel solver for the first iteration \n";
@@ -1566,6 +1558,9 @@ int main(int argc, char *argv[])
 
     if (verbose)
         std::cout << "First iteration completed successfully!\n";
+
+    std::cout << "Tempy \n";
+    Tempy.Print();
 
     MPI_Finalize();
     return 0;
