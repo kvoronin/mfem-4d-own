@@ -12,6 +12,7 @@
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
+#define COMPARE_WITH_OLD
 
 #include "divfree_solver_tools.hpp"
 
@@ -758,7 +759,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -770,7 +771,7 @@ int main(int argc, char *argv[])
     bool with_multilevel = true;
     bool monolithicMG = false;
 
-    bool useM_in_divpart = false;
+    bool useM_in_divpart = true;
 
     // solver options
     int prec_option = 2;        // defines whether to use preconditioner or not, and which one
@@ -1460,6 +1461,28 @@ int main(int argc, char *argv[])
         std::cout << "Creating an instance of the new multilevel solver \n";
 
     Array<BlockMatrix*> Element_dofs_Func(ref_levels);
+    Array<Array<int>*> row_offsets_El_dofs(ref_levels);
+    Array<Array<int>*> col_offsets_El_dofs(ref_levels);
+    for (int i = 0; i < ref_levels; ++i)
+    {
+        row_offsets_El_dofs[i] = new Array<int>(2);
+        (*row_offsets_El_dofs[i])[0] = 0;
+        (*row_offsets_El_dofs[i])[1] = Element_dofs_R[i]->Height();
+        //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
+        col_offsets_El_dofs[i] = new Array<int>(2);
+        //col_offsets_El_dofs[i].SetSize(2);
+        (*col_offsets_El_dofs[i])[0] = 0;
+        (*col_offsets_El_dofs[i])[1] = Element_dofs_R[i]->Width();
+        //std::cout << "Element_dofs_R[i]->Height() = " << Element_dofs_R[i]->Height() << "\n";
+        //std::cout << "row_offsets_El_dofs[i][0] = " << row_offsets_El_dofs[i][0] << "\n";
+        //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
+        //row_offsets_El_dofs[i]->Print();
+        //col_offsets_El_dofs[i]->Print();
+        Element_dofs_Func[i] = new BlockMatrix(*row_offsets_El_dofs[i], *col_offsets_El_dofs[i]);
+        Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
+    }
+
+    /*
     Array<int> row_offsets_El_dofs(2);
     Array<int> col_offsets_El_dofs(2);
     for (int i = 0; i < ref_levels; ++i)
@@ -1471,8 +1494,28 @@ int main(int argc, char *argv[])
         Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs, col_offsets_El_dofs);
         Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
     }
+    */
 
     Array<BlockMatrix*> P_Func(ref_levels);
+    Array<Array<int>*> row_offsets_P_Func(ref_levels);
+    Array<Array<int>*> col_offsets_P_Func(ref_levels);
+    for (int i = 0; i < ref_levels; ++i)
+    {
+        row_offsets_P_Func[i] = new Array<int>(2);
+        //row_offsets_P_Func[i].SetSize(2);
+        (*row_offsets_P_Func[i])[0] = 0;
+        (*row_offsets_P_Func[i])[1] = P_R[i]->Height();
+        col_offsets_P_Func[i] = new Array<int>(2);
+        //col_offsets_P_Func[i].SetSize(2);
+        (*col_offsets_P_Func[i])[0] = 0;
+        (*col_offsets_P_Func[i])[1] = P_R[i]->Width();
+        P_Func[i] = new BlockMatrix(*row_offsets_P_Func[i], *col_offsets_P_Func[i]);
+        //row_offsets.Print();
+        //col_offsets.Print();
+        P_Func[i]->SetBlock(0,0, P_R[i]);
+    }
+
+    /*
     Array<int> row_offsets_P_Func(2);
     Array<int> col_offsets_P_Func(2);
     for (int i = 0; i < ref_levels; ++i)
@@ -1486,6 +1529,7 @@ int main(int argc, char *argv[])
         //col_offsets.Print();
         P_Func[i]->SetBlock(0,0, P_R[i]);
     }
+    */
 
     Array<SparseMatrix*> P_WT(ref_levels); //AE_e matrices
     for (int i = 0; i < ref_levels; ++i)
@@ -1499,9 +1543,13 @@ int main(int argc, char *argv[])
     ParLinearForm *fform = new ParLinearForm(R_space);
 
     ParBilinearForm *Ablock(new ParBilinearForm(R_space));
+#ifdef COMPARE_WITH_OLD
+    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+#else
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+#endif
     Ablock->Assemble();
-    Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_temp, *fform);
+    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_temp, *fform); // ruins
     Ablock->Finalize();
     auto tempA = Ablock->ParallelAssemble();
     SparseMatrix Aloc = Ablock->SpMat();
@@ -1509,27 +1557,48 @@ int main(int argc, char *argv[])
     offsets[0] = 0;
     offsets[1] = Aloc.Height();
     BlockMatrix Ablockmat(offsets);
+    /*
+#ifdef COMPARE_WITH_OLD
+    int nrows = Aloc.Height();
+    int * ia = new int[nrows + 1];
+    ia[0] = 0;
+    for ( int i = 0; i < nrows; ++i)
+        ia[i+1] = ia[i] + 1;
+    int nnz = ia[nrows];
+    int * ja = new int[nnz];
+    double * aa = new double[nnz];
+    for ( int i = 0; i < nnz; ++i)
+    {
+        ja[i] = i;
+        aa[i] = 1.0;
+    }
+    SparseMatrix Aid(ia,ja,aa,nrows,nrows);
+    Ablockmat.SetBlock(0,0,&Aid);
+#else
+    Ablockmat.SetBlock(0,0,&Aloc);
+#endif
+    */
     Ablockmat.SetBlock(0,0,&Aloc);
 
     ParLinearForm *ggform = new ParLinearForm(W_space);
     ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
     Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
     Bblock->Assemble();
-    Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_temp, *ggform);
+    //Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_temp, *ggform); // ruins
     Bblock->Finalize();
     auto tempB = Bblock->ParallelAssemble();
     SparseMatrix Bloc = Bblock->SpMat();
 
-    Vector Floc(P_W[0]->Height());
-
     ParLinearForm * constrfform = new ParLinearForm(W_space);
     constrfform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
     constrfform->Assemble();
+
+    Vector Floc(P_W[0]->Height());
     Floc = *constrfform;
 
-    //std::cout << "Debugging P_Func: \n";
-    //P_Func[0]->RowOffsets().Print();
-    //P_Func[0]->ColOffsets().Print();
+    std::cout << "Debugging P_Func: \n";
+    P_Func[0]->RowOffsets().Print();
+    P_Func[0]->ColOffsets().Print();
 
     /*
     std::cout << "Debugging BdrDofs_R: \n";
@@ -1543,9 +1612,15 @@ int main(int argc, char *argv[])
     std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
     Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
 
+    //std::cout << "Looking at input:";
+    //Floc.Print();
+
+    //std::cout << "Looking at Bloc \n";
+    //Bloc.Print();
+
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc);
+                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, ess_dof_coarsestlvl_list);
 
     if (verbose)
         std::cout << "Calling the new multilevel solver for the first iteration \n";
@@ -1559,11 +1634,14 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "First iteration completed successfully!\n";
 
-    std::cout << "Tempy \n";
-    Tempy.Print();
+#ifdef COMPARE_WITH_OLD
+    if (verbose)
+        std::cout << "sigmahat from new solver (size " << Tempy.Size() << "): \n";
+    //Tempy.Print();
+#endif
 
-    MPI_Finalize();
-    return 0;
+    //MPI_Finalize();
+    //return 0;
 #endif
 
     chrono.Clear();
@@ -1614,6 +1692,9 @@ int main(int argc, char *argv[])
             F_fine = *gform;
             G_fine = .0;
 
+            //std::cout << "Looking at B_local \n";
+            //B_local->Print();
+
             divp.div_part(ref_levels,
                           M_local, B_local,
                           G_fine,
@@ -1635,6 +1716,38 @@ int main(int argc, char *argv[])
     #endif
 
             *Sigmahat = sigmahat_pau;
+
+#ifdef COMPARE_WITH_OLD
+            if (verbose)
+                std::cout << "sigmahat_pau (size " << sigmahat_pau.Size() << "): \n";
+            //sigmahat_pau.Print();
+
+            std::cout << "Comparing input righthand sides: \n";
+            Vector diff1(F_fine.Size());
+            diff1 = F_fine;
+            diff1 -= Floc;
+            std::cout << "Norm of difference old vs new = " << diff1.Norml2() / sqrt(diff1.Size()) << "\n";
+            std::cout << "Rel. norm of difference old vs new = " << (diff1.Norml2() / sqrt(diff1.Size())) / (F_fine.Norml2() / sqrt(F_fine.Size())) << "\n";
+
+            std::cout << "Comparing input matrices for constraint: \n";
+            SparseMatrix diff2(*B_local);
+            diff2.Add(-1.0, Bloc);
+            std::cout << "Norm of difference old vs new = " << diff2.MaxNorm() << "\n";
+            std::cout << "Rel. norm of difference old vs new = " << diff2.MaxNorm() / B_local->MaxNorm() << "\n";
+
+            std::cout << "Comparing input matrices for functional: \n";
+            SparseMatrix diff3(*M_local);
+            diff3.Add(-1.0, Aloc);
+            std::cout << "Norm of difference old vs new = " << diff3.MaxNorm() << "\n";
+            std::cout << "Rel. norm of difference old vs new = " << diff3.MaxNorm() / M_local->MaxNorm() << "\n";
+
+            std::cout << "Comparing solutions (the most important!): \n";
+            Vector diff(sigmahat_pau.Size());
+            diff = sigmahat_pau;
+            diff -= Tempy;
+            std::cout << "Norm of difference old vs new = " << diff.Norml2() / sqrt(diff.Size()) << "\n";
+            std::cout << "Rel. norm of difference old vs new = " << (diff.Norml2() / sqrt(diff.Size())) / (sigmahat_pau.Norml2() / sqrt(sigmahat_pau.Size())) << "\n";
+#endif
         }
         else
         {
