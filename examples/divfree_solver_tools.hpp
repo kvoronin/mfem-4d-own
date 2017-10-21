@@ -331,6 +331,28 @@ void BaseGeneralMinConstrSolver::InterpolateBack(int start_level, BlockVector& v
 // where P_l columns compose the basis of the coarser space.
 void BaseGeneralMinConstrSolver::SetUpLocalRhsConstr(int level) const
 {
+    /*
+    // FIXME: Get rid of tempvec
+    ProjectFinerToCoarser(*Qlminus1_f, *rhs_constr, *P_W[level]);
+
+    Vector tempvec;
+    tempvec = *rhs_constr;
+    tempvec -= *Qlminus1_f;
+
+    *Qlminus1_f += tempvec;
+
+    tempvec *= -1;
+
+    rhs_constr->SetSize(P_W[level]->Width());
+    P_W[level]->MultTranspose(tempvec, *rhs_constr );
+
+    tempvec = *Qlminus1_f;
+    Qlminus1_f->SetSize(P_W[level]->Width());
+    P_W[level]->MultTranspose(tempvec, *Qlminus1_f );
+    */
+
+    // works only for 2 level case
+
     // 1. rhs_constr = P_{l-1,l} * Q_{l-1} * f = Q_l * f
     ProjectFinerToCoarser(*Qlminus1_f,*rhs_constr, *P_W[level]);
 
@@ -563,9 +585,8 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& rhs_
                 Array<int> Wtmp_j((*AE_edofs_W)[level]->GetRowColumns(AE), (*AE_edofs_W)[level]->RowSize(AE));
                 sub_B.SetSize(Wtmp_j.Size(), Local_inds[blk]->Size());
                 B_fine.GetSubMatrix(Wtmp_j, *Local_inds[blk], sub_B);
-                /*
 #ifdef COMPARE_WITH_OLD
-                if (AE == 51)
+                if (AE == 0)
                 {
                     std::cout << "Looking at one local problem, AE = " << AE << "\n";
                     std::cout << "Wtmp_j \n";
@@ -575,7 +596,6 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& rhs_
                         //std::cout << rhs_constr[i] << "\n";
                 }
 #endif
-                */
                 rhs_constr.GetSubVector(Wtmp_j, sub_F);
             }
 
@@ -595,7 +615,7 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& rhs_
             rhs_func.GetBlock(blk).GetSubVector(*Local_inds[blk], sub_G.GetBlock(blk));
         }
 
-        MFEM_ASSERT(sub_F.Sum() < 1.0e-13, "checking local average at each level " << sub_F.Sum());
+        //MFEM_ASSERT(sub_F.Sum() < 1.0e-13, "checking local average at each level " << sub_F.Sum());
 
         BlockVector sol_loc(sub_G_offsets);
         sol_loc = 0.0;
@@ -603,9 +623,8 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& rhs_
         // Solving local problem at the agglomerate element AE:
         SolveLocalProblem(LocalAE_Matrices, sub_B, sub_G, sub_F, sol_loc);
 
-        /*
 #ifdef COMPARE_WITH_OLD
-        if (AE == 51)
+        if (AE == 0)
         {
             //std::cout << "Looking at one local problem \n";
             std::cout << "sub_G \n";
@@ -620,7 +639,6 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& rhs_
             sol_loc.GetBlock(0).Print();
         }
 #endif
-        */
 
         // FIXME: Recomputing Rtmp_j is redundant
 
@@ -1229,9 +1247,8 @@ public:
                 // Solving local problem:
                 Local_problem(sub_M, sub_B, sub_G, sub_F,sig);
 
-                /*
 #ifdef COMPARE_WITH_OLD
-                if (e == 51)
+                if (e == 0)
                 {
                     std::cout << "Looking at one local problem in div part, e = " << e << "\n";
                     std::cout << "Wtmp_j \n";
@@ -1250,7 +1267,6 @@ public:
                     sig.Print();
                 }
 #endif
-                */
 
 #ifdef MFEM_DEBUG
                 // Checking if the local problems satisfy the condition
