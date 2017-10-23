@@ -1461,24 +1461,24 @@ int main(int argc, char *argv[])
         std::cout << "Creating an instance of the new multilevel solver \n";
 
     Array<BlockMatrix*> Element_dofs_Func(ref_levels);
-    Array<Array<int>*> row_offsets_El_dofs(ref_levels);
-    Array<Array<int>*> col_offsets_El_dofs(ref_levels);
-    for (int i = 0; i < ref_levels; ++i)
+
+    Array<int>* row_offsets_El_dofs = new Array<int>[num_levels - 1];
+    Array<int>* col_offsets_El_dofs = new Array<int>[num_levels - 1];
+    for (int i = 0; i < num_levels - 1; ++i)
     {
-        row_offsets_El_dofs[i] = new Array<int>(2);
-        (*row_offsets_El_dofs[i])[0] = 0;
-        (*row_offsets_El_dofs[i])[1] = Element_dofs_R[i]->Height();
+        row_offsets_El_dofs[i].SetSize(2);
+        row_offsets_El_dofs[i][0] = 0;
+        row_offsets_El_dofs[i][1] = Element_dofs_R[i]->Height();
         //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
-        col_offsets_El_dofs[i] = new Array<int>(2);
-        //col_offsets_El_dofs[i].SetSize(2);
-        (*col_offsets_El_dofs[i])[0] = 0;
-        (*col_offsets_El_dofs[i])[1] = Element_dofs_R[i]->Width();
+        col_offsets_El_dofs[i].SetSize(2);
+        col_offsets_El_dofs[i][0] = 0;
+        col_offsets_El_dofs[i][1] = Element_dofs_R[i]->Width();
         //std::cout << "Element_dofs_R[i]->Height() = " << Element_dofs_R[i]->Height() << "\n";
         //std::cout << "row_offsets_El_dofs[i][0] = " << row_offsets_El_dofs[i][0] << "\n";
         //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
         //row_offsets_El_dofs[i]->Print();
         //col_offsets_El_dofs[i]->Print();
-        Element_dofs_Func[i] = new BlockMatrix(*row_offsets_El_dofs[i], *col_offsets_El_dofs[i]);
+        Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs[i], col_offsets_El_dofs[i]);
         Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
     }
 
@@ -1497,6 +1497,7 @@ int main(int argc, char *argv[])
     */
 
     Array<BlockMatrix*> P_Func(ref_levels);
+    /*
     Array<Array<int>*> row_offsets_P_Func(ref_levels);
     Array<Array<int>*> col_offsets_P_Func(ref_levels);
     for (int i = 0; i < ref_levels; ++i)
@@ -1510,6 +1511,58 @@ int main(int argc, char *argv[])
         (*col_offsets_P_Func[i])[0] = 0;
         (*col_offsets_P_Func[i])[1] = P_R[i]->Width();
         P_Func[i] = new BlockMatrix(*row_offsets_P_Func[i], *col_offsets_P_Func[i]);
+        //row_offsets.Print();
+        //col_offsets.Print();
+        P_Func[i]->SetBlock(0,0, P_R[i]);
+    }
+    */
+
+    /*
+    // test of Array<Array<int>>
+    Array<Array<int> > arr1(2);
+    //Array<Array<int> > arr2(2);
+    arr1[0].SetSize(2);
+    arr1[0][0] = 1;
+    arr1[0][1] = 2;
+
+    //arr2[0].SetSize(2);
+    //arr2[0][0] = 3;
+    //arr2[0][1] = 4;
+
+    arr1[1].SetSize(2);
+    arr1[1][0] = 10;
+    arr1[1][1] = 20;
+
+    //arr2[1].SetSize(2);
+    //arr2[1][0] = 30;
+    //arr2[1][1] = 40;
+
+    arr1[0].Print();
+    arr1[1].Print();
+    //arr2[0].Print();
+    //arr2[1].Print();
+
+    MPI_Finalize();
+    return 0;
+    */
+
+    Array<int> * row_offsets_P_Func = new Array<int>[num_levels - 1];
+    Array<int> * col_offsets_P_Func = new Array<int>[num_levels - 1];
+    for (int i = 0; i < num_levels - 1; ++i)
+    {
+        row_offsets_P_Func[i].SetSize(2);
+        row_offsets_P_Func[i][0] = 0;
+        row_offsets_P_Func[i][1] = P_R[i]->Height();
+        //std::cout << "row offsets Func \n";
+        //row_offsets_P_Func[i].Print();
+        col_offsets_P_Func[i].SetSize(2);
+        col_offsets_P_Func[i][0] = 0;
+        col_offsets_P_Func[i][1] = P_R[i]->Width();
+        //std::cout << "col offsets Func \n";
+        //col_offsets_P_Func[i].Print();
+        //std::cout << "row offsets Func again \n";
+        //row_offsets_P_Func[i].Print();
+        P_Func[i] = new BlockMatrix(row_offsets_P_Func[i], col_offsets_P_Func[i]);
         //row_offsets.Print();
         //col_offsets.Print();
         P_Func[i]->SetBlock(0,0, P_R[i]);
@@ -1596,9 +1649,9 @@ int main(int argc, char *argv[])
     Vector Floc(P_W[0]->Height());
     Floc = *constrfform;
 
-    std::cout << "Debugging P_Func: \n";
-    P_Func[0]->RowOffsets().Print();
-    P_Func[0]->ColOffsets().Print();
+    //std::cout << "Debugging P_Func: \n";
+    //P_Func[0]->RowOffsets().Print();
+    //P_Func[0]->ColOffsets().Print();
 
     /*
     std::cout << "Debugging BdrDofs_R: \n";
@@ -1617,6 +1670,9 @@ int main(int argc, char *argv[])
 
     //std::cout << "Looking at Bloc \n";
     //Bloc.Print();
+
+    if (verbose)
+        std::cout << "Calling constructor of the new solver \n";
 
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
