@@ -12,7 +12,7 @@
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
-#define COMPARE_WITH_OLD
+//#define COMPARE_WITH_OLD
 
 #include "divfree_solver_tools.hpp"
 
@@ -1649,19 +1649,6 @@ int main(int argc, char *argv[])
     Vector Floc(P_W[0]->Height());
     Floc = *constrfform;
 
-    //std::cout << "Debugging P_Func: \n";
-    //P_Func[0]->RowOffsets().Print();
-    //P_Func[0]->ColOffsets().Print();
-
-    /*
-    std::cout << "Debugging BdrDofs_R: \n";
-    std::cout << "BdrDofs_R[0] size = " << BdrDofs_R[0].Size() << "\n";
-    std::cout << "BdrDofs_R[0][0] (size " << BdrDofs_R[0][0]->Size() << ")\n";
-    BdrDofs_R[0][0]->Print();
-    */
-    //std::cout << "BdrDofs_R[0][1] (size " << BdrDofs_R[0][1]->Size() << ")\n";
-    //BdrDofs_R[0][1]->Print();
-
     std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
     Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
 
@@ -1674,9 +1661,15 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "Calling constructor of the new solver \n";
 
+    chrono.Clear();
+    chrono.Start();
+
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
                      P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, ess_dof_coarsestlvl_list);
+
+    if (verbose)
+        std::cout << "New solver was set up in " << chrono.RealTime() << " seconds.\n";
 
     if (verbose)
         std::cout << "Calling the new multilevel solver for the first iteration \n";
@@ -1685,10 +1678,70 @@ int main(int argc, char *argv[])
     Tempx = 0.0;
     Vector Tempy(Tempx.Size());
     Tempy = 0.0;
+
+    chrono.Clear();
+    chrono.Start();
+
+    /*
     NewSolver.Mult(Tempx, Tempy);
+
+    chrono.Stop();
+
+    if (verbose)
+        std::cout << "Particular solution found by the new solver in " << chrono.RealTime() << " seconds.\n";
 
     if (verbose)
         std::cout << "First iteration completed successfully!\n";
+
+    Vector Temp2y(Tempy.Size());
+    Temp2y = 0.0;
+
+    chrono.Clear();
+    chrono.Start();
+
+    NewSolver.Mult(Tempy, Temp2y);
+
+    chrono.Stop();
+
+    if (verbose)
+        std::cout << "Second iteration of the new solver was done in " << chrono.RealTime() << " seconds.\n";
+
+    if (verbose)
+        std::cout << "Second iteration completed successfully!\n";
+    */
+
+    // doing a fixed number of iterations of the new solver
+    int ntestiter = 20;
+    for (int i = 0; i < ntestiter; ++i)
+    {
+        NewSolver.Mult(Tempx, Tempy);
+        Tempx = Tempy;
+    }
+
+    chrono.Stop();
+
+    if (verbose)
+        std::cout << ntestiter << " iteration(s) of the new solver was(were) done in " << chrono.RealTime() << " seconds.\n";
+
+    ParGridFunction * NewSigmahat = new ParGridFunction(R_space);
+    *NewSigmahat = Tempx;
+
+    {
+        int order_quad = max(2, 2*feorder+1);
+        const IntegrationRule *irs[Geometry::NumGeom];
+        for (int i=0; i < Geometry::NumGeom; ++i)
+        {
+            irs[i] = &(IntRules.Get(i, order_quad));
+        }
+
+        double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
+        double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+        if (verbose)
+            if ( norm_sigma > MYZEROTOL )
+                cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
+            else
+                cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
+    }
 
 #ifdef COMPARE_WITH_OLD
     if (verbose)
