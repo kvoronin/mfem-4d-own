@@ -16,8 +16,6 @@
 
 #include "divfree_solver_tools.hpp"
 
-//#undef NEW_STUFF
-
 #define USE_CURLMATRIX
 
 //#define DEBUGGING // should be switched off in general
@@ -1711,10 +1709,11 @@ int main(int argc, char *argv[])
     */
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 20;
+    int ntestiter = 1;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
+
         Tempx = Tempy;
     }
 
@@ -1741,7 +1740,25 @@ int main(int argc, char *argv[])
                 cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
             else
                 cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
+
+        DiscreteLinearOperator Div(R_space, W_space);
+        Div.AddDomainInterpolator(new DivergenceInterpolator());
+        ParGridFunction DivSigma(W_space);
+        Div.Assemble();
+        Div.Mult(*NewSigmahat, DivSigma);
+
+        double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
+        double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
+
+        if (verbose)
+        {
+            cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
+                      << err_div/norm_div  << "\n";
+        }
     }
+
+    MPI_Finalize();
+    return 0;
 
 #ifdef COMPARE_WITH_OLD
     if (verbose)
