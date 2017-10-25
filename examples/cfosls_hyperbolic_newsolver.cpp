@@ -1870,7 +1870,7 @@ int main(int argc, char *argv[])
             std::cout << "Comparing solutions (the most important!): \n";
             Vector diff(sigmahat_pau.Size());
             diff = sigmahat_pau;
-            diff -= Tempy;
+            diff -= *NewSigmahat;
             std::cout << "Norm of difference old vs new = " << diff.Norml2() / sqrt(diff.Size()) << "\n";
             std::cout << "Rel. norm of difference old vs new = " << (diff.Norml2() / sqrt(diff.Size())) / (sigmahat_pau.Norml2() / sqrt(sigmahat_pau.Size())) << "\n";
 #endif

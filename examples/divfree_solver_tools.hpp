@@ -168,6 +168,11 @@ void BaseGeneralMinConstrSolver::Mult(const Vector & x, Vector & y) const
     Funct.Mult(*yblock, res);
     double func_norm = res.Norml2() / sqrt (res.Size());
     std::cout << "Functional norm at the end of iteration: " << func_norm << " ... \n";
+    Vector res_constr(Constr.Height());
+    Constr.Mult(yblock->GetBlock(0), res_constr);
+    res_constr -= ConstrRhs;
+    double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
+    std::cout << "Constraint residual norm at the end of iteration: " << constr_norm << " ... \n";
 #endif
 
 }
@@ -286,6 +291,11 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& rhs_func, BlockVector& sol) 
     Funct.Mult(sol, res);
     double func_norm = res.Norml2() / sqrt (res.Size());
     std::cout << "Functional norm after finer levels update: " << func_norm << " ... \n";
+    Vector res_constr(Constr.Height());
+    Constr.Mult(sol.GetBlock(0), res_constr);
+    res_constr -= ConstrRhs;
+    double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
+    std::cout << "Constraint residual norm after finer levels update: " << constr_norm << " ... \n";
 #endif
 
 
@@ -310,6 +320,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& rhs_func, BlockVector& sol) 
     SetUpCoarsestRhsFunc();
 #endif
 
+    //*((*rhsfunc_lvls)[num_levels-1]) = 0.0;
 
     /*
 #ifdef COMPARE_WITH_OLD
@@ -322,6 +333,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& rhs_func, BlockVector& sol) 
     if (*current_iterate > 0 && rhs_constr->Norml2() / rhs_constr->Size() > 1.0e-13)
         std::cout << "Error! Rhs in the coarse contraint is not 0 for iteration "
                   << *current_iterate << "!\n";
+    //std::cout << "coarse rhs constr norm = " << rhs_constr->Norml2() / rhs_constr->Size() << "\n";
 #endif
 
     // 3.4 solve coarse problem
@@ -329,6 +341,30 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& rhs_func, BlockVector& sol) 
 
     // 4. assemble the final solution
     sol += *sol_coarse;
+
+#ifdef DEBUG_INFO
+    {
+        Vector res_constr(Constr.Height());
+        Constr.Mult(sol.GetBlock(0), res_constr);
+        res_constr -= ConstrRhs;
+        double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
+        std::cout << "Constraint residual norm after the coarsest lvl"
+                     " update: " << constr_norm << " ... \n";
+        Vector temp1(Constr.Height());
+        Vector temp2(Constr.Width());
+        temp2 = res_constr;
+        for ( int lvl = 0; lvl < num_levels - 1; ++lvl)
+        {
+            temp1.SetSize(P_W[lvl]->Width());
+            P_W[lvl]->MultTranspose(temp2, temp1);
+            temp2.SetSize(temp1.Size());
+            temp2 = temp1;
+        }
+        double constr_normm = temp1.Norml2() / sqrt (temp1.Size());
+        std::cout << "Constraint residual norm after the coarsest lvl update"
+                     " measured at the coarsest level: " << constr_normm << " ... \n";
+    }
+#endif
 
     // 5. restore sizes of righthand side vectors
     // which were changed during transfer between levels
@@ -983,7 +1019,7 @@ void MinConstrSolver::SolveLocalProblem(std::vector<DenseMatrix> &FunctBlks, Den
     return;
 }
 
-void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& rhs_constr, BlockVector& sol_coarse) const
+void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& rhsvec_constr, BlockVector& sol_coarse) const
 {
     // 1. set up the solver parameters
 
@@ -1005,16 +1041,22 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& rh
 
     // 2. set up solution and righthand side vectors
     BlockVector trueX(*coarse_offsets), trueRhs(*coarse_offsets);
-    trueX = 0;
+    trueX = 0.0;
 
-    trueRhs = 0;
+    //for ( int blk = 0; blk < coarse_offsets->Size() - 1; ++blk)
+        //trueRhs.GetBlock(blk) = 0.0;
+    trueRhs = 0.0;
+
     //std::cout << "size before " << trueRhs.GetBlock(0).Size() << "\n";
-    MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarserhs_func.GetBlock(0).Size(),
+    MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarserhs_func.GetBlock(0).Size() &&
+                trueRhs.GetBlock(1).Size() == rhsvec_constr.Size(),
                 "Sizes mismatch when finalizing rhs at the coarsest level!\n");
     trueRhs.GetBlock(0) = coarserhs_func.GetBlock(0);
     //std::cout << "size after " << trueRhs.GetBlock(0).Size() << "\n";
     if (*current_iterate == 0) // else it is simply 0
-        trueRhs.GetBlock(1) = rhs_constr;
+        trueRhs.GetBlock(1) = rhsvec_constr;
+
+    //trueRhs.GetBlock(0) = 0.0;
 
     /*
 #ifdef COMPARE_WITH_OLD
@@ -1031,11 +1073,21 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& rh
     // 3. solve the linear system with preconditioned MINRES.
     solver.Mult(trueRhs, trueX);
 
+#ifdef DEBUG_INFO
+    std::cout << "Checking residual in the constraint after solving the coarsest level problem:\n";
+    BlockVector res(*coarse_offsets);
+    coarse_matrix->Mult(trueX, res);
+    res -= trueRhs;
+    double constr_resnorm = res.GetBlock(coarse_offsets->Size() - 1 - 1).Norml2() /
+            res.GetBlock(coarse_offsets->Size() - 1 - 1).Size();
+    std::cout << "constr_resnorm at the coarsest level = " << constr_resnorm << "\n";
+#endif
+
     // 4. convert solution from truedof to dof
 
     for ( int blk = 0; blk < numblocks; ++blk)
     {
-        dof_trueDof_Func[0]->Mult(trueX.GetBlock(blk), ((*tempvec_lvls)[num_levels-1])->GetBlock(blk));
+        dof_trueDof_Func[blk]->Mult(trueX.GetBlock(blk), ((*tempvec_lvls)[num_levels-1])->GetBlock(blk));
     }
 
     // 5. interpolate the solution at coarse level back to the finest level
