@@ -12,7 +12,7 @@
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
-//#define COMPARE_WITH_OLD
+#define COMPARE_WITH_OLD
 
 #include "divfree_solver_tools.hpp"
 
@@ -877,6 +877,8 @@ int main(int argc, char *argv[])
         std::cout << "For the records: numsol = " << numsol
                   << ", mesh_file = " << mesh_file << "\n";
 
+    Transport_test_divfree Mytest(nDimensions, numsol, numcurl);
+
     if (verbose)
         cout << "Number of mpi processes: " << num_procs << endl << flush;
 
@@ -1118,6 +1120,12 @@ int main(int argc, char *argv[])
         //BdrDofs_R[i][0] = new Array<int>;
     }
     //Array<int> * temparray;
+    std::vector<Array<int>*> ess_dof_coarsestlvl_func(1);
+    std::vector<Vector*> ess_dofvalues_coarsestlvl_func(1);
+    ParGridFunction * sigma_exact_coarse;
+    std::vector<Array<int>*> ess_dof_finestlvl_func(1);
+    std::vector<Vector*> ess_dofvalues_finestlvl_func(1);
+    ParGridFunction * sigma_exact_finest;
 #endif
 
     chrono.Clear();
@@ -1146,6 +1154,8 @@ int main(int argc, char *argv[])
                 if (l == 1)
                 {
                     R_space->GetEssentialVDofs(ess_bdrSigma, ess_dof_coarsestlvl_list);
+                    sigma_exact_coarse = new ParGridFunction(R_space);
+                    sigma_exact_coarse->ProjectCoefficient(*(Mytest.sigma));
                     //ess_dof_list.Print();
                 }
 
@@ -1346,12 +1356,19 @@ int main(int argc, char *argv[])
 
 #ifdef NEW_STUFF
     BdrDofs_R[0].MakeRef(temparray);
+    ess_dof_coarsestlvl_func[0] = &ess_dof_coarsestlvl_list;
+    ess_dofvalues_coarsestlvl_func[0] = sigma_exact_coarse;
+
+    Array<int> ess_dof_finestlvl_list;
+    R_space->GetEssentialVDofs(ess_bdrSigma, ess_dof_finestlvl_list);
+    sigma_exact_finest = new ParGridFunction(R_space);
+    sigma_exact_finest->ProjectCoefficient(*(Mytest.sigma));
+    ess_dof_finestlvl_func[0] = &ess_dof_finestlvl_list;
+    ess_dofvalues_finestlvl_func[0] = sigma_exact_finest;
 #endif
     //if(dim==3) pmesh->ReorientTetMesh();
 
     pmesh->PrintInfo(std::cout); if(verbose) cout << "\n";
-
-    Transport_test_divfree Mytest(nDimensions, numsol, numcurl);
 
     // 6. Define a parallel finite element space on the parallel mesh. Here we
     //    use the Raviart-Thomas finite elements of the specified order.
@@ -1656,6 +1673,16 @@ int main(int argc, char *argv[])
     //std::cout << "Looking at Bloc \n";
     //Bloc.Print();
 
+    BlockVector Xinit(Ablockmat.ColOffsets());
+    Xinit.GetBlock(0) = 0.0;
+    MFEM_ASSERT(Xinit.GetBlock(0).Size() == sigma_exact_finest->Size(),
+                "Xinit and sigma_exact_finest have different sizes! \n");
+    for (int i = 0; i < sigma_exact_finest->Size(); ++i )
+    {
+        if ((*(BdrDofs_R[0][0]))[i] > 0)
+            Xinit.GetBlock(0)[i] = (*sigma_exact_finest)[i];
+    }
+
     if (verbose)
         std::cout << "Calling constructor of the new solver \n";
 
@@ -1664,7 +1691,9 @@ int main(int argc, char *argv[])
 
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, ess_dof_coarsestlvl_list);
+                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, Xinit);
+                     //ess_dof_coarsestlvl_func, ess_dofvalues_coarsestlvl_func,
+                     //ess_dof_finestlvl_func, ess_dofvalues_finestlvl_func);
 
     if (verbose)
         std::cout << "New solver was set up in " << chrono.RealTime() << " seconds.\n";
@@ -1728,7 +1757,7 @@ int main(int argc, char *argv[])
     {
         int order_quad = max(2, 2*feorder+1);
         const IntegrationRule *irs[Geometry::NumGeom];
-        for (int i=0; i < Geometry::NumGeom; ++i)
+        for (int i = 0; i < Geometry::NumGeom; ++i)
         {
             irs[i] = &(IntRules.Get(i, order_quad));
         }
@@ -1757,13 +1786,13 @@ int main(int argc, char *argv[])
         }
     }
 
-    MPI_Finalize();
-    return 0;
+    //MPI_Finalize();
+    //return 0;
 
 #ifdef COMPARE_WITH_OLD
     if (verbose)
-        std::cout << "sigmahat from new solver (size " << Tempy.Size() << "): \n";
-    //Tempy.Print();
+        std::cout << "sigmahat from new solver (size " << NewSigmahat->Size() << "): \n";
+    //NewSigmahat->Print();
 #endif
 
     //MPI_Finalize();
