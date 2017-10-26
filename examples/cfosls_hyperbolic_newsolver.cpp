@@ -757,7 +757,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -1691,7 +1691,7 @@ int main(int argc, char *argv[])
 
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, Xinit);
+                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list);
                      //ess_dof_coarsestlvl_func, ess_dofvalues_coarsestlvl_func,
                      //ess_dof_finestlvl_func, ess_dofvalues_finestlvl_func);
 
@@ -1700,6 +1700,8 @@ int main(int argc, char *argv[])
 
     if (verbose)
         std::cout << "Calling the new multilevel solver for the first iteration \n";
+
+    ParGridFunction * NewSigmahat = new ParGridFunction(R_space);
 
     Vector Tempx(sigma_exact_temp->Size());
     Tempx = 0.0;
@@ -1738,12 +1740,45 @@ int main(int argc, char *argv[])
     */
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 1;
+    int ntestiter = 5;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
 
         Tempx = Tempy;
+
+        *NewSigmahat = Tempx;
+        {
+            int order_quad = max(2, 2*feorder+1);
+            const IntegrationRule *irs[Geometry::NumGeom];
+            for (int i = 0; i < Geometry::NumGeom; ++i)
+            {
+                irs[i] = &(IntRules.Get(i, order_quad));
+            }
+
+            double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
+            double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+            if (verbose)
+                if ( norm_sigma > MYZEROTOL )
+                    cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
+                else
+                    cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
+
+            DiscreteLinearOperator Div(R_space, W_space);
+            Div.AddDomainInterpolator(new DivergenceInterpolator());
+            ParGridFunction DivSigma(W_space);
+            Div.Assemble();
+            Div.Mult(*NewSigmahat, DivSigma);
+
+            double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
+            double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
+
+            if (verbose)
+            {
+                cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
+                          << err_div/norm_div  << "\n";
+            }
+        }
     }
 
     chrono.Stop();
@@ -1751,40 +1786,8 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << ntestiter << " iteration(s) of the new solver was(were) done in " << chrono.RealTime() << " seconds.\n";
 
-    ParGridFunction * NewSigmahat = new ParGridFunction(R_space);
-    *NewSigmahat = Tempx;
-
-    {
-        int order_quad = max(2, 2*feorder+1);
-        const IntegrationRule *irs[Geometry::NumGeom];
-        for (int i = 0; i < Geometry::NumGeom; ++i)
-        {
-            irs[i] = &(IntRules.Get(i, order_quad));
-        }
-
-        double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
-        double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
-        if (verbose)
-            if ( norm_sigma > MYZEROTOL )
-                cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
-            else
-                cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
-
-        DiscreteLinearOperator Div(R_space, W_space);
-        Div.AddDomainInterpolator(new DivergenceInterpolator());
-        ParGridFunction DivSigma(W_space);
-        Div.Assemble();
-        Div.Mult(*NewSigmahat, DivSigma);
-
-        double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
-        double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
-
-        if (verbose)
-        {
-            cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
-                      << err_div/norm_div  << "\n";
-        }
-    }
+    if (verbose)
+        std::cout << "\n";
 
     //MPI_Finalize();
     //return 0;
