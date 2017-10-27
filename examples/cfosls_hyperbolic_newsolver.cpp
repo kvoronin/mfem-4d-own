@@ -13,6 +13,7 @@
 
 #define NEW_STUFF // for new multilevel solver
 #define COMPARE_WITH_OLD
+#define EXACTSOL_INIT
 
 #include "divfree_solver_tools.hpp"
 
@@ -757,7 +758,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -1679,7 +1680,10 @@ int main(int argc, char *argv[])
                 "Xinit and sigma_exact_finest have different sizes! \n");
     for (int i = 0; i < sigma_exact_finest->Size(); ++i )
     {
-        if ((*(BdrDofs_R[0][0]))[i] > 0)
+        //if ((*(BdrDofs_R[0][0]))[i] != 0)
+#ifndef EXACTSOL_INIT
+        if ( ess_dof_finestlvl_list[i] != 0)
+#endif
             Xinit.GetBlock(0)[i] = (*sigma_exact_finest)[i];
     }
 
@@ -1692,8 +1696,6 @@ int main(int argc, char *argv[])
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
                      P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list);
-                     //ess_dof_coarsestlvl_func, ess_dofvalues_coarsestlvl_func,
-                     //ess_dof_finestlvl_func, ess_dofvalues_finestlvl_func);
 
     if (verbose)
         std::cout << "New solver was set up in " << chrono.RealTime() << " seconds.\n";
@@ -1740,7 +1742,7 @@ int main(int argc, char *argv[])
     */
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 5;
+    int ntestiter = 1;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
@@ -1779,6 +1781,69 @@ int main(int argc, char *argv[])
                           << err_div/norm_div  << "\n";
             }
         }
+
+        {
+            ParGridFunction * sigma_exact = new ParGridFunction(R_space);
+            sigma_exact->ProjectCoefficient(*(Mytest.sigma));
+
+            Vector tempp(sigma_exact->Size());
+            tempp = *sigma_exact;
+            tempp -= Xinit;
+
+            std::cout << "norm of sigma_exact = " << sigma_exact->Norml2() / sqrt (sigma_exact->Size()) << "\n";
+            std::cout << "norm of sigma_exact - Xinit = " << tempp.Norml2() / sqrt (tempp.Size()) << "\n";
+
+            if (i == 0)
+            {
+                Vector res(Ablockmat.GetBlock(0,0).Height());
+                Ablockmat.GetBlock(0,0).Mult(*sigma_exact, res);
+                double func_norm = res.Norml2() / sqrt (res.Size());
+                std::cout << "Functional norm for sigma_exact:  = " << func_norm << " ... \n";
+
+            }
+
+            char vishost[] = "localhost";
+            int  visport   = 19916;
+
+            socketstream sigmaex_sock(vishost, visport);
+            sigmaex_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmaex_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmaex_sock << "solution\n" << *pmesh << *sigma_exact
+                     << "window_title 'sigma_ex'" << endl;
+
+            socketstream sigmah_sock(vishost, visport);
+            sigmah_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmah_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmah_sock << "solution\n" << *pmesh << *NewSigmahat
+                     << "window_title 'new sigma_h'" << endl;
+
+            *sigma_exact -= *NewSigmahat;
+            socketstream sigmadiff_sock(vishost, visport);
+            sigmadiff_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmadiff_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmadiff_sock << "solution\n" << *pmesh << *sigma_exact
+                     << "window_title 'sigma_ex - new sigma_h'" << endl;
+
+
+        }
+
+        double max_bdr_error = 0;
+        for ( int dof = 0; dof < Xinit.Size(); ++dof)
+        {
+            if ((*(BdrDofs_R[0][0]))[dof] > 0.0)
+            {
+                double bdr_error_dof = fabs(Xinit[dof] - (*NewSigmahat)[dof]);
+                if ( bdr_error_dof > max_bdr_error )
+                    max_bdr_error = bdr_error_dof;
+            }
+        }
+
+        if (max_bdr_error > 1.0e-14)
+            std::cout << "Error, boundary values for the solution are wrong:"
+                         " max_bdr_error = " << max_bdr_error << "\n";
     }
 
     chrono.Stop();
@@ -1789,8 +1854,8 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "\n";
 
-    //MPI_Finalize();
-    //return 0;
+    MPI_Finalize();
+    return 0;
 
 #ifdef COMPARE_WITH_OLD
     if (verbose)

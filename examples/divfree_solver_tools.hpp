@@ -5,7 +5,30 @@ using namespace std;
 using std::unique_ptr;
 
 #define DEBUG_INFO
-//#define OLDFASHION
+#define OLDFASHION
+
+
+// Computes and prints the norm of || Funct * y ||_2,h
+void CheckFunctValue(const BlockMatrix& Funct, const BlockVector& yblock, char * string)
+{
+    BlockVector res(Funct.ColOffsets());
+    Funct.Mult(yblock, res);
+    double func_norm = res.Norml2() / sqrt (res.Size());
+    std::cout << "Functional norm " << string << func_norm << " ... \n";
+}
+
+// Computes and prints the norm of || Constr * sigma - ConstrRhs ||_2,h
+void CheckConstrRes(Vector& sigma, const SparseMatrix& Constr, const Vector& ConstrRhs,
+                                                const char* string)
+{
+    Vector res_constr(Constr.Height());
+    Constr.Mult(sigma, res_constr);
+    //ofstream ofs("newsolver_out.txt");
+    //res_constr.Print(ofs,1);
+    res_constr -= ConstrRhs;
+    double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
+    std::cout << "Constraint residual norm " << string << ": " << constr_norm << " ... \n";
+}
 
 // TODO: Add blas and lapack versions for solving local problems
 // TODO: Test after all againt the case with nonzero boundary conditions for sigma
@@ -168,15 +191,15 @@ void BaseGeneralMinConstrSolver::Mult(const Vector & x, Vector & y) const
     Solve(*xblock, *yblock);
 
 #ifdef DEBUG_INFO
-    BlockVector res(block_offsets);
-    Funct.Mult(*yblock, res);
-    double func_norm = res.Norml2() / sqrt (res.Size());
-    std::cout << "Functional norm at the end of iteration: " << func_norm << " ... \n";
+    CheckFunctValue(Funct, *yblock, "at the end of iteration: ");
+    CheckConstrRes(yblock->GetBlock(0), Constr, ConstrRhs, "at the end of iteration");
+    /*
     Vector res_constr(Constr.Height());
     Constr.Mult(yblock->GetBlock(0), res_constr);
     res_constr -= ConstrRhs;
     double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
     std::cout << "Constraint residual norm at the end of iteration: " << constr_norm << " ... \n";
+    */
 #endif
 }
 
@@ -215,20 +238,6 @@ void BaseGeneralMinConstrSolver::ComputeNextLvlRhsFunc(int level) const
 
 }
 
-// Computes and prints the norm of || Constr * sigma - ConstrRhs ||_2,h
-void CheckConstrRes(Vector& sigma, const SparseMatrix& Constr, const Vector& ConstrRhs,
-                                                const char* string)
-{
-    Vector res_constr(Constr.Height());
-    Constr.Mult(sigma, res_constr);
-    //ofstream ofs("newsolver_out.txt");
-    //res_constr.Print(ofs,1);
-    res_constr -= ConstrRhs;
-    double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
-    std::cout << "Constraint residual norm " << string << ": " << constr_norm << " ... \n";
-}
-
-
 void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& next_sol) const
 {
 #ifdef DEBUG_INFO
@@ -241,17 +250,22 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         // ensure that the initial iterate satisfies essential boundary conditions
         for ( int blk = 0; blk < numblocks; ++blk)
             previous_sol.GetBlock(blk) = bdrdata_finest.GetBlock(blk);
+#ifdef DEBUG_INFO
+        CheckFunctValue(Funct, previous_sol, "for prev_sol at the beginning of iteration 0: ");
+#endif
     }
 
-//#ifdef COMPARE_WITH_OLD
-//    *((*rhsfunc_lvls)[0]) = 0.0;
-//#else
     ComputeRhsFunc(*((*rhsfunc_lvls)[0]), previous_sol);
-    //*((*rhsfunc_lvls)[0]) = 0.0;
-//#endif
 
     for ( int blk = 0; blk < numblocks; ++blk)
         next_sol.GetBlock(blk) = previous_sol.GetBlock(blk);
+
+#ifdef DEBUG_INFO
+    if (*current_iterate > 0)
+    {
+        CheckFunctValue(Funct, next_sol, "for next_sol at the beginning of iteration 0: ");
+    }
+#endif
 
     if (*current_iterate == 0) // for the first iteration rhs in the constraint is nonzero
     {
@@ -261,7 +275,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         *rhs_constr += ConstrRhs;
 
 #ifdef DEBUG_INFO
-        if (*current_iterate > 0 && rhs_constr->Norml2() / rhs_constr->Size() > 1.0e-13)
+        if (*current_iterate > 0 && rhs_constr->Norml2() / sqrt(rhs_constr->Size()) > 1.0e-13)
             std::cout << "Error! Rhs in the contraint must be 0 for iteration "
                       << *current_iterate << " > 0!\n";
 #endif
@@ -289,14 +303,10 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         // FIXME: all factors of local matrices can be stored after the first solver iteration
         SolveLocalProblems(l, *((*rhsfunc_lvls)[l]), *rhs_constr, *((*solupdate_lvls)[l]));
 
-//#ifdef COMPARE_WITH_OLD
-//        *((*rhsfunc_lvls)[l+1]) = 0.0;
-//#else
         // setting up rhs from the functional for the next (coarser) level
         ComputeNextLvlRhsFunc(l);
         //if (l == 0)
         //*((*rhsfunc_lvls)[l+1]) = 0.0;
-//#endif
 
     } // end of loop over finer levels
 
@@ -306,9 +316,8 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
     else
         rhs_constr->SetSize((*Constr_lvls)[num_levels - 1 - 1]->Height());
 
-    // needs to have coarse level rhs in the func to be set
+    // needs to have coarse level rhs in the func already set before the call
     SetUpCoarsestLvl();
-    //*((*rhsfunc_lvls)[num_levels-1]) = 0.0;
 
 #ifdef DEBUG_INFO
     ofstream ofs("newsolver_constr_coarserhs.txt");
@@ -386,44 +395,18 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
     // 4. update the global iterate by the computed update (interpolated to the finest level)
     next_sol += *((*solupdate_lvls)[0]);
 #endif
+
 #ifdef DEBUG_INFO
     CheckConstrRes(next_sol.GetBlock(0), Constr, ConstrRhs, "after all levels update");
 #endif
 
-    /*
-#ifdef DEBUG_INFO
-    {
-        Vector res_constr(Constr.Height());
-        Constr.Mult(next_sol.GetBlock(0), res_constr);
-        //ofstream ofs("newsolver_out_right.txt");
-        //res_constr.Print(ofs,1);
-        res_constr -= ConstrRhs;
-        double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
-        std::cout << "Constraint residual norm after the V-cycle update: " << constr_norm << " ... \n";
-        Vector temp1(Constr.Height());
-        Vector temp2(Constr.Width());
-        temp2 = res_constr;
-        for ( int lvl = 0; lvl < num_levels - 1; ++lvl)
-        {
-            temp1.SetSize(P_L2[lvl]->Width());
-            P_L2[lvl]->MultTranspose(temp2, temp1);
-            temp2.SetSize(temp1.Size());
-            temp2 = temp1;
-        }
-        double constr_normm = temp1.Norml2() / sqrt (temp1.Size());
-        std::cout << "Constraint residual norm after the V-cycle update"
-                     " measured at the coarsest level: " << constr_normm << " ... \n";
-    }
-#endif
-    */
-
-    // 5. restore sizes of righthand side vectors
+    // 5. restore sizes of righthand side vectors for the constraint
     // which were changed during transfer between levels
     rhs_constr->SetSize(ConstrRhs.Size());
     Qlminus1_f->SetSize(rhs_constr->Size());
 
     // for all but 1st iterate the rhs in the constraint will be 0
-    // FIXME: is duplicating the block in the beginning of the iteration,
+    // FIXME: this is duplicating the block in the beginning of the iteration,
     // the latter can be eliminated after debugging
     if (*current_iterate == 0)
     {
@@ -1182,7 +1165,7 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& co
     //res.GetBlock(1).Print(ofs,1);
     res -= trueRhs;
     double constr_resnorm = res.GetBlock(1).Norml2() /
-            res.GetBlock(1).Size();
+            sqrt (res.GetBlock(1).Size());
     std::cout << "constr_resnorm at the coarsest level = " << constr_resnorm << "\n";
 #endif
     */
