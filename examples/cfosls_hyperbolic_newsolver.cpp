@@ -12,8 +12,12 @@
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
+
+// additional printing option
 #define COMPARE_WITH_OLD
-#define EXACTSOL_INIT
+// additional options used for debugging
+//#define EXACTSOLH_INIT
+//#define COMPUTING_LAMBDA
 
 #include "divfree_solver_tools.hpp"
 
@@ -841,6 +845,71 @@ int main(int argc, char *argv[])
         args.PrintOptions(cout);
     }
 
+    /*
+    // test of Array<Array<int>>
+    Array<Array<int> > arr1(2);
+    //Array<Array<int> > arr2(2);
+    arr1[0].SetSize(2);
+    arr1[0][0] = 1;
+    arr1[0][1] = 2;
+
+    //arr2[0].SetSize(2);
+    //arr2[0][0] = 3;
+    //arr2[0][1] = 4;
+
+    arr1[1].SetSize(2);
+    arr1[1][0] = 10;
+    arr1[1][1] = 20;
+
+    //arr2[1].SetSize(2);
+    //arr2[1][0] = 30;
+    //arr2[1][1] = 40;
+
+    arr1[0].Print();
+    arr1[1].Print();
+    //arr2[0].Print();
+    //arr2[1].Print();
+
+    //test of BlockArray "=" or "+" operators
+    Array<int> testblock_offsets(3);
+    int size1 = 4;
+    int size2 = 6;
+    testblock_offsets[0] = 0;
+    testblock_offsets[1] = size1;
+    testblock_offsets[2] = size1 + size2;
+
+    Vector vec1(size1);
+    vec1 = 1.0;
+    Vector vec2(size2);
+    vec2 = 3.0;
+    BlockVector blkvec1(testblock_offsets);
+    blkvec1.GetBlock(0) = vec1;
+    blkvec1.GetBlock(1) = vec2;
+
+    std::cout << "blkvec1 \n";
+    blkvec1.Print();
+
+    Vector vec11(size1);
+    vec11 = -0.5;
+    Vector vec22(size2);
+    vec22 = -0.5;
+    BlockVector blkvec2(testblock_offsets);
+    blkvec2.GetBlock(0) = vec11;
+    blkvec2.GetBlock(1) = vec22;
+
+    std::cout << "blkvec2 \n";
+    blkvec2.Print();
+
+    blkvec2 += blkvec1;
+
+    std::cout << "blkvec2 after assign \n";
+    blkvec2.Print();
+
+    MPI_Finalize();
+    return 0;
+
+    */
+
     MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
     MFEM_ASSERT(!(strcmp(space_for_S,"L2") == 0 && !eliminateS), "Case: L2 space for S and S is not eliminated is working incorrectly, non pos.def. matrix. \n");
 
@@ -1014,6 +1083,8 @@ int main(int argc, char *argv[])
     if (strcmp(space_for_S,"L2") == 0) // S is from L2, so we impose bdr condition for sigma at t = 0
     {
         ess_bdrSigma[0] = 1;
+        //ess_bdrSigma = 1;
+        //ess_bdrSigma[pmesh->bdr_attributes.Max()-1] = 0;
     }
 
     FiniteElementCollection *hdiv_coll;
@@ -1079,8 +1150,6 @@ int main(int argc, char *argv[])
     if (prec_is_MG)
         coarseH_space = new ParFiniteElementSpace(pmesh.get(), h1_coll);
 
-    Vector sigmahat_pau;
-
     ParFiniteElementSpace *coarseR_space;
     ParFiniteElementSpace *coarseW_space;
 
@@ -1102,31 +1171,33 @@ int main(int argc, char *argv[])
     DivPart divp;
 
 #ifdef NEW_STUFF
-    Array<int> ess_allbdr(pmesh->bdr_attributes.Max());
-    ess_allbdr = 1;
+    Array<int> all_bdrSigma(pmesh->bdr_attributes.Max());
+    all_bdrSigma = 1;
     std::vector<Array<Array<int>*> > BdrDofs_R(1);
-    int num_levels = ref_levels + 1;
-    Array<Array<int>*> temparray(num_levels);
-    for (int lvl = 0; lvl < num_levels; ++lvl)
-        temparray[lvl] = new Array<int>;
+    std::vector<Array<Array<int>*> > EssBdrDofs_R(1);
 
-    for (int i = 0; i < BdrDofs_R.size(); ++i)
+    int num_levels = ref_levels + 1;
+
+    Array<Array<int>*> temparray_totalbdr(num_levels);
+    for (int lvl = 0; lvl < num_levels; ++lvl)
+        temparray_totalbdr[lvl] = new Array<int>;
+    Array<Array<int>*> temparray_essbdr(num_levels);
+    for (int lvl = 0; lvl < num_levels; ++lvl)
+        temparray_essbdr[lvl] = new Array<int>;
+
+
+    for (unsigned int i = 0; i < BdrDofs_R.size(); ++i)
     {
         BdrDofs_R[i].SetSize(num_levels);
-        //for (int lvl = 0; lvl < ref_levels; ++lvl)
-            //BdrDofs_R[i][lvl].SetSize(R_space->GetVSize());
-
-        //BdrDofs_R[i][0] = new Array<int>(R_space->GetVSize());
-        //BdrDofs_R[i][0]->SetSize(R_space->GetVSize());
-        //BdrDofs_R[i][0] = new Array<int>;
+        EssBdrDofs_R[i].SetSize(num_levels);
     }
-    //Array<int> * temparray;
+    /*
     std::vector<Array<int>*> ess_dof_coarsestlvl_func(1);
     std::vector<Vector*> ess_dofvalues_coarsestlvl_func(1);
     ParGridFunction * sigma_exact_coarse;
     std::vector<Array<int>*> ess_dof_finestlvl_func(1);
     std::vector<Vector*> ess_dofvalues_finestlvl_func(1);
-    ParGridFunction * sigma_exact_finest;
+    */
 #endif
 
     chrono.Clear();
@@ -1155,13 +1226,14 @@ int main(int argc, char *argv[])
                 if (l == 1)
                 {
                     R_space->GetEssentialVDofs(ess_bdrSigma, ess_dof_coarsestlvl_list);
-                    sigma_exact_coarse = new ParGridFunction(R_space);
-                    sigma_exact_coarse->ProjectCoefficient(*(Mytest.sigma));
+                    //sigma_exact_coarse = new ParGridFunction(R_space);
+                    //sigma_exact_coarse->ProjectCoefficient(*(Mytest.sigma));
                     //ess_dof_list.Print();
                 }
 
 #ifdef NEW_STUFF
-                R_space->GetEssentialVDofs(ess_allbdr, *temparray[num_levels - l]);
+                R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[num_levels - l]);
+                R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[num_levels - l]);
 #endif
 
                 if (prec_is_MG)
@@ -1252,7 +1324,10 @@ int main(int argc, char *argv[])
 
 #ifdef NEW_STUFF
                 if (l == ref_levels)
-                    R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
+                {
+                    R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[0]);
+                    R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[0]);
+                }
 #endif
             }
         } // end of loop over levels
@@ -1309,7 +1384,8 @@ int main(int argc, char *argv[])
                 W_space->Update();
 
 #ifdef NEW_STUFF
-            R_space->GetEssentialVDofs(ess_allbdr, *temparray[num_levels - l - 1]);
+            R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[num_levels - l - 1]);
+            R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[num_levels - l - 1]);
 #endif
 
             R_space->Update();
@@ -1318,7 +1394,11 @@ int main(int argc, char *argv[])
             //R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
             //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l]);
             if (l == par_ref_levels - 1)
-                R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
+            {
+                R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[0]);
+                R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[0]);
+            }
+                //R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
 #endif
             C_space->Update();
             H_space->Update();
@@ -1356,16 +1436,21 @@ int main(int argc, char *argv[])
         cout << "MG hierarchy constructed in " << chrono.RealTime() << " seconds.\n";
 
 #ifdef NEW_STUFF
-    BdrDofs_R[0].MakeRef(temparray);
+    BdrDofs_R[0].MakeRef(temparray_totalbdr);
+    EssBdrDofs_R[0].MakeRef(temparray_essbdr);
+
+    /*
     ess_dof_coarsestlvl_func[0] = &ess_dof_coarsestlvl_list;
     ess_dofvalues_coarsestlvl_func[0] = sigma_exact_coarse;
 
     Array<int> ess_dof_finestlvl_list;
     R_space->GetEssentialVDofs(ess_bdrSigma, ess_dof_finestlvl_list);
-    sigma_exact_finest = new ParGridFunction(R_space);
-    sigma_exact_finest->ProjectCoefficient(*(Mytest.sigma));
     ess_dof_finestlvl_func[0] = &ess_dof_finestlvl_list;
     ess_dofvalues_finestlvl_func[0] = sigma_exact_finest;
+    */
+    ParGridFunction * sigma_exact_finest;
+    sigma_exact_finest = new ParGridFunction(R_space);
+    sigma_exact_finest->ProjectCoefficient(*(Mytest.sigma));
 #endif
     //if(dim==3) pmesh->ReorientTetMesh();
 
@@ -1464,6 +1549,8 @@ int main(int argc, char *argv[])
     if (verbose)
     {
         std::cout << "Boundary conditions: \n";
+        std::cout << "all bdr Sigma: \n";
+        all_bdrSigma.Print(std::cout, pmesh->bdr_attributes.Max());
         std::cout << "ess bdr Sigma: \n";
         ess_bdrSigma.Print(std::cout, pmesh->bdr_attributes.Max());
         std::cout << "ess bdr U: \n";
@@ -1472,406 +1559,17 @@ int main(int argc, char *argv[])
         ess_bdrS.Print(std::cout, pmesh->bdr_attributes.Max());
     }
 
-#ifdef NEW_STUFF
-    if (verbose)
-        std::cout << "Creating an instance of the new multilevel solver \n";
-
-    Array<BlockMatrix*> Element_dofs_Func(ref_levels);
-
-    Array<int>* row_offsets_El_dofs = new Array<int>[num_levels - 1];
-    Array<int>* col_offsets_El_dofs = new Array<int>[num_levels - 1];
-    for (int i = 0; i < num_levels - 1; ++i)
-    {
-        row_offsets_El_dofs[i].SetSize(2);
-        row_offsets_El_dofs[i][0] = 0;
-        row_offsets_El_dofs[i][1] = Element_dofs_R[i]->Height();
-        //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
-        col_offsets_El_dofs[i].SetSize(2);
-        col_offsets_El_dofs[i][0] = 0;
-        col_offsets_El_dofs[i][1] = Element_dofs_R[i]->Width();
-        //std::cout << "Element_dofs_R[i]->Height() = " << Element_dofs_R[i]->Height() << "\n";
-        //std::cout << "row_offsets_El_dofs[i][0] = " << row_offsets_El_dofs[i][0] << "\n";
-        //std::cout << "row_offsets_El_dofs[i][1] = " << row_offsets_El_dofs[i][1] << "\n";
-        //row_offsets_El_dofs[i]->Print();
-        //col_offsets_El_dofs[i]->Print();
-        Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs[i], col_offsets_El_dofs[i]);
-        Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
-    }
-
-    /*
-    Array<int> row_offsets_El_dofs(2);
-    Array<int> col_offsets_El_dofs(2);
-    for (int i = 0; i < ref_levels; ++i)
-    {
-        row_offsets_El_dofs[0] = 0;
-        row_offsets_El_dofs[1] = Element_dofs_R[i]->Height();
-        col_offsets_El_dofs[0] = 0;
-        col_offsets_El_dofs[1] = Element_dofs_R[i]->Width();
-        Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs, col_offsets_El_dofs);
-        Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
-    }
-    */
-
-    Array<BlockMatrix*> P_Func(ref_levels);
-    /*
-    Array<Array<int>*> row_offsets_P_Func(ref_levels);
-    Array<Array<int>*> col_offsets_P_Func(ref_levels);
-    for (int i = 0; i < ref_levels; ++i)
-    {
-        row_offsets_P_Func[i] = new Array<int>(2);
-        //row_offsets_P_Func[i].SetSize(2);
-        (*row_offsets_P_Func[i])[0] = 0;
-        (*row_offsets_P_Func[i])[1] = P_R[i]->Height();
-        col_offsets_P_Func[i] = new Array<int>(2);
-        //col_offsets_P_Func[i].SetSize(2);
-        (*col_offsets_P_Func[i])[0] = 0;
-        (*col_offsets_P_Func[i])[1] = P_R[i]->Width();
-        P_Func[i] = new BlockMatrix(*row_offsets_P_Func[i], *col_offsets_P_Func[i]);
-        //row_offsets.Print();
-        //col_offsets.Print();
-        P_Func[i]->SetBlock(0,0, P_R[i]);
-    }
-    */
-
-    /*
-    // test of Array<Array<int>>
-    Array<Array<int> > arr1(2);
-    //Array<Array<int> > arr2(2);
-    arr1[0].SetSize(2);
-    arr1[0][0] = 1;
-    arr1[0][1] = 2;
-
-    //arr2[0].SetSize(2);
-    //arr2[0][0] = 3;
-    //arr2[0][1] = 4;
-
-    arr1[1].SetSize(2);
-    arr1[1][0] = 10;
-    arr1[1][1] = 20;
-
-    //arr2[1].SetSize(2);
-    //arr2[1][0] = 30;
-    //arr2[1][1] = 40;
-
-    arr1[0].Print();
-    arr1[1].Print();
-    //arr2[0].Print();
-    //arr2[1].Print();
-
-    MPI_Finalize();
-    return 0;
-    */
-
-    Array<int> * row_offsets_P_Func = new Array<int>[num_levels - 1];
-    Array<int> * col_offsets_P_Func = new Array<int>[num_levels - 1];
-    for (int i = 0; i < num_levels - 1; ++i)
-    {
-        row_offsets_P_Func[i].SetSize(2);
-        row_offsets_P_Func[i][0] = 0;
-        row_offsets_P_Func[i][1] = P_R[i]->Height();
-        //std::cout << "row offsets Func \n";
-        //row_offsets_P_Func[i].Print();
-        col_offsets_P_Func[i].SetSize(2);
-        col_offsets_P_Func[i][0] = 0;
-        col_offsets_P_Func[i][1] = P_R[i]->Width();
-        //std::cout << "col offsets Func \n";
-        //col_offsets_P_Func[i].Print();
-        //std::cout << "row offsets Func again \n";
-        //row_offsets_P_Func[i].Print();
-        P_Func[i] = new BlockMatrix(row_offsets_P_Func[i], col_offsets_P_Func[i]);
-        //row_offsets.Print();
-        //col_offsets.Print();
-        P_Func[i]->SetBlock(0,0, P_R[i]);
-    }
-
-    /*
-    Array<int> row_offsets_P_Func(2);
-    Array<int> col_offsets_P_Func(2);
-    for (int i = 0; i < ref_levels; ++i)
-    {
-        row_offsets_P_Func[0] = 0;
-        row_offsets_P_Func[1] = P_R[i]->Height();
-        col_offsets_P_Func[0] = 0;
-        col_offsets_P_Func[1] = P_R[i]->Width();
-        P_Func[i] = new BlockMatrix(row_offsets_P_Func, col_offsets_P_Func);
-        //row_offsets.Print();
-        //col_offsets.Print();
-        P_Func[i]->SetBlock(0,0, P_R[i]);
-    }
-    */
-
-    Array<SparseMatrix*> P_WT(ref_levels); //AE_e matrices
-    for (int i = 0; i < ref_levels; ++i)
-    {
-        P_WT[i] = Transpose(*P_W[i]);
-    }
-
-    ParGridFunction * sigma_exact_temp = new ParGridFunction(R_space);
-    sigma_exact_temp->ProjectCoefficient(*(Mytest.sigma));
-
-    ParLinearForm *fform = new ParLinearForm(R_space);
-
-    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
-#ifdef COMPARE_WITH_OLD
-    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
-#else
-    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
-#endif
-    Ablock->Assemble();
-    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_temp, *fform); // ruins
-    Ablock->Finalize();
-    auto tempA = Ablock->ParallelAssemble();
-    SparseMatrix Aloc = Ablock->SpMat();
-    Array<int> offsets(2);
-    offsets[0] = 0;
-    offsets[1] = Aloc.Height();
-    BlockMatrix Ablockmat(offsets);
-    /*
-#ifdef COMPARE_WITH_OLD
-    int nrows = Aloc.Height();
-    int * ia = new int[nrows + 1];
-    ia[0] = 0;
-    for ( int i = 0; i < nrows; ++i)
-        ia[i+1] = ia[i] + 1;
-    int nnz = ia[nrows];
-    int * ja = new int[nnz];
-    double * aa = new double[nnz];
-    for ( int i = 0; i < nnz; ++i)
-    {
-        ja[i] = i;
-        aa[i] = 1.0;
-    }
-    SparseMatrix Aid(ia,ja,aa,nrows,nrows);
-    Ablockmat.SetBlock(0,0,&Aid);
-#else
-    Ablockmat.SetBlock(0,0,&Aloc);
-#endif
-    */
-    Ablockmat.SetBlock(0,0,&Aloc);
-
-    ParLinearForm *ggform = new ParLinearForm(W_space);
-    ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
-    Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
-    Bblock->Assemble();
-    //Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_temp, *ggform); // ruins
-    Bblock->Finalize();
-    auto tempB = Bblock->ParallelAssemble();
-    SparseMatrix Bloc = Bblock->SpMat();
-
-    ParLinearForm * constrfform = new ParLinearForm(W_space);
-    constrfform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
-    constrfform->Assemble();
-
-    Vector Floc(P_W[0]->Height());
-    Floc = *constrfform;
-
-    std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
-    Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
-
-    //std::cout << "Looking at input:";
-    //Floc.Print();
-
-    //std::cout << "Looking at Bloc \n";
-    //Bloc.Print();
-
-    BlockVector Xinit(Ablockmat.ColOffsets());
-    Xinit.GetBlock(0) = 0.0;
-    MFEM_ASSERT(Xinit.GetBlock(0).Size() == sigma_exact_finest->Size(),
-                "Xinit and sigma_exact_finest have different sizes! \n");
-    for (int i = 0; i < sigma_exact_finest->Size(); ++i )
-    {
-        //if ((*(BdrDofs_R[0][0]))[i] != 0)
-#ifndef EXACTSOL_INIT
-        if ( ess_dof_finestlvl_list[i] != 0)
-#endif
-            Xinit.GetBlock(0)[i] = (*sigma_exact_finest)[i];
-    }
-
-    if (verbose)
-        std::cout << "Calling constructor of the new solver \n";
-
-    chrono.Clear();
-    chrono.Start();
-
-    MinConstrSolver NewSolver(ref_levels + 1, P_WT,
-                     Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                     P_Func, P_W, BdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list);
-
-    if (verbose)
-        std::cout << "New solver was set up in " << chrono.RealTime() << " seconds.\n";
-
-    if (verbose)
-        std::cout << "Calling the new multilevel solver for the first iteration \n";
-
-    ParGridFunction * NewSigmahat = new ParGridFunction(R_space);
-
-    Vector Tempx(sigma_exact_temp->Size());
-    Tempx = 0.0;
-    Vector Tempy(Tempx.Size());
-    Tempy = 0.0;
-
-    chrono.Clear();
-    chrono.Start();
-
-    /*
-    NewSolver.Mult(Tempx, Tempy);
-
-    chrono.Stop();
-
-    if (verbose)
-        std::cout << "Particular solution found by the new solver in " << chrono.RealTime() << " seconds.\n";
-
-    if (verbose)
-        std::cout << "First iteration completed successfully!\n";
-
-    Vector Temp2y(Tempy.Size());
-    Temp2y = 0.0;
-
-    chrono.Clear();
-    chrono.Start();
-
-    NewSolver.Mult(Tempy, Temp2y);
-
-    chrono.Stop();
-
-    if (verbose)
-        std::cout << "Second iteration of the new solver was done in " << chrono.RealTime() << " seconds.\n";
-
-    if (verbose)
-        std::cout << "Second iteration completed successfully!\n";
-    */
-
-    // doing a fixed number of iterations of the new solver
-    int ntestiter = 1;
-    for (int i = 0; i < ntestiter; ++i)
-    {
-        NewSolver.Mult(Tempx, Tempy);
-
-        Tempx = Tempy;
-
-        *NewSigmahat = Tempx;
-        {
-            int order_quad = max(2, 2*feorder+1);
-            const IntegrationRule *irs[Geometry::NumGeom];
-            for (int i = 0; i < Geometry::NumGeom; ++i)
-            {
-                irs[i] = &(IntRules.Get(i, order_quad));
-            }
-
-            double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
-            double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
-            if (verbose)
-                if ( norm_sigma > MYZEROTOL )
-                    cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
-                else
-                    cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
-
-            DiscreteLinearOperator Div(R_space, W_space);
-            Div.AddDomainInterpolator(new DivergenceInterpolator());
-            ParGridFunction DivSigma(W_space);
-            Div.Assemble();
-            Div.Mult(*NewSigmahat, DivSigma);
-
-            double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
-            double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
-
-            if (verbose)
-            {
-                cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
-                          << err_div/norm_div  << "\n";
-            }
-        }
-
-        {
-            ParGridFunction * sigma_exact = new ParGridFunction(R_space);
-            sigma_exact->ProjectCoefficient(*(Mytest.sigma));
-
-            Vector tempp(sigma_exact->Size());
-            tempp = *sigma_exact;
-            tempp -= Xinit;
-
-            std::cout << "norm of sigma_exact = " << sigma_exact->Norml2() / sqrt (sigma_exact->Size()) << "\n";
-            std::cout << "norm of sigma_exact - Xinit = " << tempp.Norml2() / sqrt (tempp.Size()) << "\n";
-
-            if (i == 0)
-            {
-                Vector res(Ablockmat.GetBlock(0,0).Height());
-                Ablockmat.GetBlock(0,0).Mult(*sigma_exact, res);
-                double func_norm = res.Norml2() / sqrt (res.Size());
-                std::cout << "Functional norm for sigma_exact:  = " << func_norm << " ... \n";
-
-            }
-
-            char vishost[] = "localhost";
-            int  visport   = 19916;
-
-            socketstream sigmaex_sock(vishost, visport);
-            sigmaex_sock << "parallel " << num_procs << " " << myid << "\n";
-            sigmaex_sock.precision(8);
-            MPI_Barrier(pmesh->GetComm());
-            sigmaex_sock << "solution\n" << *pmesh << *sigma_exact
-                     << "window_title 'sigma_ex'" << endl;
-
-            socketstream sigmah_sock(vishost, visport);
-            sigmah_sock << "parallel " << num_procs << " " << myid << "\n";
-            sigmah_sock.precision(8);
-            MPI_Barrier(pmesh->GetComm());
-            sigmah_sock << "solution\n" << *pmesh << *NewSigmahat
-                     << "window_title 'new sigma_h'" << endl;
-
-            *sigma_exact -= *NewSigmahat;
-            socketstream sigmadiff_sock(vishost, visport);
-            sigmadiff_sock << "parallel " << num_procs << " " << myid << "\n";
-            sigmadiff_sock.precision(8);
-            MPI_Barrier(pmesh->GetComm());
-            sigmadiff_sock << "solution\n" << *pmesh << *sigma_exact
-                     << "window_title 'sigma_ex - new sigma_h'" << endl;
-
-
-        }
-
-        double max_bdr_error = 0;
-        for ( int dof = 0; dof < Xinit.Size(); ++dof)
-        {
-            if ((*(BdrDofs_R[0][0]))[dof] > 0.0)
-            {
-                double bdr_error_dof = fabs(Xinit[dof] - (*NewSigmahat)[dof]);
-                if ( bdr_error_dof > max_bdr_error )
-                    max_bdr_error = bdr_error_dof;
-            }
-        }
-
-        if (max_bdr_error > 1.0e-14)
-            std::cout << "Error, boundary values for the solution are wrong:"
-                         " max_bdr_error = " << max_bdr_error << "\n";
-    }
-
-    chrono.Stop();
-
-    if (verbose)
-        std::cout << ntestiter << " iteration(s) of the new solver was(were) done in " << chrono.RealTime() << " seconds.\n";
-
-    if (verbose)
-        std::cout << "\n";
-
-    MPI_Finalize();
-    return 0;
-
-#ifdef COMPARE_WITH_OLD
-    if (verbose)
-        std::cout << "sigmahat from new solver (size " << NewSigmahat->Size() << "): \n";
-    //NewSigmahat->Print();
-#endif
-
-    //MPI_Finalize();
-    //return 0;
-#endif
-
     chrono.Clear();
     chrono.Start();
     ParGridFunction * Sigmahat = new ParGridFunction(R_space);
     ParLinearForm *gform;
     HypreParMatrix *Bdiv;
+
+    SparseMatrix *M_local;
+    SparseMatrix *B_local;
+    Vector F_fine(P_W[0]->Height());
+    Vector G_fine(P_R[0]->Height());
+    Vector sigmahat_pau;
     if (withDiv)
     {
         if (with_multilevel)
@@ -1881,7 +1579,7 @@ int main(int argc, char *argv[])
 
             ConstantCoefficient k(1.0);
 
-            SparseMatrix *M_local;
+            //SparseMatrix *M_local;
             if (useM_in_divpart)
             {
                 ParBilinearForm *mVarf(new ParBilinearForm(R_space));
@@ -1902,11 +1600,9 @@ int main(int argc, char *argv[])
             bVarf->Finalize();
             Bdiv = bVarf->ParallelAssemble();
             SparseMatrix &B_fine = bVarf->SpMat();
-            SparseMatrix *B_local = &B_fine;
+            B_local = &B_fine;
 
             //Right hand size
-            Vector F_fine(P_W[0]->Height());
-            Vector G_fine(P_R[0]->Height());
 
             gform = new ParLinearForm(W_space);
             gform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
@@ -1939,38 +1635,6 @@ int main(int argc, char *argv[])
     #endif
 
             *Sigmahat = sigmahat_pau;
-
-#ifdef COMPARE_WITH_OLD
-            if (verbose)
-                std::cout << "sigmahat_pau (size " << sigmahat_pau.Size() << "): \n";
-            //sigmahat_pau.Print();
-
-            std::cout << "Comparing input righthand sides: \n";
-            Vector diff1(F_fine.Size());
-            diff1 = F_fine;
-            diff1 -= Floc;
-            std::cout << "Norm of difference old vs new = " << diff1.Norml2() / sqrt(diff1.Size()) << "\n";
-            std::cout << "Rel. norm of difference old vs new = " << (diff1.Norml2() / sqrt(diff1.Size())) / (F_fine.Norml2() / sqrt(F_fine.Size())) << "\n";
-
-            std::cout << "Comparing input matrices for constraint: \n";
-            SparseMatrix diff2(*B_local);
-            diff2.Add(-1.0, Bloc);
-            std::cout << "Norm of difference old vs new = " << diff2.MaxNorm() << "\n";
-            std::cout << "Rel. norm of difference old vs new = " << diff2.MaxNorm() / B_local->MaxNorm() << "\n";
-
-            std::cout << "Comparing input matrices for functional: \n";
-            SparseMatrix diff3(*M_local);
-            diff3.Add(-1.0, Aloc);
-            std::cout << "Norm of difference old vs new = " << diff3.MaxNorm() << "\n";
-            std::cout << "Rel. norm of difference old vs new = " << diff3.MaxNorm() / M_local->MaxNorm() << "\n";
-
-            std::cout << "Comparing solutions (the most important!): \n";
-            Vector diff(sigmahat_pau.Size());
-            diff = sigmahat_pau;
-            diff -= *NewSigmahat;
-            std::cout << "Norm of difference old vs new = " << diff.Norml2() / sqrt(diff.Size()) << "\n";
-            std::cout << "Rel. norm of difference old vs new = " << (diff.Norml2() / sqrt(diff.Size())) / (sigmahat_pau.Norml2() / sqrt(sigmahat_pau.Size())) << "\n";
-#endif
         }
         else
         {
@@ -2762,6 +2426,528 @@ int main(int argc, char *argv[])
                 cout << "|| Pi_h S_ex ||  = " << projection_error_S << " (S_ex = 0) \n";
         }
     }
+
+
+#ifdef COMPUTING_LAMBDA
+    ParGridFunction * sigma_special = new ParGridFunction(R_space);
+    ParGridFunction * lambda_special = new ParGridFunction(W_space);
+    {
+        if (verbose)
+            std::cout << "COMPUTING_LAMBDA is activated \n";
+
+        int numblocks = 2;
+        Array<int> offsets_special(numblocks + 1);
+        offsets_special[0] = 0;
+        offsets_special[1] = R_space->GetVSize();
+        offsets_special[2] = W_space->GetVSize();
+        offsets_special.PartialSum();
+
+        Array<int> trueOffsets_special(numblocks + 1);
+        trueOffsets_special[0] = 0;
+        trueOffsets_special[1] = R_space->GetTrueVSize();
+        trueOffsets_special[2] = W_space->GetTrueVSize();
+        trueOffsets_special.PartialSum();
+
+        BlockVector x(offsets_special);
+        BlockVector trueX(trueOffsets_special);
+        BlockVector trueRhs(trueOffsets_special);
+        x = 0.0;
+        trueX = 0.0;
+        trueRhs = 0.0;
+
+        Transport_test_divfree Mytest(nDimensions, numsol, numcurl);
+
+        ParGridFunction * sigma_exact = new ParGridFunction(R_space);
+        sigma_exact->ProjectCoefficient(*(Mytest.sigma));
+
+        x.GetBlock(0) = *sigma_exact;
+
+        ParLinearForm *fform = new ParLinearForm(R_space);
+        fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
+        fform->Assemble();
+
+        ParLinearForm *gform;
+        gform = new ParLinearForm(W_space);
+        gform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+        gform->Assemble();
+
+        // 10. Assemble the finite element matrices for the CFOSLS operator  A
+        //     where:
+
+        ParBilinearForm *Ablock(new ParBilinearForm(R_space));
+        HypreParMatrix *A;
+        Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+        Ablock->Assemble();
+        Ablock->EliminateEssentialBC(ess_bdrSigma, x.GetBlock(0), *fform);
+        Ablock->Finalize();
+        A = Ablock->ParallelAssemble();
+
+        //----------------
+        //  D Block:
+        //-----------------
+
+        HypreParMatrix *D;
+        HypreParMatrix *DT;
+
+        ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
+        Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+        Dblock->Assemble();
+        Dblock->EliminateTrialDofs(ess_bdrSigma, x.GetBlock(0), *gform);
+        Dblock->Finalize();
+        D = Dblock->ParallelAssemble();
+        DT = D->Transpose();
+
+        fform->ParallelAssemble(trueRhs.GetBlock(0));
+        gform->ParallelAssemble(trueRhs.GetBlock(1));
+
+        BlockOperator *CFOSLSop = new BlockOperator(trueOffsets_special);
+        CFOSLSop->SetBlock(0,0, A);
+        CFOSLSop->SetBlock(0,1, DT);
+        CFOSLSop->SetBlock(1,0, D);
+
+        MINRESSolver solver(MPI_COMM_WORLD);
+        solver.SetAbsTol(atol);
+        solver.SetRelTol(rtol);
+        solver.SetMaxIter(70000);
+        solver.SetOperator(*CFOSLSop);
+        solver.SetPrintLevel(0);
+
+        trueX = 0.0;
+        //trueRhs.GetBlock(0).Print();
+        solver.Mult(trueRhs, trueX);
+        chrono.Stop();
+
+        if (verbose)
+        {
+           if (solver.GetConverged())
+              std::cout << "MINRES converged in " << solver.GetNumIterations()
+                        << " iterations with a residual norm of " << solver.GetFinalNorm() << ".\n";
+           else
+              std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+                        << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+           std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
+        }
+
+        std::cout << "\nTrying to check residual for base of sigma_special and lambda_special aka trueX \n";
+
+        BlockVector trueRes(trueOffsets_special);
+        CFOSLSop->Mult(trueX, trueRes);
+        trueRes -= trueRhs;
+        double trueres_func_norm = trueRes.Norml2() / sqrt (trueRes.Size());
+        std::cout << "trueres_func norm for sigma and lambda: " << trueres_func_norm << "\n\n";
+
+        Vector Asigma(A->Height());
+        A->Mult(trueX.GetBlock(0), Asigma);
+        Vector DTlambda(D->Width());
+        DT->Mult(trueX.GetBlock(1), DTlambda);
+        MFEM_ASSERT(DTlambda.Size() == Asigma.Size(), "Dimensions of A and D mismatch!");
+        Vector res(Asigma.Size());
+        res = Asigma;
+        res += DTlambda;
+        res -= trueRhs.GetBlock(0);
+        double res_func_norm = res.Norml2() / sqrt (res.Size());
+        std::cout << "res_func norm for sigma and lambda: " << res_func_norm << "\n\n";
+
+
+        sigma_special->Distribute(&(trueX.GetBlock(0)));
+        lambda_special->Distribute(&(trueX.GetBlock(1)));
+
+        double err_sigma = sigma_special->ComputeL2Error(*(Mytest.sigma), irs);
+        double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
+
+        if (verbose)
+            cout << "sigma_h = sigma_hat + div-free part, div-free part = curl u_h \n";
+
+        if (verbose)
+        {
+            if ( norm_sigma > MYZEROTOL )
+                cout << "|| sigma_h - sigma_ex || / || sigma_ex || = " << err_sigma / norm_sigma << endl;
+            else
+                cout << "|| sigma || = " << err_sigma << " (sigma_ex = 0)" << endl;
+        }
+
+        DiscreteLinearOperator Div(R_space, W_space);
+        Div.AddDomainInterpolator(new DivergenceInterpolator());
+        ParGridFunction DivSigma(W_space);
+        Div.Assemble();
+        Div.Mult(*sigma_special, DivSigma);
+
+        double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
+        double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
+
+        if (verbose)
+        {
+            cout << "|| div (sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
+                      << err_div/norm_div  << "\n";
+        }
+
+        if (verbose)
+        {
+            //cout << "Actually it will be ~ continuous L2 + discrete L2 for divergence" << endl;
+            cout << "|| sigma_h - sigma_ex ||_Hdiv / || sigma_ex ||_Hdiv = "
+                      << sqrt(err_sigma*err_sigma + err_div * err_div)/sqrt(norm_sigma*norm_sigma + norm_div * norm_div)  << "\n";
+        }
+
+    }
+#endif
+
+#ifdef NEW_STUFF
+    if (verbose)
+        std::cout << "\nCreating an instance of the new multilevel solver \n";
+
+    Array<BlockMatrix*> Element_dofs_Func(ref_levels);
+
+    Array<int>* row_offsets_El_dofs = new Array<int>[num_levels - 1];
+    Array<int>* col_offsets_El_dofs = new Array<int>[num_levels - 1];
+    for (int i = 0; i < num_levels - 1; ++i)
+    {
+        row_offsets_El_dofs[i].SetSize(2);
+        row_offsets_El_dofs[i][0] = 0;
+        row_offsets_El_dofs[i][1] = Element_dofs_R[i]->Height();
+        col_offsets_El_dofs[i].SetSize(2);
+        col_offsets_El_dofs[i][0] = 0;
+        col_offsets_El_dofs[i][1] = Element_dofs_R[i]->Width();
+        Element_dofs_Func[i] = new BlockMatrix(row_offsets_El_dofs[i], col_offsets_El_dofs[i]);
+        Element_dofs_Func[i]->SetBlock(0,0, Element_dofs_R[i]);
+    }
+
+    Array<BlockMatrix*> P_Func(ref_levels);
+
+    Array<int> * row_offsets_P_Func = new Array<int>[num_levels - 1];
+    Array<int> * col_offsets_P_Func = new Array<int>[num_levels - 1];
+    for (int i = 0; i < num_levels - 1; ++i)
+    {
+        row_offsets_P_Func[i].SetSize(2);
+        row_offsets_P_Func[i][0] = 0;
+        row_offsets_P_Func[i][1] = P_R[i]->Height();
+        col_offsets_P_Func[i].SetSize(2);
+        col_offsets_P_Func[i][0] = 0;
+        col_offsets_P_Func[i][1] = P_R[i]->Width();
+        P_Func[i] = new BlockMatrix(row_offsets_P_Func[i], col_offsets_P_Func[i]);
+        P_Func[i]->SetBlock(0,0, P_R[i]);
+    }
+
+    Array<SparseMatrix*> P_WT(ref_levels); //AE_e matrices
+    for (int i = 0; i < ref_levels; ++i)
+    {
+        P_WT[i] = Transpose(*P_W[i]);
+    }
+
+    /*
+    int lvl = 0;
+    Vector test(P_Func[lvl]->GetBlock(0,0).Width());
+    test = 1.0;
+    for ( int i = 0; i < BdrDofs_R[0][lvl + 1]->Size(); ++i)
+        if ( (*(BdrDofs_R[0][lvl + 1]))[i] != 0 )
+            test[i] = 0.0;
+    Vector result(P_Func[lvl]->GetBlock(0,0).Height());
+    P_Func[lvl]->GetBlock(0,0).Mult(test, result);
+    for ( int i = 0; i < BdrDofs_R[0][lvl]->Size(); ++i)
+        if ( (*(BdrDofs_R[0][lvl]))[i] != 0 && result[i] != 0)
+            std::cout << "Wrong! \n";
+
+    MPI_Finalize();
+    return 0;
+    */
+
+    //ParLinearForm *fform = new ParLinearForm(R_space);
+
+    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
+//#ifdef COMPARE_WITH_OLD
+//    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+//#else
+    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+//#endif
+    Ablock->Assemble();
+    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // ruins
+    Ablock->Finalize();
+    //auto tempA = Ablock->ParallelAssemble();
+    SparseMatrix Aloc = Ablock->SpMat();
+    Array<int> offsets(2);
+    offsets[0] = 0;
+    offsets[1] = Aloc.Height();
+    BlockMatrix Ablockmat(offsets);
+    /*
+#ifdef COMPARE_WITH_OLD
+    int nrows = Aloc.Height();
+    int * ia = new int[nrows + 1];
+    ia[0] = 0;
+    for ( int i = 0; i < nrows; ++i)
+        ia[i+1] = ia[i] + 1;
+    int nnz = ia[nrows];
+    int * ja = new int[nnz];
+    double * aa = new double[nnz];
+    for ( int i = 0; i < nnz; ++i)
+    {
+        ja[i] = i;
+        aa[i] = 1.0;
+    }
+    SparseMatrix Aid(ia,ja,aa,nrows,nrows);
+    Ablockmat.SetBlock(0,0,&Aid);
+#else
+    Ablockmat.SetBlock(0,0,&Aloc);
+#endif
+    */
+    Ablockmat.SetBlock(0,0,&Aloc);
+
+    //ParLinearForm *ggform = new ParLinearForm(W_space);
+    ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
+    Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+    Bblock->Assemble();
+    //Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_finest, *ggform); // ruins
+    Bblock->Finalize();
+    //auto tempB = Bblock->ParallelAssemble();
+    SparseMatrix Bloc = Bblock->SpMat();
+
+    ParLinearForm * constrfform = new ParLinearForm(W_space);
+    constrfform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
+    constrfform->Assemble();
+
+    Vector Floc(P_W[0]->Height());
+    Floc = *constrfform;
+
+    std::vector<HypreParMatrix*> Dof_TrueDof_coarse_Func(1);
+    Dof_TrueDof_coarse_Func[0] = d_td_coarse_R;
+
+    //std::cout << "Looking at input:";
+    //Floc.Print();
+
+    //std::cout << "Looking at Bloc \n";
+    //Bloc.Print();
+
+    BlockVector Xinit(Ablockmat.ColOffsets());
+    Xinit.GetBlock(0) = 0.0;
+    MFEM_ASSERT(Xinit.GetBlock(0).Size() == sigma_exact_finest->Size(),
+                "Xinit and sigma_exact_finest have different sizes! \n");
+
+#ifdef EXACTSOLH_INIT
+    if (verbose)
+        std::cout << "EXACTSOLH_INIT is activated \n";
+#endif
+    for (int i = 0; i < sigma_exact_finest->Size(); ++i )
+    {
+        // just setting Xinit to store correct boundary values at essential boundary
+        if ( (*(EssBdrDofs_R[0][0]))[i] != 0)
+            Xinit.GetBlock(0)[i] = (*sigma_exact_finest)[i];
+
+        //probably doing somethijg better than just essential boundary values
+#ifdef EXACTSOLH_INIT
+    #ifdef COMPUTING_LAMBDA
+        Xinit.GetBlock(0)[i] = (*sigma_special)[i];
+    #else
+        //Xinit.GetBlock(0)[i] = sigmahat_pau[i];
+    #endif
+#endif
+    }
+
+#ifdef EXACTSOLH_INIT
+    BlockVector res_func (Ablockmat.ColOffsets());
+    Ablockmat.Mult(Xinit, res_func);
+    Vector BTlambda(Bloc.Width());
+    Bloc.MultTranspose(*lambda_special, BTlambda);
+    res_func.GetBlock(0) += BTlambda;
+    res_func.GetBlock(0).Print();
+    double res_func_norm = res_func.GetBlock(0).Norml2() / sqrt (res_func.GetBlock(0).Size());
+    if (verbose)
+        std::cout << "residual norm in functional for correct sigma_h: " << res_func_norm << "\n";
+
+    Vector res_constr (Bloc.Height());
+    Bloc.Mult(Xinit, res_constr);
+    res_constr -= Floc;
+    double res_constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
+    if (verbose)
+        std::cout << "residual norm in constraint for correct sigma_h: " << res_constr_norm << "\n";
+
+#endif
+    if (verbose)
+        std::cout << "Calling constructor of the new solver \n";
+
+    chrono.Clear();
+    chrono.Start();
+
+    MinConstrSolver NewSolver(ref_levels + 1, P_WT,
+                     Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
+                     P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list);
+
+    Vector tempp(sigma_exact->Size());
+    tempp = *sigma_exact;
+    tempp -= Xinit;
+
+    std::cout << "norm of sigma_exact = " << sigma_exact_finest->Norml2() / sqrt (sigma_exact_finest->Size()) << "\n";
+    std::cout << "norm of sigma_exact - Xinit = " << tempp.Norml2() / sqrt (tempp.Size()) << "\n";
+
+    Vector res(Ablockmat.GetBlock(0,0).Height());
+    Ablockmat.GetBlock(0,0).Mult(*sigma_exact_finest, res);
+    double func_norm = res.Norml2() / sqrt (res.Size());
+    std::cout << "Functional norm for sigma_exact projection:  = " << func_norm << " ... \n";
+
+    res = 0.0;
+    Ablockmat.GetBlock(0,0).Mult(*sigma, res);
+    func_norm = res.Norml2() / sqrt (res.Size());
+    std::cout << "Functional norm for exact sigma_h:  = " << func_norm << " ... \n";
+
+    if (verbose)
+        std::cout << "New solver was set up in " << chrono.RealTime() << " seconds.\n";
+
+    if (verbose)
+        std::cout << "\nCalling the new multilevel solver for the first iteration \n";
+
+    ParGridFunction * NewSigmahat = new ParGridFunction(R_space);
+
+    Vector Tempx(sigma_exact_finest->Size());
+    Tempx = 0.0;
+    Vector Tempy(Tempx.Size());
+    Tempy = 0.0;
+
+    chrono.Clear();
+    chrono.Start();
+
+    // doing a fixed number of iterations of the new solver
+    int ntestiter = 1;
+    for (int i = 0; i < ntestiter; ++i)
+    {
+        NewSolver.Mult(Tempx, Tempy);
+
+        Tempx = Tempy;
+
+        *NewSigmahat = Tempx;
+
+        double max_bdr_error = 0;
+        for ( int dof = 0; dof < Xinit.Size(); ++dof)
+        {
+            if ((*(EssBdrDofs_R[0][0]))[dof] != 0.0)
+            {
+                //std::cout << "ess dof index: " << dof << "\n";
+                double bdr_error_dof = fabs(Xinit[dof] - (*NewSigmahat)[dof]);
+                if ( bdr_error_dof > max_bdr_error )
+                    max_bdr_error = bdr_error_dof;
+            }
+        }
+
+        if (max_bdr_error > 1.0e-14)
+            std::cout << "Error, boundary values for the solution are wrong:"
+                         " max_bdr_error = " << max_bdr_error << "\n";
+        else
+            std::cout << "After iter " << i << " of the new solver bdr values at ess bdr are correct \n";
+
+        {
+            int order_quad = max(2, 2*feorder+1);
+            const IntegrationRule *irs[Geometry::NumGeom];
+            for (int i = 0; i < Geometry::NumGeom; ++i)
+            {
+                irs[i] = &(IntRules.Get(i, order_quad));
+            }
+
+            double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
+            double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+            if (verbose)
+            {
+                if ( norm_sigma > MYZEROTOL )
+                    cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
+                else
+                    cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
+            }
+
+            DiscreteLinearOperator Div(R_space, W_space);
+            Div.AddDomainInterpolator(new DivergenceInterpolator());
+            ParGridFunction DivSigma(W_space);
+            Div.Assemble();
+            Div.Mult(*NewSigmahat, DivSigma);
+
+            double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
+            double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
+
+            if (verbose)
+            {
+                cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
+                          << err_div/norm_div  << "\n";
+            }
+        }
+
+        {
+            char vishost[] = "localhost";
+            int  visport   = 19916;
+
+            socketstream sigmaex_sock(vishost, visport);
+            sigmaex_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmaex_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmaex_sock << "solution\n" << *pmesh << *sigma_exact_finest
+                     << "window_title 'sigma_ex'" << endl;
+
+            socketstream sigmah_sock(vishost, visport);
+            sigmah_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmah_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmah_sock << "solution\n" << *pmesh << *NewSigmahat
+                     << "window_title 'new sigma_h'" << endl;
+
+            *sigma_exact_finest -= *NewSigmahat;
+
+            ofstream ofs("newsolver_sol_error.txt");
+            sigma_exact_finest->Print(ofs,1);
+
+            socketstream sigmadiff_sock(vishost, visport);
+            sigmadiff_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmadiff_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            sigmadiff_sock << "solution\n" << *pmesh << *sigma_exact_finest
+                     << "window_title 'sigma_ex - new sigma_h'" << endl;
+        }
+
+        if (verbose)
+            std::cout << "\n";
+    }
+
+    chrono.Stop();
+
+    if (verbose)
+        std::cout << ntestiter << " iteration(s) of the new solver was(were) done in " << chrono.RealTime() << " seconds.\n";
+
+    if (verbose)
+        std::cout << "\n";
+
+#ifdef COMPARE_WITH_OLD
+    std::cout << "Comparing input righthand sides: \n";
+    Vector diff1(F_fine.Size());
+    diff1 = F_fine;
+    diff1 -= Floc;
+    std::cout << "Norm of difference old vs new = " << diff1.Norml2() / sqrt(diff1.Size()) << "\n";
+    std::cout << "Rel. norm of difference old vs new = " << (diff1.Norml2() / sqrt(diff1.Size())) / (F_fine.Norml2() / sqrt(F_fine.Size())) << "\n";
+
+    std::cout << "Comparing input matrices for constraint (as SparseMatrices): \n";
+    SparseMatrix diff2(*B_local);
+    diff2.Add(-1.0, Bloc);
+    std::cout << "Norm of difference old vs new = " << diff2.MaxNorm() << "\n";
+    std::cout << "Rel. norm of difference old vs new = " << diff2.MaxNorm() / B_local->MaxNorm() << "\n";
+
+    std::cout << "Comparing input matrices for functional (as SparseMatrices): \n";
+    SparseMatrix diff3(*M_local);
+    diff3.Add(-1.0, Aloc);
+    std::cout << "Norm of difference old vs new = " << diff3.MaxNorm() << "\n";
+    std::cout << "Rel. norm of difference old vs new = " << diff3.MaxNorm() / M_local->MaxNorm() << "\n";
+
+    std::cout << "Comparing solutions (the most important!): \n";
+    Vector diff(sigmahat_pau.Size());
+    diff = sigmahat_pau;
+    diff -= *NewSigmahat;
+    std::cout << "Norm of difference old vs new = " << diff.Norml2() / sqrt(diff.Size()) << "\n";
+    std::cout << "Rel. norm of difference old vs new = " << (diff.Norml2() / sqrt(diff.Size())) / (sigmahat_pau.Norml2() / sqrt(sigmahat_pau.Size())) << "\n";
+#endif
+
+
+    MPI_Finalize();
+    return 0;
+
+#ifdef COMPARE_WITH_OLD
+    //if (verbose)
+        //std::cout << "sigmahat from new solver (size " << NewSigmahat->Size() << "): \n";
+    //NewSigmahat->Print();
+#endif
+
+    //MPI_Finalize();
+    //return 0;
+#endif
 
     if (visualization && nDimensions < 4)
     {
