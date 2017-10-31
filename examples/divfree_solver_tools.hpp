@@ -807,6 +807,21 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
                 {
                     lambda_special.GetSubVector(Wtmp_j, sub_lambda);
                     sigma_special.GetSubVector(*Local_inds[blk], sub_sigma);
+                    std::cout << "RT local indices \n";
+                    Local_inds[blk]->Print();
+                    std::cout << "checking for boundary \n";
+                    for ( int i = 0; i < Local_inds[blk]->Size(); ++i)
+                        if ( (*(bdrdofs_Func[0][level]))[i] != 0 )
+                            std::cout << "Weird! i = " << i << " belongs to the ess bdr \n";
+                    std::cout << "L2 local indices \n";
+                    Wtmp_j.Print();
+                    std::cout << "Row of global matrix for the first RT index \n";
+                    int nmrows = FunctBlk.RowSize ( (*Local_inds[blk])[0] );
+                    int * mrowcols = FunctBlk.GetRowColumns( (*Local_inds[blk])[0] );
+                    double * mrowvals = FunctBlk.GetRowEntries( (*Local_inds[blk])[0] );
+                    for ( int i = 0; i < nmrows; ++i )
+                        std::cout << mrowcols[i] << "," << mrowvals[i] << "  ";
+                    std::cout << "\n";
                 }
 #endif
 
