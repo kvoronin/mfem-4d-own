@@ -762,7 +762,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -2672,7 +2672,7 @@ int main(int argc, char *argv[])
     //Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
     Ablock->Assemble();
-    Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // makes res for sigma_special happier
+    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // makes res for sigma_special happier
     Ablock->Finalize();
     //auto tempA = Ablock->ParallelAssemble();
     SparseMatrix Aloc = Ablock->SpMat();
@@ -2710,7 +2710,7 @@ int main(int argc, char *argv[])
     ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
     Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
     Bblock->Assemble();
-    Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_finest, *constrfform); // // makes res for sigma_special happier
+    //Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_finest, *constrfform); // // makes res for sigma_special happier
     Bblock->Finalize();
     //auto tempB = Bblock->ParallelAssemble();
     SparseMatrix Bloc = Bblock->SpMat();
@@ -2727,6 +2727,7 @@ int main(int argc, char *argv[])
     //std::cout << "Looking at Bloc \n";
     //Bloc.Print();
 
+
     BlockVector Xinit(Ablockmat.ColOffsets());
     Xinit.GetBlock(0) = 0.0;
     MFEM_ASSERT(Xinit.GetBlock(0).Size() == sigma_exact_finest->Size(),
@@ -2736,6 +2737,7 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "EXACTSOLH_INIT is activated \n";
 #endif
+
     for (int i = 0; i < sigma_exact_finest->Size(); ++i )
     {
         // just setting Xinit to store correct boundary values at essential boundary
@@ -2806,6 +2808,10 @@ int main(int argc, char *argv[])
         std::cout << "residual norm in constraint for correct sigma_h: " << res_constr_norm << "\n";
 
 #endif
+
+    //MPI_Finalize();
+    //return 0;
+
     if (verbose)
         std::cout << "Calling constructor of the new solver \n";
 
@@ -2851,7 +2857,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 10;
+    int ntestiter = 20;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
