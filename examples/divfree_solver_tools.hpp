@@ -101,6 +101,9 @@ protected:
     // temporary input, probably already unrequired (check for usage)
     const Array<int>& ess_dof_coarsest;
 
+    const Vector& sigma_special;
+    const Vector& lambda_special;
+
     // a parameter used in Get_AE_eintdofs to identify if one should additionally look
     // for fine-grid dofs which are internal to the fine-grid elements
     bool higher_order;
@@ -194,6 +197,7 @@ public:
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
                            const Array<int>& Ess_dof_coarsest,
+                           const Vector &Sigma_special, const Vector &Lambda_special,
                            bool Higher_Order_Elements = false);
     BaseGeneralMinConstrSolver() = delete;
 
@@ -215,6 +219,7 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
                        const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                        const BlockVector& Bdrdata_Finest,
                        const Array<int>& Ess_dof_coarsest,
+                       const Vector& Sigma_special, const Vector& Lambda_special,
                        bool Higher_Order_Elements)
      : Solver(), num_levels(NumLevels),
        AE_e(AE_to_e),
@@ -230,6 +235,7 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
        ConstrRhs(ConstrRhsVec),
        bdrdata_finest(Bdrdata_Finest),
        ess_dof_coarsest(Ess_dof_coarsest),
+       sigma_special(Sigma_special), lambda_special(Lambda_special),
        higher_order(Higher_Order_Elements)
 {
     AE_edofs_L2 = new Array<SparseMatrix*>(num_levels - 1);
@@ -312,21 +318,21 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         previous_sol = bdrdata_finest;
 #ifdef DEBUG_INFO
         CheckFunctValue(Funct, previous_sol, "for prev_sol at the beginning of iteration 0: ");
-        CheckBdrError(previous_sol.GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0]));
 #endif
     }
 
-    ComputeRhsFunc(*((*rhsfunc_lvls)[0]), previous_sol);
+#ifdef DEBUG_INFO
+    CheckBdrError(previous_sol.GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0]));
+#endif
 
-    (*rhsfunc_lvls)[0]->GetBlock(0).Print();
+    ComputeRhsFunc(*((*rhsfunc_lvls)[0]), previous_sol);
+    //(*rhsfunc_lvls)[0]->GetBlock(0).Print();
 
     next_sol = previous_sol;
 
 #ifdef DEBUG_INFO
     if (*current_iterate > 0)
-    {
         CheckFunctValue(Funct, next_sol, "for next_sol at the beginning of iteration 0: ");
-    }
 #endif
 
     if (*current_iterate == 0) // for the first iteration rhs in the constraint is nonzero
@@ -389,7 +395,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 #endif
 
     // 2.5 solve coarse problem
-    SolveCoarseProblem(*((*rhsfunc_lvls)[num_levels-1]), *rhs_constr, *((*solupdate_lvls)[num_levels-1]));
+    SolveCoarseProblem(*coarse_rhsfunc, *rhs_constr, *((*solupdate_lvls)[num_levels-1]));
 
     // 3. assemble the final solution update
 #ifdef OLDFASHION
@@ -738,9 +744,14 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
 {
     // FIXME: factorization can be done only during the first solver iterate, then stored and re-used
     //DenseMatrix sub_A;
-    DenseMatrix sub_B;
-    Vector sub_Constr;
+    DenseMatrix sub_Constr;
+    Vector sub_rhsconstr;
     Array<int> sub_Func_offsets(numblocks + 1);
+
+#ifdef DEBUG_INFO
+    Vector sub_lambda;
+    Vector sub_sigma;
+#endif
 
     //SparseMatrix A_fine = Funct.GetBlock(0,0);
     //SparseMatrix B_fine = Constr;
@@ -780,16 +791,24 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             if (blk == 0) // sigma block
             {
                 Array<int> Wtmp_j((*AE_edofs_L2)[level]->GetRowColumns(AE), (*AE_edofs_L2)[level]->RowSize(AE));
-                sub_B.SetSize(Wtmp_j.Size(), Local_inds[blk]->Size());
-                GetSubMatrix(*Constr_fine, Wtmp_j, *Local_inds[blk], sub_B);
+                sub_Constr.SetSize(Wtmp_j.Size(), Local_inds[blk]->Size());
+                GetSubMatrix(*Constr_fine, Wtmp_j, *Local_inds[blk], sub_Constr);
 
                 if (*current_iterate == 0)
-                    rhs_constr.GetSubVector(Wtmp_j, sub_Constr);
+                    rhs_constr.GetSubVector(Wtmp_j, sub_rhsconstr);
                 else
                 {
-                    sub_Constr.SetSize(Wtmp_j.Size());
-                    sub_Constr = 0.0;
+                    sub_rhsconstr.SetSize(Wtmp_j.Size());
+                    sub_rhsconstr = 0.0;
                 }
+
+#ifdef DEBUG_INFO
+                if (level == 0 && AE == 0)
+                {
+                    lambda_special.GetSubVector(Wtmp_j, sub_lambda);
+                    sigma_special.GetSubVector(*Local_inds[blk], sub_sigma);
+                }
+#endif
 
             } // end of special treatment of the first block involved into constraint
 
@@ -821,7 +840,7 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             lvlrhs_func.GetBlock(blk).GetSubVector(*Local_inds[blk], sub_Func.GetBlock(blk));
         }
 
-        //MFEM_ASSERT(sub_Constr.Sum() < 1.0e-13, "checking local average at each level " << sub_Constr.Sum());
+        //MFEM_ASSERT(sub_rhsconstr.Sum() < 1.0e-13, "checking local average at each level " << sub_rhsconstr.Sum());
 
         BlockVector sol_loc(sub_Func_offsets);
         sol_loc = 0.0;
@@ -832,25 +851,63 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             std::cout << "AE = 0, level = 1 \n";
             std::cout << "sub_M \n";
             LocalAE_Matrices[0].Print();
-            std::cout << "sub_B \n";
-            sub_B.Print();
-            std::cout << "sub_Func \n";
-            sub_Func.GetBlock(0).Print();
             std::cout << "sub_Constr \n";
             sub_Constr.Print();
+            std::cout << "sub_Func \n";
+            sub_Func.GetBlock(0).Print();
+            std::cout << "sub_rhsconstr \n";
+            sub_rhsconstr.Print();
+            std::cout << "local problem is ";
+            if (is_degenerate)
+                std::cout << "singular \n";
+            else
+                std::cout << "nonsingular \n";
         }
 
         // Solving local problem at the agglomerate element AE:
-        SolveLocalProblem(LocalAE_Matrices, sub_B, sub_Func, sub_Constr, sol_loc, is_degenerate);
+        SolveLocalProblem(LocalAE_Matrices, sub_Constr, sub_Func, sub_rhsconstr, sol_loc, is_degenerate);
 
         if (level == 0 && AE == 0)
         {
             std::cout << "sol_loc \n";
             sol_loc.GetBlock(0).Print();
-            //std::cout << "sub_B * sol_loc[0] \n";
-            //Vector temp(sub_B.Height());
-            //sub_B.Mult(sol_loc.GetBlock(0), temp);
+            //std::cout << "sub_Constr * sol_loc[0] \n";
+            //Vector temp(sub_Constr.Height());
+            //sub_Constr.Mult(sol_loc.GetBlock(0), temp);
             //temp.Print();
+#ifdef DEBUG_INFO
+            std::cout << "sub_lambda \n";
+            sub_lambda.Print();
+            if (is_degenerate)
+            {
+                double average = 0.0;
+                for ( int i = 0; i < sub_lambda.Size(); ++i)
+                    average += sub_lambda[i];
+                average /= sub_lambda.Size();
+                std::cout << "sub_lambda_average = " << average << "\n";
+            }
+
+
+            Vector check_local(LocalAE_Matrices[0].Height());
+
+            Vector BTlambda_local(sub_Constr.Width());
+            sub_Constr.MultTranspose(sub_lambda, BTlambda_local);
+            check_local = BTlambda_local;
+            BTlambda_local -= sub_Func.GetBlock(0);
+            std::cout << "sub_BT * sub_lambda - sub_F \n";
+            BTlambda_local.Print();
+
+            Vector Msigma_local(LocalAE_Matrices[0].Height());
+            LocalAE_Matrices[0].Mult(sub_sigma, Msigma_local);
+            check_local += Msigma_local;
+            Msigma_local *= -1.0;
+            Msigma_local -= sub_Func.GetBlock(0);
+            std::cout << "(- sub_M * sub_lambda) - sub_F \n";
+            Msigma_local.Print();
+
+            std::cout << "sub_M * sigma_local + sub_BT * lambda_local \n";
+            check_local.Print();
+#endif
             std::cout << "? \n \n";
         }
 
@@ -881,7 +938,7 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestRhsFunc() const
             }
 
         //std::cout << "(*rhsfunc_lvls)[num_levels-1]->GetBlock(blk) size = " << (*rhsfunc_lvls)[num_levels-1]->GetBlock(blk).Size() << "\n";
-        dof_trueDof_Func[blk]->Mult((*rhsfunc_lvls)[num_levels-1]->GetBlock(blk), coarse_rhsfunc->GetBlock(blk));
+        dof_trueDof_Func[blk]->MultTranspose((*rhsfunc_lvls)[num_levels-1]->GetBlock(blk), coarse_rhsfunc->GetBlock(blk));
     }
 
 }
@@ -1054,11 +1111,13 @@ public:
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
                            const Array<int>& Ess_dof_coarsest,
+                           const Vector &Sigma_special, const Vector &Lambda_special,
                            bool Higher_Order_Elements = false):
         BaseGeneralMinConstrSolver(NumLevels, AE_to_e, El_to_dofs_Func, El_to_dofs_L2,
                                    Dof_TrueDof_Func, Dof_TrueDof_L2,  Proj_Func, Proj_L2, BdrDofs_Func,EssBdrDofs_Func,
                                    FunctBlockMat, ConstrMat, ConstrRhsVec,
                                    Bdrdata_Finest, Ess_dof_coarsest,
+                                   Sigma_special, Lambda_special,
                                    Higher_Order_Elements)
         {
             MFEM_ASSERT(numblocks == 1, "MinConstrSolver is designed for the formulation with"
@@ -1140,6 +1199,7 @@ void MinConstrSolver::SolveLocalProblem(std::vector<DenseMatrix> &FunctBlks, Den
     // sig = invA * temp2 = invA * (G - BT * lambda)
     inv_A.Mult(temp2, sol.GetBlock(0));
 
+    /*
     std::cout << "Check for the first equation: \n";
     Vector check1(FunctBlks[0].Height());
     FunctBlks[0].Mult(sol.GetBlock(0), check1);
@@ -1160,6 +1220,7 @@ void MinConstrSolver::SolveLocalProblem(std::vector<DenseMatrix> &FunctBlks, Den
     B.Mult(sol.GetBlock(0), Ax);
     Ax -= F;
     Ax.Print();
+    */
 
     return;
 }
@@ -1183,7 +1244,6 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& co
     // 2. set up solution and righthand side vectors
     BlockVector trueX(*coarse_offsets), trueRhs(*coarse_offsets);
     trueX = 0.0;
-
     trueRhs = 0.0;
 
     /*
@@ -1196,10 +1256,10 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& co
                 "Sizes mismatch when finalizing rhs at the coarsest level!\n");
     trueRhs.GetBlock(0) = coarserhs_func.GetBlock(0);
     */
-    MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarse_rhsfunc->GetBlock(0).Size() &&
+    MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarserhs_func.GetBlock(0).Size() &&
                 trueRhs.GetBlock(1).Size() == coarserhs_constr.Size(),
                 "Sizes mismatch when finalizing rhs at the coarsest level!\n");
-    trueRhs.GetBlock(0) = coarse_rhsfunc->GetBlock(0);
+    trueRhs.GetBlock(0) = coarserhs_func.GetBlock(0);
     //std::cout << "size after " << trueRhs.GetBlock(0).Size() << "\n";
     if (*current_iterate == 0) // else it is simply 0
         trueRhs.GetBlock(1) = coarserhs_constr;

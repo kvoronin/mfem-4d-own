@@ -16,8 +16,8 @@
 // additional printing option
 #define COMPARE_WITH_OLD
 // additional options used for debugging
-//#define EXACTSOLH_INIT
-//#define COMPUTING_LAMBDA
+#define EXACTSOLH_INIT
+#define COMPUTING_LAMBDA
 
 #include "divfree_solver_tools.hpp"
 
@@ -2431,36 +2431,39 @@ int main(int argc, char *argv[])
 #ifdef COMPUTING_LAMBDA
     ParGridFunction * sigma_special = new ParGridFunction(R_space);
     ParGridFunction * lambda_special = new ParGridFunction(W_space);
+    SparseMatrix Adiag_check;
+    SparseMatrix Bdiag_check;
+    int numblocks_special = 2;
+    Array<int> offsets_special(numblocks_special + 1);
+    offsets_special[0] = 0;
+    offsets_special[1] = R_space->GetVSize();
+    offsets_special[2] = W_space->GetVSize();
+    offsets_special.PartialSum();
+
+    Array<int> trueOffsets_special(numblocks_special + 1);
+    trueOffsets_special[0] = 0;
+    trueOffsets_special[1] = R_space->GetTrueVSize();
+    trueOffsets_special[2] = W_space->GetTrueVSize();
+    trueOffsets_special.PartialSum();
+
+    BlockVector x_special(offsets_special);
+    BlockVector trueX_special(trueOffsets_special);
+    BlockVector trueRhs_special(trueOffsets_special);
+    x_special = 0.0;
+    trueX_special = 0.0;
+    trueRhs_special = 0.0;
     {
         if (verbose)
             std::cout << "COMPUTING_LAMBDA is activated \n";
 
-        int numblocks = 2;
-        Array<int> offsets_special(numblocks + 1);
-        offsets_special[0] = 0;
-        offsets_special[1] = R_space->GetVSize();
-        offsets_special[2] = W_space->GetVSize();
-        offsets_special.PartialSum();
 
-        Array<int> trueOffsets_special(numblocks + 1);
-        trueOffsets_special[0] = 0;
-        trueOffsets_special[1] = R_space->GetTrueVSize();
-        trueOffsets_special[2] = W_space->GetTrueVSize();
-        trueOffsets_special.PartialSum();
-
-        BlockVector x(offsets_special);
-        BlockVector trueX(trueOffsets_special);
-        BlockVector trueRhs(trueOffsets_special);
-        x = 0.0;
-        trueX = 0.0;
-        trueRhs = 0.0;
 
         Transport_test_divfree Mytest(nDimensions, numsol, numcurl);
 
         ParGridFunction * sigma_exact = new ParGridFunction(R_space);
         sigma_exact->ProjectCoefficient(*(Mytest.sigma));
 
-        x.GetBlock(0) = *sigma_exact;
+        x_special.GetBlock(0) = *sigma_exact;
 
         ParLinearForm *fform = new ParLinearForm(R_space);
         fform->AddDomainIntegrator(new VectordivDomainLFIntegrator(zero));
@@ -2478,9 +2481,10 @@ int main(int argc, char *argv[])
         HypreParMatrix *A;
         Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
         Ablock->Assemble();
-        Ablock->EliminateEssentialBC(ess_bdrSigma, x.GetBlock(0), *fform);
+        Ablock->EliminateEssentialBC(ess_bdrSigma, x_special.GetBlock(0), *fform);
         Ablock->Finalize();
         A = Ablock->ParallelAssemble();
+        A->GetDiag(Adiag_check);
 
         //----------------
         //  D Block:
@@ -2492,13 +2496,14 @@ int main(int argc, char *argv[])
         ParMixedBilinearForm *Dblock(new ParMixedBilinearForm(R_space, W_space));
         Dblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
         Dblock->Assemble();
-        Dblock->EliminateTrialDofs(ess_bdrSigma, x.GetBlock(0), *gform);
+        Dblock->EliminateTrialDofs(ess_bdrSigma, x_special.GetBlock(0), *gform);
         Dblock->Finalize();
         D = Dblock->ParallelAssemble();
+        D->GetDiag(Bdiag_check);
         DT = D->Transpose();
 
-        fform->ParallelAssemble(trueRhs.GetBlock(0));
-        gform->ParallelAssemble(trueRhs.GetBlock(1));
+        fform->ParallelAssemble(trueRhs_special.GetBlock(0));
+        gform->ParallelAssemble(trueRhs_special.GetBlock(1));
 
         BlockOperator *CFOSLSop = new BlockOperator(trueOffsets_special);
         CFOSLSop->SetBlock(0,0, A);
@@ -2512,9 +2517,9 @@ int main(int argc, char *argv[])
         solver.SetOperator(*CFOSLSop);
         solver.SetPrintLevel(0);
 
-        trueX = 0.0;
-        //trueRhs.GetBlock(0).Print();
-        solver.Mult(trueRhs, trueX);
+        trueX_special = 0.0;
+        //trueRhs_special.GetBlock(0).Print();
+        solver.Mult(trueRhs_special, trueX_special);
         chrono.Stop();
 
         if (verbose)
@@ -2528,29 +2533,31 @@ int main(int argc, char *argv[])
            std::cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
         }
 
+        /*
         std::cout << "\nTrying to check residual for base of sigma_special and lambda_special aka trueX \n";
 
         BlockVector trueRes(trueOffsets_special);
-        CFOSLSop->Mult(trueX, trueRes);
-        trueRes -= trueRhs;
+        CFOSLSop->Mult(trueX_special, trueRes);
+        trueRes -= trueRhs_special;
         double trueres_func_norm = trueRes.Norml2() / sqrt (trueRes.Size());
         std::cout << "trueres_func norm for sigma and lambda: " << trueres_func_norm << "\n\n";
 
         Vector Asigma(A->Height());
-        A->Mult(trueX.GetBlock(0), Asigma);
+        A->Mult(trueX_special.GetBlock(0), Asigma);
         Vector DTlambda(D->Width());
-        DT->Mult(trueX.GetBlock(1), DTlambda);
+        DT->Mult(trueX_special.GetBlock(1), DTlambda);
         MFEM_ASSERT(DTlambda.Size() == Asigma.Size(), "Dimensions of A and D mismatch!");
         Vector res(Asigma.Size());
         res = Asigma;
         res += DTlambda;
-        res -= trueRhs.GetBlock(0);
+        res -= trueRhs_special.GetBlock(0);
         double res_func_norm = res.Norml2() / sqrt (res.Size());
         std::cout << "res_func norm for sigma and lambda: " << res_func_norm << "\n\n";
+        */
 
 
-        sigma_special->Distribute(&(trueX.GetBlock(0)));
-        lambda_special->Distribute(&(trueX.GetBlock(1)));
+        sigma_special->Distribute(&(trueX_special.GetBlock(0)));
+        lambda_special->Distribute(&(trueX_special.GetBlock(1)));
 
         double err_sigma = sigma_special->ComputeL2Error(*(Mytest.sigma), irs);
         double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
@@ -2587,6 +2594,14 @@ int main(int argc, char *argv[])
             cout << "|| sigma_h - sigma_ex ||_Hdiv / || sigma_ex ||_Hdiv = "
                       << sqrt(err_sigma*err_sigma + err_div * err_div)/sqrt(norm_sigma*norm_sigma + norm_div * norm_div)  << "\n";
         }
+
+        // checking that lambda special satisfies the correct essential boundary conditions
+        for (int i = 0; i < sigma_exact_finest->Size(); ++i )
+        {
+            if ( fabs( (*sigma_special)[i] - (*sigma_exact_finest)[i] ) > 1.0e-13 && (*(EssBdrDofs_R[0][0]))[i] != 0)
+                std::cout << "Weird! \n";
+        }
+        //std::cout << "? \n\n";
 
     }
 #endif
@@ -2634,6 +2649,7 @@ int main(int argc, char *argv[])
     }
 
     /*
+     * testing that interpolation operators handle boundary dofs correctly
     int lvl = 0;
     Vector test(P_Func[lvl]->GetBlock(0,0).Width());
     test = 1.0;
@@ -2650,16 +2666,13 @@ int main(int argc, char *argv[])
     return 0;
     */
 
-    //ParLinearForm *fform = new ParLinearForm(R_space);
+    ParLinearForm *fform = new ParLinearForm(R_space);
 
     ParBilinearForm *Ablock(new ParBilinearForm(R_space));
-//#ifdef COMPARE_WITH_OLD
-//    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
-//#else
+    //Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
     Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
-//#endif
     Ablock->Assemble();
-    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // ruins
+    Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // makes res for sigma_special happier
     Ablock->Finalize();
     //auto tempA = Ablock->ParallelAssemble();
     SparseMatrix Aloc = Ablock->SpMat();
@@ -2690,18 +2703,17 @@ int main(int argc, char *argv[])
     */
     Ablockmat.SetBlock(0,0,&Aloc);
 
-    //ParLinearForm *ggform = new ParLinearForm(W_space);
-    ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
-    Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
-    Bblock->Assemble();
-    //Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_finest, *ggform); // ruins
-    Bblock->Finalize();
-    //auto tempB = Bblock->ParallelAssemble();
-    SparseMatrix Bloc = Bblock->SpMat();
-
     ParLinearForm * constrfform = new ParLinearForm(W_space);
     constrfform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
     constrfform->Assemble();
+
+    ParMixedBilinearForm *Bblock(new ParMixedBilinearForm(R_space, W_space));
+    Bblock->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+    Bblock->Assemble();
+    Bblock->EliminateTrialDofs(ess_bdrSigma, *sigma_exact_finest, *constrfform); // // makes res for sigma_special happier
+    Bblock->Finalize();
+    //auto tempB = Bblock->ParallelAssemble();
+    SparseMatrix Bloc = Bblock->SpMat();
 
     Vector Floc(P_W[0]->Height());
     Floc = *constrfform;
@@ -2734,6 +2746,8 @@ int main(int argc, char *argv[])
 #ifdef EXACTSOLH_INIT
     #ifdef COMPUTING_LAMBDA
         Xinit.GetBlock(0)[i] = (*sigma_special)[i];
+        if ( fabs ((*sigma_special)[i] - (*sigma_exact_finest)[i]) > 1.0e-10 && (*(EssBdrDofs_R[0][0]))[i] != 0)
+            std::cout << "Weird! \n";
     #else
         //Xinit.GetBlock(0)[i] = sigmahat_pau[i];
     #endif
@@ -2743,10 +2757,43 @@ int main(int argc, char *argv[])
 #ifdef EXACTSOLH_INIT
     BlockVector res_func (Ablockmat.ColOffsets());
     Ablockmat.Mult(Xinit, res_func);
+
+    ParGridFunction * Ax_check = new ParGridFunction(R_space);
+    Vector trueAx_check(Adiag_check.Height());
+    Adiag_check.Mult(trueX_special.GetBlock(0), trueAx_check);
+    Ax_check->Distribute(&trueAx_check);
+    *Ax_check -= res_func.GetBlock(0);
+    double Ax_diff_norm = Ax_check->Norml2() / sqrt (Ax_check->Size());
+    if (verbose)
+        std::cout << "(Adiag sigma_special - A\' Xinit ) norm: " << Ax_diff_norm << "\n";
+
     Vector BTlambda(Bloc.Width());
     Bloc.MultTranspose(*lambda_special, BTlambda);
+
+    ParGridFunction * BTlam_check = new ParGridFunction(R_space);
+    Vector trueBTlam_check(Bdiag_check.Width());
+    Bdiag_check.MultTranspose(trueX_special.GetBlock(1), trueBTlam_check);
+    BTlam_check->Distribute(&trueBTlam_check);
+    *BTlam_check -= BTlambda;
+    double BTlam_diff_norm = BTlam_check->Norml2() / sqrt (BTlam_check->Size());
+    if (verbose)
+        std::cout << "Bdiag sigma_special - B\' Xinit ) norm: " << BTlam_diff_norm << "\n";
+
     res_func.GetBlock(0) += BTlambda;
-    res_func.GetBlock(0).Print();
+    //res_func.GetBlock(0).Print();
+    for ( int i = 0; i < res_func.GetBlock(0).Size(); ++i)
+    {
+        double value = fabs(res_func.GetBlock(0)[i]);
+        if ( value > 1.0e-6 && value < 1.0e-4 )
+        {
+            std::cout << "i = " << i << "between 1.0e-4 and 1.0e-6, val = " << value << "\n";
+            if ( (*(EssBdrDofs_R[0][0]))[i] != 0 )
+                std::cout << "It belongs to the essential boundary! \n";
+            else if ((*(BdrDofs_R[0][0]))[i] != 0 )
+                std::cout << "It belongs to the nonessential boundary! \n";
+        }
+    }
+
     double res_func_norm = res_func.GetBlock(0).Norml2() / sqrt (res_func.GetBlock(0).Size());
     if (verbose)
         std::cout << "residual norm in functional for correct sigma_h: " << res_func_norm << "\n";
@@ -2767,7 +2814,8 @@ int main(int argc, char *argv[])
 
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
-                     P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list);
+                     P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list,
+                              *sigma_special, *lambda_special);
 
     Vector tempp(sigma_exact->Size());
     tempp = *sigma_exact;
@@ -2803,7 +2851,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 1;
+    int ntestiter = 10;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
