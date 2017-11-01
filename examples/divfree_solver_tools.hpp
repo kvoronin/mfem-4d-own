@@ -102,10 +102,10 @@ protected:
 
     // temporary input, probably already unrequired (check for usage)
     const Array<int>& ess_dof_coarsest;
-
+#ifdef COMPUTING_LAMBDA
     const Vector& sigma_special;
     const Vector& lambda_special;
-
+#endif
     // a parameter used in Get_AE_eintdofs to identify if one should additionally look
     // for fine-grid dofs which are internal to the fine-grid elements
     bool higher_order;
@@ -203,7 +203,9 @@ public:
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
                            const Array<int>& Ess_dof_coarsest,
-                           const Vector &Sigma_special, const Vector &Lambda_special,
+#ifdef COMPUTING_LAMBDA
+                          const Vector &Sigma_special, const Vector &Lambda_special,
+#endif
                            bool Higher_Order_Elements = false);
     BaseGeneralMinConstrSolver() = delete;
 
@@ -225,7 +227,9 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
                        const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                        const BlockVector& Bdrdata_Finest,
                        const Array<int>& Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
                        const Vector& Sigma_special, const Vector& Lambda_special,
+#endif
                        bool Higher_Order_Elements)
      : Solver(), num_levels(NumLevels),
        AE_e(AE_to_e),
@@ -241,7 +245,9 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
        ConstrRhs(ConstrRhsVec),
        bdrdata_finest(Bdrdata_Finest),
        ess_dof_coarsest(Ess_dof_coarsest),
+#ifdef COMPUTING_LAMBDA
        sigma_special(Sigma_special), lambda_special(Lambda_special),
+#endif
        higher_order(Higher_Order_Elements)
 {
     AE_edofs_L2 = new Array<SparseMatrix*>(num_levels - 1);
@@ -302,7 +308,7 @@ void BaseGeneralMinConstrSolver::ComputeNextLvlRhsFunc(int level) const
 {
     ProjectFinerFuncToCoarser(level, *((*rhsfunc_lvls)[level]), *((*rhsfunc_lvls)[level + 1]));
 
-    //(*Funct_lvls)[level]->Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
+    //(*Funct_lvls)[level]->Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) ); // wrong level matrix here
     if (level == 0)
         Funct.Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
     else
@@ -818,9 +824,8 @@ void BaseGeneralMinConstrSolver::SolveFinerLevelProblem(int level, BlockVector &
         Constr_fine = (*Constr_lvls)[level - 1];
     SparseMatrix * Constr_fine_copy = new SparseMatrix(*Constr_fine);
 
-    Array<int> temp;
-    essbdrdofs_Func[0][level]->Copy(temp);
-    Constr_fine_copy->EliminateCols(temp);
+    const Array<int> * temp = essbdrdofs_Func[0][level];
+    Constr_fine_copy->EliminateCols(*temp);
 
     SparseMatrix * ConstrT_fine = Transpose(*Constr_fine);
 
@@ -838,10 +843,9 @@ void BaseGeneralMinConstrSolver::SolveFinerLevelProblem(int level, BlockVector &
 
     for ( int blk = 0; blk < numblocks; ++blk)
     {
-        Array<int> temp;
-        essbdrdofs_Func[blk][level]->Copy(temp);
-        for ( int dof = 0; dof < temp.Size(); ++dof)
-            if (temp[dof] != 0)
+        const Array<int> * temp = essbdrdofs_Func[blk][level];
+        for ( int dof = 0; dof < temp->Size(); ++dof)
+            if ((*temp)[dof] != 0)
             {
                 Funct_fine_copy->GetBlock(blk,blk).EliminateRowCol(dof);
                 lvlrhs_func.GetBlock(blk)[dof] = 0.0;
@@ -932,11 +936,13 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
 
     /*
 #ifdef DEBUG_INFO
+    #ifdef COMPUTING_LAMBDA
     Vector Msigma_special(Funct_fine->GetBlock(0,0).Height());
     Funct_fine->GetBlock(0,0).Mult(sigma_special, Msigma_special);
     Vector Msigma_sp_local;
     Vector sub_lambda;
     Vector sub_sigma;
+    #endif
     SparseMatrix * ConstrT_fine = Transpose(*Constr_fine);
     DenseMatrix sub_ConstrT;
 #endif
@@ -981,9 +987,11 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
 #ifdef DEBUG_INFO
                 if (level == 0 && AE == 0)
                 {
+#ifdef COMPUTING_LAMBDA
                     lambda_special.GetSubVector(Wtmp_j, sub_lambda);
                     sigma_special.GetSubVector(*Local_inds[blk], sub_sigma);
                     Msigma_special.GetSubVector(*Local_inds[blk], Msigma_sp_local);
+#endif
                     std::cout << "RT local indices \n";
                     Local_inds[blk]->Print();
                     std::cout << "checking for boundary \n";
@@ -1066,10 +1074,11 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
                 std::cout << "singular \n";
             else
                 std::cout << "nonsingular \n";
-
+#ifdef COMPUTING_LAMBDA
             std::cout << "Full vectors: lvlrhs_func - (-Msigma_special) \n";
             Msigma_special += lvlrhs_func.GetBlock(0);
             Msigma_special.Print();
+#endif
             std::cout << "?\n";
         }
         */
@@ -1111,7 +1120,7 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             BTlambda_local -= sub_Func.GetBlock(0);
             std::cout << "sub_BT * sub_lambda - sub_F \n";
             BTlambda_local.Print();
-
+#ifdef COMPUTING_LAMBDA
             // Msigma as sub_M * sub_sigma
             //Vector Mloc_sigmaloc(LocalAE_Matrices[0].Height());
             //LocalAE_Matrices[0].Mult(sub_sigma, Mloc_sigmaloc);
@@ -1130,6 +1139,7 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             std::cout << " G_local - (- (M * sigma)_local) \n";
             sub_Func.GetBlock(0) += Msigma_sp_local;
             sub_Func.GetBlock(0).Print();
+#endif
 #endif
             std::cout << "? \n \n";
         }
@@ -1153,10 +1163,9 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestRhsFunc() const
 {
     for ( int blk = 0; blk < numblocks; ++blk)
     {
-        Array<int> temp;
-        essbdrdofs_Func[blk][num_levels-1]->Copy(temp);
-        for ( int dof = 0; dof < temp.Size(); ++dof)
-            if (temp[dof] != 0)
+        const Array<int> * temp = essbdrdofs_Func[blk][num_levels-1];
+        for ( int dof = 0; dof < temp->Size(); ++dof)
+            if ( (*temp)[dof] != 0)
             {
                 (*rhsfunc_lvls)[num_levels-1]->GetBlock(blk)[dof] = 0.0;
             }
@@ -1171,11 +1180,9 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestRhsFunc() const
 void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
 {
     // 1. eliminating boundary conditions at coarse level
-    // FIXME: redundant memory usage
-    Array<int> temp;
-    essbdrdofs_Func[0][num_levels-1]->Copy(temp);
+    const Array<int> * temp = essbdrdofs_Func[0][num_levels-1];
 
-    (*Constr_lvls)[num_levels-1-1]->EliminateCols(temp);
+    (*Constr_lvls)[num_levels-1-1]->EliminateCols(*temp);
 
 #ifdef COMPARE_WITH_OLD
     {
@@ -1186,10 +1193,9 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
 
     for ( int blk = 0; blk < numblocks; ++blk)
     {
-        Array<int> temp;
-        essbdrdofs_Func[blk][num_levels-1]->Copy(temp);
-        for ( int dof = 0; dof < temp.Size(); ++dof)
-            if (temp[dof] != 0)
+        const Array<int> * temp = essbdrdofs_Func[blk][num_levels-1];
+        for ( int dof = 0; dof < temp->Size(); ++dof)
+            if ( (*temp)[dof] != 0)
             {
                 (*Funct_lvls)[num_levels-1-1]->GetBlock(blk,blk).EliminateRowCol(dof);
             }
@@ -1323,13 +1329,17 @@ public:
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
                            const Array<int>& Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
                            const Vector &Sigma_special, const Vector &Lambda_special,
+#endif
                            bool Higher_Order_Elements = false):
         BaseGeneralMinConstrSolver(NumLevels, AE_to_e, El_to_dofs_Func, El_to_dofs_L2,
                                    Dof_TrueDof_Func, Dof_TrueDof_L2,  Proj_Func, Proj_L2, BdrDofs_Func,EssBdrDofs_Func,
                                    FunctBlockMat, ConstrMat, ConstrRhsVec,
                                    Bdrdata_Finest, Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
                                    Sigma_special, Lambda_special,
+#endif
                                    Higher_Order_Elements)
         {
             MFEM_ASSERT(numblocks == 1, "MinConstrSolver is designed for the formulation with"

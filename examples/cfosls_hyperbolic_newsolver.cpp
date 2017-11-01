@@ -17,7 +17,7 @@
 #define COMPARE_WITH_OLD
 // additional options used for debugging
 //#define EXACTSOLH_INIT
-#define COMPUTING_LAMBDA
+//#define COMPUTING_LAMBDA
 
 #include "divfree_solver_tools.hpp"
 
@@ -2821,7 +2821,10 @@ int main(int argc, char *argv[])
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
                      P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list,
-                              *sigma_special, *lambda_special);
+#ifdef COMPUTING_LAMBDA
+                     *sigma_special, *lambda_special,
+#endif
+                     false);
 
     Vector tempp(sigma_exact->Size());
     tempp = *sigma_exact;
