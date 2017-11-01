@@ -302,7 +302,11 @@ void BaseGeneralMinConstrSolver::ComputeNextLvlRhsFunc(int level) const
 {
     ProjectFinerFuncToCoarser(level, *((*rhsfunc_lvls)[level]), *((*rhsfunc_lvls)[level + 1]));
 
-    (*Funct_lvls)[level]->Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
+    //(*Funct_lvls)[level]->Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
+    if (level == 0)
+        Funct.Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
+    else
+        (*Funct_lvls)[level - 1]->Mult(*((*solupdate_lvls)[level]),*((*tempvec_lvls)[level]) );
     ProjectFinerFuncToCoarser(level, *((*tempvec_lvls)[level]), *((*tempvec_lvls)[level + 1]));
 
     *((*rhsfunc_lvls)[level + 1]) -= *((*tempvec_lvls)[level + 1]);
@@ -340,6 +344,16 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
     if (*current_iterate > 0)
         CheckFunctValue(Funct, next_sol, "for next_sol at the beginning of iteration 0: ");
 #endif
+
+    /*
+#ifdef DEBUG_INFO
+    #ifdef COMPUTING_LAMBDA
+    BlockVector sigma_special_block(block_offsets);
+    sigma_special_block.GetBlock(0) = sigma_special;
+    CheckFunctValue(Funct, sigma_special_block, "for sigma_special at the beginning of iteration 0: ");
+    #endif
+#endif
+    */
 
     if (*current_iterate == 0) // for the first iteration rhs in the constraint is nonzero
     {
@@ -388,12 +402,6 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 
     } // end of loop over finer levels
 
-
-#ifdef DEBUG_INFO
-        std::cout << "Got here, place #1 \n";
-        //std::cout << "Got here, l = " << l << "\n";
-#endif
-
     // 2. setup and solve the coarse problem
     if (*current_iterate == 0)
     {
@@ -403,29 +411,13 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
     else
         rhs_constr->SetSize((*Constr_lvls)[num_levels - 1 - 1]->Height());
 
-#ifdef DEBUG_INFO
-        std::cout << "Got here, place #2 \n";
-        //std::cout << "Got here, l = " << l << "\n";
-#endif
-
     SetUpCoarsestRhsFunc();
     // needs to have coarse level rhs in the func already set before the call
-
-    /*
-#ifdef DEBUG_INFO
-    ofstream ofs("newsolver_constr_coarserhs.txt");
-    rhs_constr->Print(ofs,1);
-#endif
-    */
-
-#ifdef DEBUG_INFO
-        std::cout << "Got here, place #3 \n";
-        //std::cout << "Got here, l = " << l << "\n";
-#endif
 
     // 2.5 solve coarse problem
     SolveCoarseProblem(*coarse_rhsfunc, *rhs_constr, *((*solupdate_lvls)[num_levels-1]));
 
+    /*
 #ifdef DEBUG_INFO
         std::cout << "Got here, place #4 \n";
         //std::cout << "Got here, l = " << l << "\n";
@@ -433,6 +425,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         //MPI_Finalize();
         //return;
 #endif
+    */
 
     // 3. assemble the final solution update
 #ifdef OLDFASHION
@@ -752,15 +745,19 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
                 }
 #ifdef DEBUG_INFO
                 if (TempEssBdrDofs[dof] != 0)
+                {
                     if (dofs_check[dof] > 0)
                         std::cout << "Error: Smth wrong in dofs \n";
                     else
                         dofs_check[dof] = 2;
+                }
                 if (dofs_AE_data[j] == 1 && dofs_AE_i[dof+1] - dofs_AE_i[dof] == 2)
+                {
                     if (dofs_check[dof] > 0)
                         std::cout << "Error: Smth wrong in dofs \n";
                     else
                         dofs_check[dof] = 3;
+                }
 #endif
             }
 
@@ -1174,17 +1171,7 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestRhsFunc() const
 void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
 {
     // 1. eliminating boundary conditions at coarse level
-
-    /*
-#ifdef COMPARE_WITH_OLD
-    std::cout << "Looking at B_coarse in div part before eliminating bdr conds \n";
-    (*Constr_lvls)[num_levels-1-1]->Print();
-    //std::cout << "Looking at bdr dofs \n";
-    //for ( int i = 0; i < ess_dof_coarselvl.Size(); ++i )
-        //std::cout << ess_dof_coarselvl[i] << "\n";
-#endif
-    */
-
+    // FIXME: redundant memory usage
     Array<int> temp;
     essbdrdofs_Func[0][num_levels-1]->Copy(temp);
 
@@ -1205,10 +1192,8 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
             if (temp[dof] != 0)
             {
                 (*Funct_lvls)[num_levels-1-1]->GetBlock(blk,blk).EliminateRowCol(dof);
-                //(*rhsfunc_lvls)[num_levels-1]->GetBlock(blk)[dof] = 0.0;
             }
 
-        //dof_trueDof_Func[blk]->Mult((*rhsfunc_lvls)[num_levels-1]->GetBlock(blk), rhsfunc_global);
     }
 
     /*

@@ -16,7 +16,7 @@
 // additional printing option
 #define COMPARE_WITH_OLD
 // additional options used for debugging
-#define EXACTSOLH_INIT
+//#define EXACTSOLH_INIT
 #define COMPUTING_LAMBDA
 
 #include "divfree_solver_tools.hpp"
@@ -2666,7 +2666,7 @@ int main(int argc, char *argv[])
     return 0;
     */
 
-    ParLinearForm *fform = new ParLinearForm(R_space);
+    //ParLinearForm *fform = new ParLinearForm(R_space);
 
     ParBilinearForm *Ablock(new ParBilinearForm(R_space));
     //Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
@@ -2749,7 +2749,7 @@ int main(int argc, char *argv[])
     #ifdef COMPUTING_LAMBDA
         Xinit.GetBlock(0)[i] = (*sigma_special)[i];
         if ( fabs ((*sigma_special)[i] - (*sigma_exact_finest)[i]) > 1.0e-10 && (*(EssBdrDofs_R[0][0]))[i] != 0)
-            std::cout << "Weird! \n";
+            std::cout << "Weird! Mismatching essential boundary values for sigma_h,exact and sigma_exact,h \n";
     #else
         //Xinit.GetBlock(0)[i] = sigmahat_pau[i];
     #endif
@@ -2857,7 +2857,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 20;
+    int ntestiter = 40;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
@@ -2918,6 +2918,7 @@ int main(int argc, char *argv[])
             }
         }
 
+        if (i == ntestiter - 1)
         {
             char vishost[] = "localhost";
             int  visport   = 19916;
@@ -2947,6 +2948,18 @@ int main(int argc, char *argv[])
             MPI_Barrier(pmesh->GetComm());
             sigmadiff_sock << "solution\n" << *pmesh << *sigma_exact_finest
                      << "window_title 'sigma_ex - new sigma_h'" << endl;
+
+#ifdef COMPUTING_LAMBDA
+            socketstream sigmadiff2_sock(vishost, visport);
+            sigmadiff2_sock << "parallel " << num_procs << " " << myid << "\n";
+            sigmadiff2_sock.precision(8);
+            MPI_Barrier(pmesh->GetComm());
+            ParGridFunction * tempdiff = new ParGridFunction(R_space);
+            *tempdiff = *sigma_special;
+            *tempdiff -= *NewSigmahat;
+            sigmadiff2_sock << "solution\n" << *pmesh << *tempdiff
+                     << "window_title 'sigma_h - new sigma_h'" << endl;
+#endif
         }
 
         if (verbose)
