@@ -9,7 +9,7 @@ using std::unique_ptr;
 
 //#define TODAYDEBUG
 
-
+// Checking routines used for debugging
 // Computes and prints the norm of || Funct * y ||_2,h
 void CheckFunctValue(const BlockMatrix& Funct, const BlockVector& yblock, const char * string)
 {
@@ -20,20 +20,29 @@ void CheckFunctValue(const BlockMatrix& Funct, const BlockVector& yblock, const 
 }
 
 // Computes and prints the norm of || Constr * sigma - ConstrRhs ||_2,h
-void CheckConstrRes(Vector& sigma, const SparseMatrix& Constr, const Vector& ConstrRhs,
+bool CheckConstrRes(Vector& sigma, const SparseMatrix& Constr, const Vector& ConstrRhs,
                                                 const char* string)
 {
+    bool passed = true;
     Vector res_constr(Constr.Height());
     Constr.Mult(sigma, res_constr);
     //ofstream ofs("newsolver_out.txt");
     //res_constr.Print(ofs,1);
     res_constr -= ConstrRhs;
     double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
-    std::cout << "Constraint residual norm " << string << ": " << constr_norm << " ... \n";
+    if (fabs(constr_norm) > 1.0e-15)
+    {
+        std::cout << "Constraint residual norm " << string << ": "
+                  << constr_norm << " ... \n";
+        passed = false;
+    }
+
+    return passed;
 }
 
-void CheckBdrError (const Vector& SigCandidate, const Vector& Given_bdrdata, const Array<int>& ess_bdrdofs)
+bool CheckBdrError (const Vector& SigCandidate, const Vector& Given_bdrdata, const Array<int>& ess_bdrdofs)
 {
+    bool passed = true;
     double max_bdr_error = 0;
     for ( int dof = 0; dof < Given_bdrdata.Size(); ++dof)
     {
@@ -46,15 +55,278 @@ void CheckBdrError (const Vector& SigCandidate, const Vector& Given_bdrdata, con
     }
 
     if (max_bdr_error > 1.0e-13)
+    {
         std::cout << "CheckBdrError: Error, boundary values for the solution are wrong:"
                      " max_bdr_error = " << max_bdr_error << "\n";
-    else
-        std::cout << "CheckBdrError: boundary values are correct \n";
+        passed = false;
+    }
+    //else
+        //std::cout << "CheckBdrError: boundary values are correct \n";
+
+    return passed;
+}
+
+class MultilevelSmoother : public Operator
+{
+protected:
+    // number of levels where MultLevel is to be called
+    const int num_levels;
+    mutable Array<bool> * finalized_lvls;
+public:
+    // getters
+    int GetNumLevels() {return num_levels;}
+
+    // constructor
+    MultilevelSmoother (int Num_Levels) : num_levels(Num_Levels)
+    {
+        finalized_lvls = new Array<bool>(num_levels);
+        *finalized_lvls = 0;
+    }
+    // general setup functions
+    virtual void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl) = 0;
+    virtual void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl) = 0;
+    virtual void MultLevel(int level, Vector& in, Vector& out) = 0;
+
+    // legacy of the Operator class
+    virtual void Mult (const Vector& x, Vector& y) const
+    {
+        MFEM_ABORT("Mult() should never be called from MultilevelSmoother and its descendants \n");
+    }
+};
+
+void MultilevelSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
+{
+    std::cout << "SetUpSmoother for a SparseMatrix argument is called from the abstract base"
+                 " class but must have been redefined \n";
+}
+
+void MultilevelSmoother::SetUpSmoother(int level, const BlockMatrix* SysMat_lvl)
+{
+    MFEM_ABORT("SetUpSmoother for a BlockMatrix argument is called from the abstract base"
+                 " class but must have been redefined \n");
+}
+
+void MultilevelSmoother::MultLevel(int level, Vector& in, Vector& out)
+{
+    MFEM_ABORT("MultLevel is called from the abstract base class but must have been redefined \n");
+}
+
+// Implements a multilevelel smoother which can update the solution x = (x_l)
+// at each level l by solving a minimization problem
+//      J ( x_l + Curl_l * z_l) -> min over z_l
+// where z_l is from discrete Hcurl space.
+// The output of one action of the smoother is
+//      y_l = x_l + Curl_l * z_l
+// The functional J(x_l) at level l is defined as
+//      J(x_l) = (M_l x_l, x_l)
+// where M_l is a matrix provided as an external argument during the call to SetUpSmoother()
+class HCurlSmoother : public MultilevelSmoother
+{
+protected:
+    // Discrete curl operator at the finest level
+    mutable SparseMatrix* Curlh;
+
+    // Projection matrices for Hcurl at all levels
+    const Array< SparseMatrix*>& P_lvls;
+
+    // Discrete curl operators at all levels;
+    mutable Array<SparseMatrix*> * Curlh_lvls;
+
+    // System matrix A_l at all levels
+    mutable Array<const SparseMatrix*> * Sysmat_lvls;
+
+    // Curl_hT * A_l * Curlh matrices at all levels
+    mutable Array<SparseMatrix*> * CTMC_lvls;
+
+    // Projection of the system matrix onto discrete Hcurl space
+    // stored as HypreParMatrices at all levels;
+    mutable Array<HypreParMatrix*> * CTMC_global_lvls;
+
+    mutable Array<Solver*> * prec_global_lvls;
+
+    // dof_Truedof tables at all levels;
+    const Array<HypreParMatrix*> & d_td_lvls;
+
+    const std::vector<Array<int>* >  & essbdrdofs_lvls;
+
+    // temporary storage variables
+    mutable Array<Vector*> * rhs_lvls;      // rhs for the problems in H(curl)
+    mutable Array<Vector*> * tempvec_lvls; // live in H(curl)_h
+    mutable Array<Vector*> * tempvec2_lvls;  // live in H(div)_h
+    mutable Array<Vector*> * truerhs_lvls;  // rhs for H(curl) problems on true dofs
+    mutable Array<Vector*> * truex_lvls;    // sol for H(curl) problems on true dofs
+
+public:
+    // constructor
+    HCurlSmoother (int Num_Levels, SparseMatrix *DiscreteCurl,
+                   const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix *>& Dof_TrueDof_lvls,
+                   const std::vector<Array<int>* > & EssBdrdofs_lvls);
+    void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl);
+    void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl);
+    void MultLevel(int level, Vector& in_lvl, Vector& out_lvl);
+
+    // legacy of the Operator class
+    //virtual void Mult (const Vector& x, Vector& y) {}
+};
+
+HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix* DiscreteCurl,
+                              const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix*>& Dof_TrueDof_lvls,
+                              const std::vector<Array<int>* > & EssBdrdofs_lvls) :
+    MultilevelSmoother(Num_Levels), Curlh(DiscreteCurl), P_lvls(Proj_lvls), d_td_lvls(Dof_TrueDof_lvls), essbdrdofs_lvls(EssBdrdofs_lvls)
+{
+    std::cout << "Calling constructor of the HCurlSmoother \n";
+    Curlh_lvls = new Array<SparseMatrix*>(num_levels);
+    (*Curlh_lvls)[0] = Curlh;
+    Sysmat_lvls = new Array<const SparseMatrix*>(num_levels);
+    for ( int l = 0; l < num_levels; ++l)
+        (*Sysmat_lvls)[l] = NULL;
+    CTMC_lvls = new Array<SparseMatrix*>(num_levels);
+    for ( int l = 0; l < num_levels; ++l)
+        (*CTMC_lvls)[l] = NULL;
+    CTMC_global_lvls = new Array<HypreParMatrix*>(num_levels);
+    for ( int l = 0; l < num_levels; ++l)
+        (*CTMC_global_lvls)[l] = NULL;
+    prec_global_lvls = new Array<Solver*>(num_levels);
+    for ( int l = 0; l < num_levels; ++l)
+        (*prec_global_lvls)[l] = NULL;
+    rhs_lvls = new Array<Vector*>(num_levels);
+    tempvec2_lvls = new Array<Vector*>(num_levels);
+    tempvec_lvls = new Array<Vector*>(num_levels);
+    truerhs_lvls = new Array<Vector*>(num_levels);
+    truex_lvls = new Array<Vector*>(num_levels);
+}
+
+void HCurlSmoother::SetUpSmoother(int level, const BlockMatrix* SysMat_lvl)
+{
+    MFEM_ABORT("HcurlSmoother: BlockMatrix arguments are not supported\n");
+}
+
+void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
+{
+    if ( !(*finalized_lvls)[level] ) // if level was not set up before
+    {
+        // for level 0 the sparsematrix is already known after the constructor has been called
+        // otherwise one needs to compute it from the previous level
+        if (level != 0)
+        {
+            // computing Curlh as SparseMatrix for the current level using the previous one
+            // Curlh[level] = PT * Curlh[level] P
+            // FIXME: Can one avoid allocation of projector transpose and intermediate matrix product?
+            SparseMatrix *P_T = Transpose( *P_lvls[level]);
+            SparseMatrix *Curlh_P;
+            Curlh_P = mfem::Mult(*(*Curlh_lvls)[level - 1], *P_lvls[level]);
+            (*Curlh_lvls)[level] = mfem::Mult(*P_T, *Curlh_P);
+
+            delete P_T;
+            delete Curlh_P;
+        }
+
+        // setting the internal SysMat_lvls
+        (*Sysmat_lvls)[level] = SysMat_lvl;
+
+        // form CT*M*C as SparseMatrices
+        SparseMatrix *CurlhT = Transpose( *((*Curlh_lvls)[level]));
+        SparseMatrix *SysMat_Curlh = mfem::Mult(*SysMat_lvl, *((*Curlh_lvls)[level]));
+        (*CTMC_lvls)[level] = mfem::Mult(*CurlhT, *SysMat_Curlh);
+
+        delete SysMat_Curlh;
+        delete CurlhT;
+
+        // imposing boundary conditions
+        Array<int> * temp = essbdrdofs_lvls[level];
+        for ( int dof = 0; dof < temp->Size(); ++dof)
+        {
+            if ((*temp)[dof] != 0)
+            {
+                (*CTMC_lvls)[level]->EliminateRowCol(dof);
+            }
+        }
+
+        // form CT*M*C as HypreParMatrices
+        // FIXME: Can one avoid allocation of intermediate matrices?
+        HypreParMatrix* CTMC_d_td;
+        CTMC_d_td = d_td_lvls[level]->LeftDiagMult( *((*CTMC_lvls)[level]) );
+        HypreParMatrix * d_td_T = d_td_lvls[level]->Transpose();
+
+        (*CTMC_global_lvls)[level] = ParMult(d_td_T, CTMC_d_td);
+
+        delete CTMC_d_td;
+        delete d_td_T;
+
+        (*prec_global_lvls)[level] = new HypreSmoother(*((*CTMC_global_lvls)[level]));
+
+        // resizing local-to-level vector arrays
+        (*rhs_lvls)[level] = new Vector((*Curlh_lvls)[level]->Width());
+        (*tempvec_lvls)[level] = new Vector((*Curlh_lvls)[level]->Width());
+        (*tempvec2_lvls)[level] = new Vector((*Curlh_lvls)[level]->Height());
+        (*truerhs_lvls)[level] = new Vector((*CTMC_global_lvls)[level]->Height());
+        (*truex_lvls)[level] = new Vector((*CTMC_global_lvls)[level]->Height());
+
+        (*finalized_lvls)[level] = true;
+    }
+}
+
+// Solves the minimization problem in the div-free subspace
+void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
+{
+    MFEM_ASSERT((*finalized_lvls)[level] == true, "MultLevel() must not be called for the non-finalized level");
+
+    // 1. computing righthand side (and imposing boundary conditions for it)
+    // rhs_l = - CT * M in_l
+    (*Sysmat_lvls)[level]->Mult(in_lvl, *((*tempvec2_lvls)[level]));
+    (*Curlh_lvls)[level]->MultTranspose(*((*tempvec2_lvls)[level]), *((*rhs_lvls)[level]));
+    *((*rhs_lvls)[level]) *= -1.0;
+
+    Array<int> * temp = essbdrdofs_lvls[level];
+    for ( int dof = 0; dof < temp->Size(); ++dof)
+    {
+        if ((*temp)[dof] != 0)
+        {
+            (*((*rhs_lvls)[level]))[dof] = 0.0;
+        }
+    }
+
+    d_td_lvls[level]->MultTranspose(*((*rhs_lvls)[level]), *((*truerhs_lvls)[level]));
+
+    // 2. setting up the iterative CG solver
+    HypreParMatrix * matrix_shortcut = (*CTMC_global_lvls)[level];
+    Solver * prec_shortcut = (*prec_global_lvls)[level];
+
+    int maxIter(70000);
+    double rtol(1.e-16);
+    double atol(1.e-16);
+
+    CGSolver solver(MPI_COMM_WORLD);
+    solver.SetAbsTol(atol);
+    solver.SetRelTol(rtol);
+    solver.SetMaxIter(maxIter);
+    solver.SetOperator(*matrix_shortcut);
+    solver.SetPreconditioner(*prec_shortcut);
+    solver.SetPrintLevel(0);
+
+    *((*truex_lvls)[level]) = 0.0;
+
+    // 3. solving the linear system with preconditioned MINRES
+    // on true dofs:
+    // CT*M*C truex_l = truerhs_l
+    solver.Mult(*((*truerhs_lvls)[level]), *((*truex_lvls)[level]));
+
+    // temp_l = truex_l, but on dofs
+    d_td_lvls[level]->Mult(*((*truex_lvls)[level]), *((*tempvec_lvls)[level]));
+
+    // 4. computing the solution update in the H(div)_h space
+
+    // out = Curlh_l * temp_l = Curlh_l * x_l
+    (*Curlh_lvls)[level]->Mult( *((*tempvec_lvls)[level]), out_lvl);
+
+    // out_lvl = in_lvl + Curlh_l * x_l
+    out_lvl += in_lvl;
 }
 
 // TODO: Add blas and lapack versions for solving local problems
 // TODO: Test after all againt the case with nonzero boundary conditions for sigma
-// FIXME: doesn't work in parallel, rhs sizes mismatch for the coarsest problem
+// TODO: Symmetrize the Solver to make it available later as a preconditioner (w.r.t to smoothing)
+// TODO: Check the timings and make it faster
 
 class BaseGeneralMinConstrSolver : public Solver
 {
@@ -84,8 +356,8 @@ protected:
 
     // for each variable in the functional and for each level stores a boolean
     // vector which defines if a dof is at the boundary / essential part of the boundary
-    const std::vector<Array<Array<int>* > > & bdrdofs_Func;
-    const std::vector<Array<Array<int>* > > & essbdrdofs_Func;
+    const std::vector<std::vector<Array<int>* > > & bdrdofs_Func;
+    const std::vector<std::vector<Array<int>* > > & essbdrdofs_Func;
 
     // BlockMatrix which defines the Functional at the finest level
     const BlockMatrix& Funct;
@@ -96,13 +368,18 @@ protected:
     const SparseMatrix& Constr;
     const Vector& ConstrRhs;
 
-    // must be a given blockvector which satisfies nonhomogeneous bdr conditions
+    // Structures related to the smoothing at the interfaces after local updates
+    mutable MultilevelSmoother* Smoo;
+
+    // a given blockvector which satisfies essential bdr conditions
     // imposed for the initial problem
     const BlockVector& bdrdata_finest;
 
     // temporary input, probably already unrequired (check for usage)
     const Array<int>& ess_dof_coarsest;
+
 #ifdef COMPUTING_LAMBDA
+    // solutions of the global discrete problem used for debugging
     const Vector& sigma_special;
     const Vector& lambda_special;
 #endif
@@ -111,7 +388,7 @@ protected:
     bool higher_order;
 
 
-    // temporary variables
+    // internal variables
     // FIXME: is it a good practice? should they be mutable?
     // Have to use pointers everywhere because Solver::Mult() must not change the solver data members
     mutable Array<SparseMatrix*> *AE_edofs_L2;
@@ -147,7 +424,7 @@ protected:
     mutable Array<BlockVector*> * rhsfunc_lvls;
 
 protected:
-    BlockMatrix* Get_AE_eintdofs(int level, BlockMatrix& el_to_dofs, const std::vector<Array<Array<int> *> > &dof_is_essbdr, const std::vector<Array<Array<int> *> > &dof_is_bdr) const;
+    BlockMatrix* Get_AE_eintdofs(int level, BlockMatrix& el_to_dofs, const std::vector<std::vector<Array<int> *> > &dof_is_essbdr, const std::vector<std::vector<Array<int> *> > &dof_is_bdr) const;
     void ProjectFinerL2ToCoarser(int level, const Vector& in, Vector &ProjTin, Vector &out) const;
     void ProjectFinerFuncToCoarser(int level, const BlockVector& in, BlockVector& out) const;
     void InterpolateBack(int start_level, BlockVector &vec_start, int end_level, BlockVector &vec_end) const;
@@ -191,14 +468,14 @@ protected:
                                    BlockVector &G, Vector& F, BlockVector &sol, bool is_degenerate) const = 0;
     virtual void SolveCoarseProblem(BlockVector &coarserhs_func, Vector& rhs_constr, BlockVector& sol_coarse) const = 0;
 public:
-    // constructor
+    // constructors
     BaseGeneralMinConstrSolver(int NumLevels,
                            const Array< SparseMatrix*> &AE_to_e,
                            const Array< BlockMatrix*> &El_to_dofs_Func, const Array< SparseMatrix*> &El_to_dofs_L2,
                            const std::vector<HypreParMatrix*>& Dof_TrueDof_Func, const HypreParMatrix& Dof_TrueDof_L2,
                            const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
-                           const std::vector<Array<Array<int> *> > &BdrDofs_Func,
-                           const std::vector<Array<Array<int> *> > &EssBdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &BdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &EssBdrDofs_Func,
                            const BlockMatrix& FunctBlockMat,
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
@@ -207,6 +484,35 @@ public:
                           const Vector &Sigma_special, const Vector &Lambda_special,
 #endif
                            bool Higher_Order_Elements = false);
+    // constructor with a smoother
+    BaseGeneralMinConstrSolver(int NumLevels,
+                           const Array< SparseMatrix*> &AE_to_e,
+                           const Array< BlockMatrix*> &El_to_dofs_Func, const Array< SparseMatrix*> &El_to_dofs_L2,
+                           const std::vector<HypreParMatrix*>& Dof_TrueDof_Func, const HypreParMatrix& Dof_TrueDof_L2,
+                           const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
+                           const std::vector<std::vector<Array<int>* > > &BdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &EssBdrDofs_Func,
+                           const BlockMatrix& FunctBlockMat,
+                           const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
+                           MultilevelSmoother* Smoother,
+                           const BlockVector& Bdrdata_Finest,
+                           const Array<int>& Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
+                           const Vector &Sigma_special, const Vector &Lambda_special,
+#endif
+                           bool Higher_Order_Elements = false):
+        BaseGeneralMinConstrSolver(NumLevels, AE_to_e, El_to_dofs_Func, El_to_dofs_L2,
+                                   Dof_TrueDof_Func, Dof_TrueDof_L2,  Proj_Func, Proj_L2, BdrDofs_Func,EssBdrDofs_Func,
+                                   FunctBlockMat, ConstrMat, ConstrRhsVec,
+                                   Bdrdata_Finest, Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
+                                   Sigma_special, Lambda_special,
+#endif
+                                   Higher_Order_Elements)
+        {
+            Smoo = Smoother;
+        }
+
     BaseGeneralMinConstrSolver() = delete;
 
     // existence of these methods is required by the (abstract) base class Solver
@@ -221,8 +527,8 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
                        const Array< BlockMatrix*> &El_to_dofs_Func, const Array< SparseMatrix*> &El_to_dofs_L2,
                        const std::vector<HypreParMatrix*>& Dof_TrueDof_Func, const HypreParMatrix& Dof_TrueDof_L2,
                        const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
-                       const std::vector<Array<Array<int>* > > &BdrDofs_Func,
-                       const std::vector<Array<Array<int> *> > &EssBdrDofs_Func,
+                       const std::vector<std::vector<Array<int> *> > &BdrDofs_Func,
+                       const std::vector<std::vector<Array<int> *> > &EssBdrDofs_Func,
                        const BlockMatrix& FunctBlockMat,
                        const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                        const BlockVector& Bdrdata_Finest,
@@ -267,6 +573,7 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
     rhsfunc_lvls[0] = new BlockVector(block_offsets);
     solupdate_lvls = new Array<BlockVector*>(num_levels);
     solupdate_lvls[0] = new BlockVector(block_offsets);
+    Smoo = NULL;
 }
 
 // The top-level wrapper for the solver
@@ -278,8 +585,10 @@ void BaseGeneralMinConstrSolver::Mult(const Vector & x, Vector & y) const
 
 #ifdef DEBUG_INFO
     CheckFunctValue(Funct, *yblock, "at the end of iteration: ");
-    CheckConstrRes(yblock->GetBlock(0), Constr, ConstrRhs, "at the end of iteration");
-    CheckBdrError(yblock->GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0]));
+    MFEM_ASSERT(CheckConstrRes(yblock->GetBlock(0), Constr,
+                               ConstrRhs, "at the end of iteration"), "");
+    MFEM_ASSERT(CheckBdrError(yblock->GetBlock(0),
+                              bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0])), "");
 #endif
 }
 
@@ -338,7 +647,8 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
     }
 
 #ifdef DEBUG_INFO
-    CheckBdrError(previous_sol.GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0]));
+    MFEM_ASSERT(CheckBdrError(previous_sol.GetBlock(0),
+                              bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0])), "");
 #endif
 
     ComputeRhsFunc(*((*rhsfunc_lvls)[0]), previous_sol);
@@ -369,9 +679,8 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         *rhs_constr += ConstrRhs;
 
 #ifdef DEBUG_INFO
-        if (*current_iterate > 0 && rhs_constr->Norml2() / sqrt(rhs_constr->Size()) > 1.0e-13)
-            std::cout << "Error! Rhs in the contraint must be 0 for iteration "
-                      << *current_iterate << " > 0!\n";
+        MFEM_ASSERT(*current_iterate == 0 || rhs_constr->Norml2() / sqrt(rhs_constr->Size()) > 1.0e-14,
+                    "Error! Rhs in the contraint must be 0 for any iteration after the first");
 #endif
     }
 
@@ -399,6 +708,27 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         // FIXME: all factors of local matrices can be stored after the first solver iteration
         SolveLocalProblems(l, *((*rhsfunc_lvls)[l]), *rhs_constr, *((*solupdate_lvls)[l]));
 #endif
+
+        if (Smoo)
+        {
+            if (numblocks == 1)
+            {
+                if (l == 0)
+                    Smoo->SetUpSmoother(l, &(Funct.GetBlock(0,0)));
+                else
+                    Smoo->SetUpSmoother(l, &((*Funct_lvls)[l - 1]->GetBlock(0,0)) );
+            }
+            else
+            {
+                if (l == 0)
+                    Smoo->SetUpSmoother(l, &Funct);
+                else
+                    Smoo->SetUpSmoother(l, (*Funct_lvls)[l - 1]);
+            }
+            Smoo->MultLevel(l, *((*solupdate_lvls)[l]), *((*tempvec_lvls)[l]));
+            *((*solupdate_lvls)[l]) = *((*tempvec_lvls)[l]);
+
+        }
 
         // setting up rhs from the functional for the next (coarser) level
         ComputeNextLvlRhsFunc(l);
@@ -442,12 +772,14 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         {
             next_sol += *((*solupdate_lvls)[0]);
             if (*current_iterate == 0)
-                CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr, ConstrRhs, "only for the level solution");
+                MFEM_ASSERT(CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr,
+                            ConstrRhs, "only for the level solution"), "");
             else
             {
                 Vector zeros(ConstrRhs.Size());
                 zeros = 0.0;
-                CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr, zeros, "only for the level solution");
+                MFEM_ASSERT(CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr,
+                            zeros, "only for the level solution"), "");
             }
             ofstream ofs("newsolver_out_sol_level_0.txt");
             next_sol.GetBlock(0).Print(ofs,1);
@@ -456,12 +788,14 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         {
             InterpolateBack(level, *((*solupdate_lvls)[level]), 0, *((*tempvec_lvls)[0]));
             if (*current_iterate == 0)
-                CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr, ConstrRhs, "only for the level solution");
+                MFEM_ASSERT(CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr,
+                            ConstrRhs, "only for the level solution"),"");
             else
             {
                 Vector zeros(ConstrRhs.Size());
                 zeros = 0.0;
-                CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr, zeros, "only for the level solution");
+                MFEM_ASSERT(CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr,
+                            zeros, "only for the level solution"),"");
             }
             next_sol += *((*tempvec_lvls)[0]);
             if (level == 1)
@@ -482,12 +816,13 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
             }
         }
 
-        CheckConstrRes(next_sol.GetBlock(0), Constr, ConstrRhs, "after finer level");
+        MFEM_ASSERT(CheckConstrRes(next_sol.GetBlock(0), Constr,
+                                   ConstrRhs, "after finer level"),"");
     }
 #else
+
     // final sol update (at level 0)  =
     //                   = solupdate[0] + P_0 * (solupdate[1] + P_1 * ( ...) )
-
     for (int level = num_levels - 1; level > 0; --level)
     {
         // tempvec[level-1] = P[level-1] * solupdate[level]
@@ -507,8 +842,8 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 
     /*
 #ifdef DEBUG_INFO
-    CheckConstrRes(next_sol.GetBlock(0), Constr, ConstrRhs, "after all levels update");
-    CheckBdrError(next_sol.GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0]));
+    MFEM_ASSERT(CheckConstrRes(next_sol.GetBlock(0), Constr, ConstrRhs, "after all levels update"),"");
+    MFEM_ASSERT(CheckBdrError(next_sol.GetBlock(0), bdrdata_finest.GetBlock(0), *(essbdrdofs_Func[0][0])), "");
 #endif
     */
 
@@ -656,8 +991,8 @@ void BaseGeneralMinConstrSolver::SetUpFinerLvl(int lvl) const
 // one for dofs at fine-grid element faces which belong to the global boundary
 // and a different treatment for internal (w.r.t. to fine elements) dofs
 BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
-                            BlockMatrix& el_to_dofs, const std::vector<Array<Array<int>*> > &dof_is_essbdr,
-                                                     const std::vector<Array<Array<int>*> > &dof_is_bdr) const
+                            BlockMatrix& el_to_dofs, const std::vector<std::vector<Array<int>* > > &dof_is_essbdr,
+                                                     const std::vector<std::vector<Array<int>* > > &dof_is_bdr) const
 {
     SparseMatrix * TempSpMat = new SparseMatrix;
 #ifdef DEBUG_INFO
@@ -678,13 +1013,13 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
 
     BlockMatrix * res = new BlockMatrix(res_rowoffsets, res_coloffsets);
 
-    Array<int> TempBdrDofs;
-    Array<int> TempEssBdrDofs;
+    //Array<int> TempBdrDofs;
+    //Array<int> TempEssBdrDofs;
     for (int blk = 0; blk < numblocks; ++blk)
     {
         *TempSpMat = el_to_dofs.GetBlock(blk,blk);
-        TempBdrDofs.MakeRef(*dof_is_bdr[blk][level]);
-        TempEssBdrDofs.MakeRef(*dof_is_essbdr[blk][level]);
+        //TempBdrDofs.MakeRef(*dof_is_bdr[blk][level]);
+        //TempEssBdrDofs.MakeRef(*dof_is_essbdr[blk][level]);
 
         // creating dofs_to_AE relation table
         SparseMatrix * dofs_AE = Transpose(*mfem::Mult(*AE_e[level], *TempSpMat));
@@ -710,9 +1045,9 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
             for (int j = dofs_AE_i[dof]; j < dofs_AE_i[dof+1]; ++j)
             {
                 // if a dof belongs to only one fine-grid element and is not at the domain boundary
-                bool inside_finegrid_el = (higher_order && !TempBdrDofs[dof] && dofs_AE_data[j] == 1);
+                bool inside_finegrid_el = (higher_order && (*(dof_is_bdr[blk][level]))[dof] == 0 && dofs_AE_data[j] == 1);
                 //bool on_noness_bdr = false;
-                bool on_noness_bdr = (TempEssBdrDofs[dof] == 0 && TempBdrDofs[dof]!= 0);
+                bool on_noness_bdr = ((*(dof_is_essbdr[blk][level]))[dof] == 0 && (*(dof_is_bdr[blk][level]))[dof]!= 0);
                 MFEM_ASSERT( ( !inside_finegrid_el || (dofs_AE_i[dof+1] - dofs_AE_i[dof] == 1) ),
                         "A fine-grid dof inside a fine-grid element cannot belong to more than one AE");
                 MFEM_ASSERT( !inside_finegrid_el,
@@ -739,9 +1074,9 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
 #ifdef DEBUG_INFO
                 dofs_check[dof] = 0;
 #endif
-                bool inside_finegrid_el = (higher_order && !TempBdrDofs[dof] && dofs_AE_data[j] == 1);
+                bool inside_finegrid_el = (higher_order && (*(dof_is_bdr[blk][level]))[dof] == 0 && dofs_AE_data[j] == 1);
                 //bool on_noness_bdr = false;
-                bool on_noness_bdr = (!TempEssBdrDofs[dof] && TempBdrDofs[dof]);
+                bool on_noness_bdr = ((*(dof_is_essbdr[blk][level]))[dof] == 0 && (*(dof_is_bdr[blk][level]))[dof]!= 0);
                 if (dofs_AE_data[j] == 2 || inside_finegrid_el || on_noness_bdr )
                 {
                     innerdofs_AE_j[nnz_count++] = dofs_AE_j[j];
@@ -750,7 +1085,7 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
 #endif
                 }
 #ifdef DEBUG_INFO
-                if (TempEssBdrDofs[dof] != 0)
+                if ( (*(dof_is_essbdr[blk][level]))[dof] != 0)
                 {
                     if (dofs_check[dof] > 0)
                         std::cout << "Error: Smth wrong in dofs \n";
@@ -783,35 +1118,6 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level,
     }
 
     return res;
-}
-
-// MFEM doesn't have a const version of GetSubMatrix
-void GetSubMatrix(const SparseMatrix& SpMat, const Array<int> &rows, const Array<int> &cols,
-                                DenseMatrix &subm)
-{
-   int i, j, gi, gj, s, t;
-   double a;
-
-   for (i = 0; i < rows.Size(); i++)
-   {
-      if ((gi = rows[i]) < 0) { gi = -1-gi, s = -1; }
-      else { s = 1; }
-      MFEM_ASSERT(gi < SpMat.Height(),
-                  "Trying to insert a row " << gi << " outside the matrix height "
-                  << SpMat.Height());
-      SpMat.SetColPtr(gi);
-      for (j = 0; j < cols.Size(); j++)
-      {
-         if ((gj = cols[j]) < 0) { gj = -1-gj, t = -s; }
-         else { t = s; }
-         MFEM_ASSERT(gj < SpMat.Width(),
-                     "Trying to insert a column " << gj << " outside the matrix width "
-                     << SpMat.Width());
-         a = SpMat._Get_(gj);
-         subm(i, j) = (t < 0) ? (-a) : (a);
-      }
-      SpMat.ClearColPtr();
-   }
 }
 
 #ifdef TODAYDEBUG
@@ -973,7 +1279,7 @@ void BaseGeneralMinConstrSolver::SolveLocalProblems(int level, BlockVector& lvlr
             {
                 Array<int> Wtmp_j((*AE_edofs_L2)[level]->GetRowColumns(AE), (*AE_edofs_L2)[level]->RowSize(AE));
                 sub_Constr.SetSize(Wtmp_j.Size(), Local_inds[blk]->Size());
-                GetSubMatrix(*Constr_fine, Wtmp_j, *Local_inds[blk], sub_Constr);
+                Constr_fine->GetSubMatrix(Wtmp_j, *Local_inds[blk], sub_Constr);
 
                 if (*current_iterate == 0)
                     rhs_constr.GetSubVector(Wtmp_j, sub_rhsconstr);
@@ -1232,6 +1538,7 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
 
     HypreParMatrix *ConstrT_global = Constr_global->Transpose();
 
+    // FIXME: Where these temporary objects are deleted?
     std::vector<HypreParMatrix*> Funct_d_td(numblocks);
     std::vector<HypreParMatrix*> d_td_T(numblocks);
     std::vector<HypreParMatrix*> Funct_global(numblocks);
@@ -1310,7 +1617,7 @@ void BaseGeneralMinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func,
     return;
 }
 
-class MinConstrSolver : private BaseGeneralMinConstrSolver
+class MinConstrSolver : public BaseGeneralMinConstrSolver
 {
 protected:
     virtual void SolveLocalProblem(std::vector<DenseMatrix> &FunctBlks, DenseMatrix& B,
@@ -1323,8 +1630,8 @@ public:
                            const std::vector<HypreParMatrix*>& Dof_TrueDof_Func,
                            const HypreParMatrix& Dof_TrueDof_L2,
                            const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
-                           const std::vector<Array<Array<int> *> > &BdrDofs_Func,
-                           const std::vector<Array<Array<int> *> > &EssBdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &BdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &EssBdrDofs_Func,
                            const BlockMatrix& FunctBlockMat,
                            const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                            const BlockVector& Bdrdata_Finest,
@@ -1345,6 +1652,37 @@ public:
             MFEM_ASSERT(numblocks == 1, "MinConstrSolver is designed for the formulation with"
                                     " sigma only but more blocks were provided!");
         }
+
+    // constructor with a smoother
+    MinConstrSolver(int NumLevels, const Array< SparseMatrix*> &AE_to_e,
+                           const Array< BlockMatrix*> &El_to_dofs_Func, const Array< SparseMatrix*> &El_to_dofs_L2,
+                           const std::vector<HypreParMatrix*>& Dof_TrueDof_Func,
+                           const HypreParMatrix& Dof_TrueDof_L2,
+                           const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
+                           const std::vector<std::vector<Array<int>* > > &BdrDofs_Func,
+                           const std::vector<std::vector<Array<int>* > > &EssBdrDofs_Func,
+                           const BlockMatrix& FunctBlockMat,
+                           const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
+                           MultilevelSmoother* Smoother,
+                           const BlockVector& Bdrdata_Finest,
+                           const Array<int>& Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
+                           const Vector &Sigma_special, const Vector &Lambda_special,
+#endif
+                           bool Higher_Order_Elements = false):
+        BaseGeneralMinConstrSolver(NumLevels, AE_to_e, El_to_dofs_Func, El_to_dofs_L2,
+                                   Dof_TrueDof_Func, Dof_TrueDof_L2,  Proj_Func, Proj_L2, BdrDofs_Func,EssBdrDofs_Func,
+                                   FunctBlockMat, ConstrMat, ConstrRhsVec, Smoother,
+                                   Bdrdata_Finest, Ess_dof_coarsest,
+#ifdef COMPUTING_LAMBDA
+                                   Sigma_special, Lambda_special,
+#endif
+                                   Higher_Order_Elements)
+        {
+            MFEM_ASSERT(numblocks == 1, "MinConstrSolver is designed for the formulation with"
+                                    " sigma only but more blocks were provided!");
+        }
+
 
     virtual void Mult(const Vector & x, Vector & y) const
     { BaseGeneralMinConstrSolver::Mult(x,y); }
@@ -1464,47 +1802,20 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& co
     solver.SetPrintLevel(0);
 
     // 2. set up solution and righthand side vectors
+    // FIXME: Why creating Vectors here at each iteration?
     BlockVector trueX(*coarse_offsets), trueRhs(*coarse_offsets);
     trueX = 0.0;
     trueRhs = 0.0;
 
-    /*
-    //std::cout << "size trueRhs block 0 " << trueRhs.GetBlock(0).Size() << "\n";
-    //std::cout << "size trueRhs block 1 " << trueRhs.GetBlock(1).Size() << "\n";
-    //std::cout << "size coarse rhs func block 0 " << coarserhs_func.GetBlock(0).Size() << "\n";
-    //std::cout << "size coarse rhs constr " << coarserhs_constr.Size() << "\n";
     MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarserhs_func.GetBlock(0).Size() &&
                 trueRhs.GetBlock(1).Size() == coarserhs_constr.Size(),
                 "Sizes mismatch when finalizing rhs at the coarsest level!\n");
     trueRhs.GetBlock(0) = coarserhs_func.GetBlock(0);
-    */
-    MFEM_ASSERT(trueRhs.GetBlock(0).Size() == coarserhs_func.GetBlock(0).Size() &&
-                trueRhs.GetBlock(1).Size() == coarserhs_constr.Size(),
-                "Sizes mismatch when finalizing rhs at the coarsest level!\n");
-    trueRhs.GetBlock(0) = coarserhs_func.GetBlock(0);
-    //std::cout << "size after " << trueRhs.GetBlock(0).Size() << "\n";
     if (*current_iterate == 0) // else it is simply 0
         trueRhs.GetBlock(1) = coarserhs_constr;
 
-    //trueRhs.GetBlock(0) = 0.0;
-
-    /*
-#ifdef COMPARE_WITH_OLD
-    std::cout << "Looking at coarse rhs of size " << trueRhs.Size() << "\n";
-    //std::cout << "trueRhs block 0 of size " << trueRhs.GetBlock(0).Size() << "\n";
-    //trueRhs.GetBlock(0).Print();
-    //std::cout << "rhs_constr inside SolveCoarseProblem (of size " << rhs_constr.Size() << ") \n";
-    //rhs_constr.Print();
-    std::cout << "trueRhs block 1 of size " << trueRhs.GetBlock(1).Size() << "\n";
-    trueRhs.GetBlock(1).Print();
-#endif
-    */
-
     // 3. solve the linear system with preconditioned MINRES.
     solver.Mult(trueRhs, trueX);
-
-    //std::cout << "trueRhs block 1 of size " << trueRhs.GetBlock(1).Size() << "\n";
-    //trueRhs.GetBlock(1).Print();
 
     /*
 #ifdef DEBUG_INFO
@@ -1551,7 +1862,7 @@ public:
                          const std::vector<HypreParMatrix*>& Dof_TrueDof_Func,
                          const HypreParMatrix& Dof_TrueDof_L2,
                          const Array< BlockMatrix*> &Proj_Func, const Array< SparseMatrix*> &Proj_L2,
-                         const std::vector<Array<Array<int> *> > &BdrDofs_Func,
+                         const std::vector<std::vector<Array<int>* > > &BdrDofs_Func,
                          const BlockMatrix& FunctBlockMat,
                          const SparseMatrix& ConstrMat, const Vector& ConstrRhsVec,
                          const BlockVector& Bdrdata_Finest,

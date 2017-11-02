@@ -18,6 +18,7 @@
 // additional options used for debugging
 //#define EXACTSOLH_INIT
 //#define COMPUTING_LAMBDA
+#define WITH_SMOOTHER
 
 #include "divfree_solver_tools.hpp"
 
@@ -762,7 +763,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -1171,26 +1172,54 @@ int main(int argc, char *argv[])
     DivPart divp;
 
 #ifdef NEW_STUFF
+    int num_levels = ref_levels + 1;
     Array<int> all_bdrSigma(pmesh->bdr_attributes.Max());
     all_bdrSigma = 1;
-    std::vector<Array<Array<int>*> > BdrDofs_R(1);
-    std::vector<Array<Array<int>*> > EssBdrDofs_R(1);
+    std::vector<std::vector<Array<int>* > > BdrDofs_R(1, std::vector<Array<int>* >(num_levels));
+    std::vector<std::vector<Array<int>* > > EssBdrDofs_R(1, std::vector<Array<int>* >(num_levels));
 
-    int num_levels = ref_levels + 1;
+    std::vector<Array<int>* > EssBdrDofs_Hcurl(num_levels - 1);
+    Array< SparseMatrix*> Proj_Hcurl(num_levels - 1);
+    Array<HypreParMatrix *> Dof_TrueDof_Hcurl(num_levels - 1);
 
-    Array<Array<int>*> temparray_totalbdr(num_levels);
-    for (int lvl = 0; lvl < num_levels; ++lvl)
-        temparray_totalbdr[lvl] = new Array<int>;
-    Array<Array<int>*> temparray_essbdr(num_levels);
-    for (int lvl = 0; lvl < num_levels; ++lvl)
-        temparray_essbdr[lvl] = new Array<int>;
+    //std::vector<std::vector<Array<int> > > EssBdrDofs_R(1);
+
+    for (int l = 0; l < num_levels; ++l)
+    {
+        BdrDofs_R[0][l] = new Array<int>;
+        EssBdrDofs_R[0][l] = new Array<int>;
+        if (l < num_levels - 1)
+            EssBdrDofs_Hcurl[l] = new Array<int>;
+    }
+
+    const SparseMatrix* Proj_Hcurl_local;
 
 
+    /*
+    std::vector<std::vector<Array<int> > > test(2, std::vector<Array<int> >(1));
+    //std::vector<Array<int> > test(2);
+    test[0][0].SetSize(4);
+    test[1][0].SetSize(3);
+
+    MPI_Finalize();
+    return 0;
+    */
+
+    //Array<Array<int>*> temparray_totalbdr(num_levels);
+    //for (int lvl = 0; lvl < num_levels; ++lvl)
+        //temparray_totalbdr[lvl] = new Array<int>;
+    //Array<Array<int>*> temparray_essbdr(num_levels);
+    //for (int lvl = 0; lvl < num_levels; ++lvl)
+        //temparray_essbdr[lvl] = new Array<int>;
+
+
+    /*
     for (unsigned int i = 0; i < BdrDofs_R.size(); ++i)
     {
         BdrDofs_R[i].SetSize(num_levels);
         EssBdrDofs_R[i].SetSize(num_levels);
     }
+    */
     /*
     std::vector<Array<int>*> ess_dof_coarsestlvl_func(1);
     std::vector<Vector*> ess_dofvalues_coarsestlvl_func(1);
@@ -1226,14 +1255,14 @@ int main(int argc, char *argv[])
                 if (l == 1)
                 {
                     R_space->GetEssentialVDofs(ess_bdrSigma, ess_dof_coarsestlvl_list);
-                    //sigma_exact_coarse = new ParGridFunction(R_space);
-                    //sigma_exact_coarse->ProjectCoefficient(*(Mytest.sigma));
                     //ess_dof_list.Print();
                 }
 
 #ifdef NEW_STUFF
-                R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[num_levels - l]);
-                R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[num_levels - l]);
+                R_space->GetEssentialVDofs(all_bdrSigma, *(BdrDofs_R[0][num_levels - l]));
+                R_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_R[0][num_levels - l]));
+                if (l > 1)
+                    C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[num_levels - l]));
 #endif
 
                 if (prec_is_MG)
@@ -1277,6 +1306,14 @@ int main(int argc, char *argv[])
                     pmesh->UniformRefinement();
                 }
 
+#ifdef NEW_STUFF
+                if (l > 1)
+                {
+                    Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                    Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                    Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
+                }
+#endif
                 C_space->Update();
                 if (prec_is_MG)
                 {
@@ -1325,8 +1362,12 @@ int main(int argc, char *argv[])
 #ifdef NEW_STUFF
                 if (l == ref_levels)
                 {
-                    R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[0]);
-                    R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[0]);
+                    R_space->GetEssentialVDofs(all_bdrSigma, *(BdrDofs_R[0][0]));
+                    R_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_R[0][0]));
+                    C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[0]));
+                    Dof_TrueDof_Hcurl[0] = C_space->Dof_TrueDof_Matrix();
+                    Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                    Proj_Hcurl[0] = RemoveZeroEntries(*Proj_Hcurl_local);
                 }
 #endif
             }
@@ -1384,23 +1425,33 @@ int main(int argc, char *argv[])
                 W_space->Update();
 
 #ifdef NEW_STUFF
-            R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[num_levels - l - 1]);
-            R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[num_levels - l - 1]);
+            R_space->GetEssentialVDofs(all_bdrSigma, *(BdrDofs_R[0][num_levels - l - 1]));
+            R_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_R[0][num_levels - l - 1]));
+            if (l > 0)
+                C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[num_levels - l - 1]));
 #endif
 
             R_space->Update();
 
 #ifdef NEW_STUFF
-            //R_space->GetEssentialVDofs(ess_allbdr, *temparray[l-1]);
-            //R_space->GetEssentialVDofs(ess_allbdr, BdrDofs_R[0][l]);
             if (l == par_ref_levels - 1)
             {
-                R_space->GetEssentialVDofs(all_bdrSigma, *temparray_totalbdr[0]);
-                R_space->GetEssentialVDofs(ess_bdrSigma, *temparray_essbdr[0]);
+                R_space->GetEssentialVDofs(all_bdrSigma, *(BdrDofs_R[0][0]));
+                R_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_R[0][0]));
+                C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[0]));
             }
-                //R_space->GetEssentialVDofs(ess_allbdr, *temparray[0]);
 #endif
             C_space->Update();
+
+#ifdef NEW_STUFF
+            if (l > 1)
+            {
+                Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
+            }
+#endif
+
             H_space->Update();
 
             if (prec_is_MG)
@@ -1436,9 +1487,6 @@ int main(int argc, char *argv[])
         cout << "MG hierarchy constructed in " << chrono.RealTime() << " seconds.\n";
 
 #ifdef NEW_STUFF
-    BdrDofs_R[0].MakeRef(temparray_totalbdr);
-    EssBdrDofs_R[0].MakeRef(temparray_essbdr);
-
     /*
     ess_dof_coarsestlvl_func[0] = &ess_dof_coarsestlvl_list;
     ess_dofvalues_coarsestlvl_func[0] = sigma_exact_coarse;
@@ -1751,6 +1799,9 @@ int main(int argc, char *argv[])
     //Divfree_op.EliminateTrialDofs(ess_bdrU, xblks.GetBlock(0), *rhside_Hcurl);
     //Divfree_op.EliminateTestDofs(ess_bdrU);
     Divfree_op.Finalize();
+#ifdef NEW_STUFF
+    SparseMatrix Divfree_op_sp = Divfree_op.SpMat();
+#endif
     HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     HypreParMatrix * DivfreeT_dop = Divfree_dop->Transpose();
 #endif
@@ -2598,7 +2649,7 @@ int main(int argc, char *argv[])
         // checking that lambda special satisfies the correct essential boundary conditions
         for (int i = 0; i < sigma_exact_finest->Size(); ++i )
         {
-            if ( fabs( (*sigma_special)[i] - (*sigma_exact_finest)[i] ) > 1.0e-13 && (*(EssBdrDofs_R[0][0]))[i] != 0)
+            if ( fabs( (*sigma_special)[i] - (*sigma_exact_finest)[i] ) > 1.0e-13 && EssBdrDofs_R[0][0][i] != 0)
                 std::cout << "Weird! \n";
         }
         //std::cout << "? \n\n";
@@ -2607,6 +2658,19 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef NEW_STUFF
+    if (verbose)
+        std::cout << "\nCreating an instance of the new Hcurl smoother \n";
+
+    if (verbose)
+        std::cout << "Calling constructor of the new solver \n";
+
+    HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
+                   Proj_Hcurl, Dof_TrueDof_Hcurl,
+                   EssBdrDofs_Hcurl);
+
+    //MPI_Finalize();
+    //return 0;
+
     if (verbose)
         std::cout << "\nCreating an instance of the new multilevel solver \n";
 
@@ -2791,7 +2855,7 @@ int main(int argc, char *argv[])
             std::cout << "i = " << i << "between 1.0e-4 and 1.0e-6, val = " << value << "\n";
             if ( (*(EssBdrDofs_R[0][0]))[i] != 0 )
                 std::cout << "It belongs to the essential boundary! \n";
-            else if ((*(BdrDofs_R[0][0]))[i] != 0 )
+            else if ( (*(BdrDofs_R[0][0]))[i] != 0 )
                 std::cout << "It belongs to the nonessential boundary! \n";
         }
     }
@@ -2818,6 +2882,15 @@ int main(int argc, char *argv[])
     chrono.Clear();
     chrono.Start();
 
+#ifdef WITH_SMOOTHER
+    MinConstrSolver NewSolver(ref_levels + 1, P_WT,
+                     Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
+                     P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, &NewSmoother, Xinit, ess_dof_coarsestlvl_list,
+#ifdef COMPUTING_LAMBDA
+                     *sigma_special, *lambda_special,
+#endif
+                     false);
+#else
     MinConstrSolver NewSolver(ref_levels + 1, P_WT,
                      Element_dofs_Func, Element_dofs_W, Dof_TrueDof_coarse_Func, *d_td_coarse_W,
                      P_Func, P_W, BdrDofs_R, EssBdrDofs_R, Ablockmat, Bloc, Floc, Xinit, ess_dof_coarsestlvl_list,
@@ -2825,6 +2898,7 @@ int main(int argc, char *argv[])
                      *sigma_special, *lambda_special,
 #endif
                      false);
+#endif
 
     Vector tempp(sigma_exact->Size());
     tempp = *sigma_exact;
@@ -2860,7 +2934,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 40;
+    int ntestiter = 5;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
@@ -2872,7 +2946,7 @@ int main(int argc, char *argv[])
         double max_bdr_error = 0;
         for ( int dof = 0; dof < Xinit.Size(); ++dof)
         {
-            if ((*(EssBdrDofs_R[0][0]))[dof] != 0.0)
+            if ( (*(EssBdrDofs_R[0][0]))[dof] != 0.0)
             {
                 //std::cout << "ess dof index: " << dof << "\n";
                 double bdr_error_dof = fabs(Xinit[dof] - (*NewSigmahat)[dof]);
@@ -2884,8 +2958,8 @@ int main(int argc, char *argv[])
         if (max_bdr_error > 1.0e-14)
             std::cout << "Error, boundary values for the solution are wrong:"
                          " max_bdr_error = " << max_bdr_error << "\n";
-        else
-            std::cout << "After iter " << i << " of the new solver bdr values at ess bdr are correct \n";
+        //else
+            //std::cout << "After iter " << i << " of the new solver bdr values at ess bdr are correct \n";
 
         {
             int order_quad = max(2, 2*feorder+1);
