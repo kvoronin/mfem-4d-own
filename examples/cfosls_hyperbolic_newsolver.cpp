@@ -18,7 +18,7 @@
 // additional options used for debugging
 //#define EXACTSOLH_INIT
 #define COMPUTING_LAMBDA
-#define WITH_SMOOTHER
+//#define WITH_SMOOTHER
 
 #include "divfree_solver_tools.hpp"
 
@@ -2707,7 +2707,7 @@ int main(int argc, char *argv[])
     delete CTMC_d_td;
     */
 
-    HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
+    HCurlSmoother NewSmoother(num_levels - 1, Divfree_op_sp,
                    Proj_Hcurl, Dof_TrueDof_Hcurl,
                    EssBdrDofs_Hcurl);
 
