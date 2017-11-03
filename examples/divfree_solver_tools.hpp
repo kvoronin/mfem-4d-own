@@ -85,6 +85,8 @@ public:
     // general setup functions
     virtual void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl) = 0;
     virtual void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl) = 0;
+    virtual void ComputeRhsLevel(int level, Vector& res_lvl);
+    virtual void ComputeRhsLevel(int level, BlockVector& res_lvl);
     virtual void MultLevel(int level, Vector& in, Vector& out) = 0;
 
     // legacy of the Operator class
@@ -110,6 +112,19 @@ void MultilevelSmoother::MultLevel(int level, Vector& in, Vector& out)
 {
     MFEM_ABORT("MultLevel is called from the abstract base class but must have been redefined \n");
 }
+
+void MultilevelSmoother::ComputeRhsLevel(int level, Vector& res_lvl)
+{
+    std::cout << "ComputeRhsLevel for a Vector argument is called from the abstract base"
+                 " class but must have been redefined \n";
+}
+
+void MultilevelSmoother::ComputeRhsLevel(int level, BlockVector& res_lvl)
+{
+    std::cout << "ComputeRhsLevel for a BlockVector argument is called from the abstract base"
+                 " class but must have been redefined \n";
+}
+
 
 // Implements a multilevelel smoother which can update the solution x = (x_l)
 // at each level l by solving a minimization problem
@@ -151,8 +166,8 @@ protected:
 
     // temporary storage variables
     mutable Array<Vector*> * rhs_lvls;      // rhs for the problems in H(curl)
-    mutable Array<Vector*> * tempvec_lvls; // live in H(curl)_h
-    mutable Array<Vector*> * tempvec2_lvls;  // live in H(div)_h
+    mutable Array<Vector*> * tempvec_lvls;  // lives in H(curl)_h
+    mutable Array<Vector*> * tempvec2_lvls; // lives in H(div)_h
     mutable Array<Vector*> * truerhs_lvls;  // rhs for H(curl) problems on true dofs
     mutable Array<Vector*> * truex_lvls;    // sol for H(curl) problems on true dofs
 
@@ -161,12 +176,21 @@ public:
     HCurlSmoother (int Num_Levels, SparseMatrix *DiscreteCurl,
                    const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix *>& Dof_TrueDof_lvls,
                    const std::vector<Array<int>* > & EssBdrdofs_lvls);
-    void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl);
-    void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl);
-    void MultLevel(int level, Vector& in_lvl, Vector& out_lvl);
 
-    // legacy of the Operator class
-    //virtual void Mult (const Vector& x, Vector& y) {}
+    // SparseMatrix version of SetUpSmoother()
+    void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl);
+
+    // BlockMatrix version of SetUpSmoother()
+    void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl);
+
+    // Computes the righthand side for the local minimization problem
+    // solved in MultLevel() from the given residual at level l of the
+    // original problem
+    void ComputeRhsLevel(int level, Vector& res_lvl);
+
+    // Updates the given iterate at level l by solving a minimization
+    // problem in H(curl) at level l (using the precomputed righthand side)
+    void MultLevel(int level, Vector& in_lvl, Vector& out_lvl);
 };
 
 HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix* DiscreteCurl,
@@ -254,6 +278,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         delete d_td_T;
 
         (*prec_global_lvls)[level] = new HypreSmoother(*((*CTMC_global_lvls)[level]));
+        (*prec_global_lvls)[level]->iterative_mode = false;
 
         // resizing local-to-level vector arrays
         (*rhs_lvls)[level] = new Vector((*Curlh_lvls)[level]->Width());
@@ -266,17 +291,31 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
     }
 }
 
+void HCurlSmoother::ComputeRhsLevel(int level, Vector& res_lvl)
+{
+    // rhs_l = CT_l * res_lvl
+    (*Curlh_lvls)[level]->MultTranspose(res_lvl, *((*rhs_lvls)[level]));
+}
+
+
 // Solves the minimization problem in the div-free subspace
+// Takes the current iterate in_lvl
+// and returns the updated iterate
+//      out_lvl = in_lvl + Curl_l * sol_l
+// where
+//      CurlT_l M Curl_l sol_l = rhs_l
+// rhs_l is computed using the residual of the original problem
+// during the call to SetUpRhs() before MultLevel
 void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
 {
-    MFEM_ASSERT((*finalized_lvls)[level] == true, "MultLevel() must not be called for the non-finalized level");
+    MFEM_ASSERT((*finalized_lvls)[level] == true,
+                "MultLevel() must not be called for the non-finalized level");
 
-    // 1. computing righthand side (and imposing boundary conditions for it)
-    // rhs_l = - CT * M in_l
-    (*Sysmat_lvls)[level]->Mult(in_lvl, *((*tempvec2_lvls)[level]));
-    (*Curlh_lvls)[level]->MultTranspose(*((*tempvec2_lvls)[level]), *((*rhs_lvls)[level]));
-    *((*rhs_lvls)[level]) *= -1.0;
+#ifdef DEBUG_INFO
+    std::cout << "Solving the minimization problem in Hcurl at level " << level << "\n";
+#endif
 
+    // 1. imposing boundary conditions on the righthand side
     Array<int> * temp = essbdrdofs_lvls[level];
     for ( int dof = 0; dof < temp->Size(); ++dof)
     {
@@ -286,9 +325,10 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
         }
     }
 
+    // 2. assemble righthand side on the true dofs
     d_td_lvls[level]->MultTranspose(*((*rhs_lvls)[level]), *((*truerhs_lvls)[level]));
 
-    // 2. setting up the iterative CG solver
+    // 3. setting up the iterative CG solver
     HypreParMatrix * matrix_shortcut = (*CTMC_global_lvls)[level];
     Solver * prec_shortcut = (*prec_global_lvls)[level];
 
@@ -306,15 +346,19 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
 
     *((*truex_lvls)[level]) = 0.0;
 
-    // 3. solving the linear system with preconditioned MINRES
+    // 4. solving the linear system with preconditioned MINRES
     // on true dofs:
     // CT*M*C truex_l = truerhs_l
+#ifdef DEBUG_INFO
+    std::cout << "Calling the CG solver \n";
+#endif
+
     solver.Mult(*((*truerhs_lvls)[level]), *((*truex_lvls)[level]));
 
     // temp_l = truex_l, but on dofs
     d_td_lvls[level]->Mult(*((*truex_lvls)[level]), *((*tempvec_lvls)[level]));
 
-    // 4. computing the solution update in the H(div)_h space
+    // 5. computing the solution update in the H(div)_h space
 
     // out = Curlh_l * temp_l = Curlh_l * x_l
     (*Curlh_lvls)[level]->Mult( *((*tempvec_lvls)[level]), out_lvl);
@@ -680,7 +724,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 
 #ifdef DEBUG_INFO
         MFEM_ASSERT(*current_iterate == 0 || rhs_constr->Norml2() / sqrt(rhs_constr->Size()) > 1.0e-14,
-                    "Error! Rhs in the contraint must be 0 for any iteration after the first");
+                    "Error! Rhs in the constraint must be 0 for any iteration after the first");
 #endif
     }
 
@@ -717,13 +761,16 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
                     Smoo->SetUpSmoother(l, &(Funct.GetBlock(0,0)));
                 else
                     Smoo->SetUpSmoother(l, &((*Funct_lvls)[l - 1]->GetBlock(0,0)) );
+                Smoo->ComputeRhsLevel(l, (*rhsfunc_lvls)[l]->GetBlock(0));
             }
             else
             {
+
                 if (l == 0)
                     Smoo->SetUpSmoother(l, &Funct);
                 else
                     Smoo->SetUpSmoother(l, (*Funct_lvls)[l - 1]);
+                Smoo->ComputeRhsLevel(l, *((*rhsfunc_lvls)[l]));
             }
             Smoo->MultLevel(l, *((*solupdate_lvls)[l]), *((*tempvec_lvls)[l]));
             *((*solupdate_lvls)[l]) = *((*tempvec_lvls)[l]);

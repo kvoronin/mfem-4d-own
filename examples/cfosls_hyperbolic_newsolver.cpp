@@ -17,7 +17,7 @@
 #define COMPARE_WITH_OLD
 // additional options used for debugging
 //#define EXACTSOLH_INIT
-//#define COMPUTING_LAMBDA
+#define COMPUTING_LAMBDA
 #define WITH_SMOOTHER
 
 #include "divfree_solver_tools.hpp"
@@ -2649,7 +2649,7 @@ int main(int argc, char *argv[])
         // checking that lambda special satisfies the correct essential boundary conditions
         for (int i = 0; i < sigma_exact_finest->Size(); ++i )
         {
-            if ( fabs( (*sigma_special)[i] - (*sigma_exact_finest)[i] ) > 1.0e-13 && EssBdrDofs_R[0][0][i] != 0)
+            if ( fabs( (*sigma_special)[i] - (*sigma_exact_finest)[i] ) > 1.0e-13 && (*(EssBdrDofs_R[0][0]))[i] != 0)
                 std::cout << "Weird! \n";
         }
         //std::cout << "? \n\n";
@@ -2934,7 +2934,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 5;
+    int ntestiter = 20;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
