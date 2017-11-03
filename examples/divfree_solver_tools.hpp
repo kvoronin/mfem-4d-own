@@ -30,7 +30,7 @@ bool CheckConstrRes(Vector& sigma, const SparseMatrix& Constr, const Vector& Con
     //res_constr.Print(ofs,1);
     res_constr -= ConstrRhs;
     double constr_norm = res_constr.Norml2() / sqrt (res_constr.Size());
-    if (fabs(constr_norm) > 1.0e-15)
+    if (fabs(constr_norm) > 1.0e-13)
     {
         std::cout << "Constraint residual norm " << string << ": "
                   << constr_norm << " ... \n";
@@ -82,11 +82,16 @@ public:
         finalized_lvls = new Array<bool>(num_levels);
         *finalized_lvls = 0;
     }
+
     // general setup functions
     virtual void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl) = 0;
     virtual void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl) = 0;
+
+    // general functions for setting righthand side at the given level
     virtual void ComputeRhsLevel(int level, Vector& res_lvl);
     virtual void ComputeRhsLevel(int level, BlockVector& res_lvl);
+
+    // main function which applies the smoother at the given level
     virtual void MultLevel(int level, Vector& in, Vector& out) = 0;
 
     // legacy of the Operator class
@@ -273,6 +278,8 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         HypreParMatrix * d_td_T = d_td_lvls[level]->Transpose();
 
         (*CTMC_global_lvls)[level] = ParMult(d_td_T, CTMC_d_td);
+        (*CTMC_global_lvls)[level]->CopyRowStarts();
+        (*CTMC_global_lvls)[level]->CopyColStarts();
 
         delete CTMC_d_td;
         delete d_td_T;
@@ -341,7 +348,7 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
     solver.SetRelTol(rtol);
     solver.SetMaxIter(maxIter);
     solver.SetOperator(*matrix_shortcut);
-    solver.SetPreconditioner(*prec_shortcut);
+    //solver.SetPreconditioner(*prec_shortcut);
     solver.SetPrintLevel(0);
 
     *((*truex_lvls)[level]) = 0.0;
@@ -1595,6 +1602,8 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
         d_td_T[blk] = dof_trueDof_Func[blk]->Transpose();
 
         Funct_global[blk] = ParMult(d_td_T[blk], Funct_d_td[blk]);
+        Funct_global[blk]->CopyRowStarts();
+        Funct_global[blk]->CopyColStarts();
     }
 
     coarse_offsets = new Array<int>(numblocks + 2);
@@ -1646,6 +1655,8 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
     Funct_global[0]->GetDiag(*Md);
     MinvBt->InvScaleRows(*Md);
     HypreParMatrix *Schur = ParMult(Constr_global, MinvBt);
+    Schur->CopyRowStarts();
+    Schur->CopyColStarts();
 
     HypreBoomerAMG * invSchur = new HypreBoomerAMG(*Schur);
     invSchur->SetPrintLevel(0);

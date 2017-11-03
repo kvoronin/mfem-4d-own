@@ -909,6 +909,12 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 0;
 
+    int * test = new int[0];
+    test[0] = 0;
+    delete [] test;
+    MPI_Finalize();
+    return 0;
+
     */
 
     MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
@@ -1194,8 +1200,35 @@ int main(int argc, char *argv[])
 
     const SparseMatrix* Proj_Hcurl_local;
 
-
     /*
+    Array<Array<int> > test(2);
+    test[0].SetSize(3);
+    test[0] = 1;
+    test[1].SetSize(4);
+    test[1] = 2;
+    test[0].Print();
+    test[1].Print();
+
+    Array<Array<int> > arr(2);
+    arr[0].SetSize(2);
+    //arr[0][0] = 1;
+    //arr[0][1] = 2;
+    arr[0] = 1;
+
+    arr[1].SetSize(2);
+    //arr[1][0] = 10;
+    //arr[1][1] = 20;
+    arr[1] = 2;
+
+    arr[0].Print();
+    arr[1].Print();
+
+    std::vector<Array<int> > test(2);
+    test.resize(3);
+
+    MPI_Finalize();
+    return 0;
+
     std::vector<std::vector<Array<int> > > test(2, std::vector<Array<int> >(1));
     //std::vector<Array<int> > test(2);
     test[0][0].SetSize(4);
@@ -1205,28 +1238,6 @@ int main(int argc, char *argv[])
     return 0;
     */
 
-    //Array<Array<int>*> temparray_totalbdr(num_levels);
-    //for (int lvl = 0; lvl < num_levels; ++lvl)
-        //temparray_totalbdr[lvl] = new Array<int>;
-    //Array<Array<int>*> temparray_essbdr(num_levels);
-    //for (int lvl = 0; lvl < num_levels; ++lvl)
-        //temparray_essbdr[lvl] = new Array<int>;
-
-
-    /*
-    for (unsigned int i = 0; i < BdrDofs_R.size(); ++i)
-    {
-        BdrDofs_R[i].SetSize(num_levels);
-        EssBdrDofs_R[i].SetSize(num_levels);
-    }
-    */
-    /*
-    std::vector<Array<int>*> ess_dof_coarsestlvl_func(1);
-    std::vector<Vector*> ess_dofvalues_coarsestlvl_func(1);
-    ParGridFunction * sigma_exact_coarse;
-    std::vector<Array<int>*> ess_dof_finestlvl_func(1);
-    std::vector<Vector*> ess_dofvalues_finestlvl_func(1);
-    */
 #endif
 
     chrono.Clear();
@@ -2664,6 +2675,38 @@ int main(int argc, char *argv[])
     if (verbose)
         std::cout << "Calling constructor of the new solver \n";
 
+    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
+    //Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
+    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
+    Ablock->Assemble();
+    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // makes res for sigma_special happier
+    Ablock->Finalize();
+    //auto tempA = Ablock->ParallelAssemble();
+    SparseMatrix Aloc = Ablock->SpMat();
+    Array<int> offsets(2);
+    offsets[0] = 0;
+    offsets[1] = Aloc.Height();
+    BlockMatrix Ablockmat(offsets);
+    Ablockmat.SetBlock(0,0,&Aloc);
+
+    /*
+    SparseMatrix *CurlhT = Transpose( Divfree_op_sp);
+    SparseMatrix *SysMat_Curlh = mfem::Mult(Aloc, Divfree_op_sp);
+    SparseMatrix *CTMC = mfem::Mult(*CurlhT, *SysMat_Curlh);
+
+    HypreParMatrix* CTMC_d_td;
+    CTMC_d_td = Dof_TrueDof_Hcurl[0]->LeftDiagMult( *CTMC );
+
+    HypreParMatrix * d_td_T = Dof_TrueDof_Hcurl[0]->Transpose();
+
+    HypreParMatrix * CTMC_global = ParMult(d_td_T, CTMC_d_td);
+    CTMC_global->CopyRowStarts();
+    CTMC_global->CopyColStarts();
+
+    delete d_td_T;
+    delete CTMC_d_td;
+    */
+
     HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
                    Proj_Hcurl, Dof_TrueDof_Hcurl,
                    EssBdrDofs_Hcurl);
@@ -2731,41 +2774,6 @@ int main(int argc, char *argv[])
     */
 
     //ParLinearForm *fform = new ParLinearForm(R_space);
-
-    ParBilinearForm *Ablock(new ParBilinearForm(R_space));
-    //Ablock->AddDomainIntegrator(new VectorFEMassIntegrator);
-    Ablock->AddDomainIntegrator(new VectorFEMassIntegrator(*Mytest.Ktilda));
-    Ablock->Assemble();
-    //Ablock->EliminateEssentialBC(ess_bdrSigma, *sigma_exact_finest, *fform); // makes res for sigma_special happier
-    Ablock->Finalize();
-    //auto tempA = Ablock->ParallelAssemble();
-    SparseMatrix Aloc = Ablock->SpMat();
-    Array<int> offsets(2);
-    offsets[0] = 0;
-    offsets[1] = Aloc.Height();
-    BlockMatrix Ablockmat(offsets);
-    /*
-#ifdef COMPARE_WITH_OLD
-    int nrows = Aloc.Height();
-    int * ia = new int[nrows + 1];
-    ia[0] = 0;
-    for ( int i = 0; i < nrows; ++i)
-        ia[i+1] = ia[i] + 1;
-    int nnz = ia[nrows];
-    int * ja = new int[nnz];
-    double * aa = new double[nnz];
-    for ( int i = 0; i < nnz; ++i)
-    {
-        ja[i] = i;
-        aa[i] = 1.0;
-    }
-    SparseMatrix Aid(ia,ja,aa,nrows,nrows);
-    Ablockmat.SetBlock(0,0,&Aid);
-#else
-    Ablockmat.SetBlock(0,0,&Aloc);
-#endif
-    */
-    Ablockmat.SetBlock(0,0,&Aloc);
 
     ParLinearForm * constrfform = new ParLinearForm(W_space);
     constrfform->AddDomainIntegrator(new DomainLFIntegrator(*Mytest.scalardivsigma));
