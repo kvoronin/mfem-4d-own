@@ -18,7 +18,7 @@
 // additional options used for debugging
 //#define EXACTSOLH_INIT
 #define COMPUTING_LAMBDA
-//#define WITH_SMOOTHER
+#define WITH_SMOOTHER
 
 #include "divfree_solver_tools.hpp"
 
@@ -26,7 +26,7 @@
 
 //#define DEBUGGING // should be switched off in general
 
-//#define TESTING // acive only for debugging case when S is from L2 and S is not eliminated
+//#define TESTING // active only for debugging case when S is from L2 and S is not eliminated
 
 //#define BAD_TEST
 //#define ONLY_DIVFREEPART
@@ -917,6 +917,11 @@ int main(int argc, char *argv[])
 
     */
 
+    int ref_levels = par_ref_levels;
+    int num_levels = ref_levels + 1;
+    Array< SparseMatrix* > Proj_Hcurl(num_levels - 1);
+#if 0
+
     MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
     MFEM_ASSERT(!(strcmp(space_for_S,"L2") == 0 && !eliminateS), "Case: L2 space for S and S is not eliminated is working incorrectly, non pos.def. matrix. \n");
 
@@ -1177,21 +1182,29 @@ int main(int argc, char *argv[])
     Array<int> ess_dof_coarsestlvl_list;
     DivPart divp;
 
-#ifdef NEW_STUFF
+//#ifdef NEW_STUFF
     int num_levels = ref_levels + 1;
     Array<int> all_bdrSigma(pmesh->bdr_attributes.Max());
     all_bdrSigma = 1;
     std::vector<std::vector<Array<int>* > > BdrDofs_R(1, std::vector<Array<int>* >(num_levels));
     std::vector<std::vector<Array<int>* > > EssBdrDofs_R(1, std::vector<Array<int>* >(num_levels));
 
+    std::cout << "num_levels - 1 = " << num_levels << "\n";
     std::vector<Array<int>* > EssBdrDofs_Hcurl(num_levels - 1);
-    Array< SparseMatrix*> Proj_Hcurl(num_levels - 1);
+
+    ProjH_Curl looks wrong, thus failure for num_levels > 2
     Array<HypreParMatrix *> Dof_TrueDof_Hcurl(num_levels - 1);
+
+
+    //MPI_Finalize();
+    //return 0;
 
     //std::vector<std::vector<Array<int> > > EssBdrDofs_R(1);
 
-    for (int l = 0; l < num_levels; ++l)
+
+   for (int l = 0; l < num_levels; ++l)
     {
+        std::cout << "l = " << l << "\n";
         BdrDofs_R[0][l] = new Array<int>;
         EssBdrDofs_R[0][l] = new Array<int>;
         if (l < num_levels - 1)
@@ -1238,7 +1251,7 @@ int main(int argc, char *argv[])
     return 0;
     */
 
-#endif
+//#endif
 
     chrono.Clear();
     chrono.Start();
@@ -1318,14 +1331,13 @@ int main(int argc, char *argv[])
                 }
 
 #ifdef NEW_STUFF
-                if (l > 1)
-                {
-                    Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
-                    Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
-                    Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
-                }
-#endif
+                Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                //C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[ref_levels - l]));
+                Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
+#else
                 C_space->Update();
+#endif
                 if (prec_is_MG)
                 {
                     auto d_td_coarse_C = coarseC_space->Dof_TrueDof_Matrix();
@@ -1376,9 +1388,9 @@ int main(int argc, char *argv[])
                     R_space->GetEssentialVDofs(all_bdrSigma, *(BdrDofs_R[0][0]));
                     R_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_R[0][0]));
                     C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[0]));
-                    Dof_TrueDof_Hcurl[0] = C_space->Dof_TrueDof_Matrix();
-                    Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
-                    Proj_Hcurl[0] = RemoveZeroEntries(*Proj_Hcurl_local);
+                    //Dof_TrueDof_Hcurl[0] = C_space->Dof_TrueDof_Matrix();
+                    //Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                    //Proj_Hcurl[0] = RemoveZeroEntries(*Proj_Hcurl_local);
                 }
 #endif
             }
@@ -2690,6 +2702,7 @@ int main(int argc, char *argv[])
     Ablockmat.SetBlock(0,0,&Aloc);
 
     /*
+     * studying the hypre "bug" before realizing the thing about CopyRowStarts()
     SparseMatrix *CurlhT = Transpose( Divfree_op_sp);
     SparseMatrix *SysMat_Curlh = mfem::Mult(Aloc, Divfree_op_sp);
     SparseMatrix *CTMC = mfem::Mult(*CurlhT, *SysMat_Curlh);
@@ -3234,7 +3247,7 @@ int main(int argc, char *argv[])
         delete W_space;
         delete l2_coll;
     }
-
+#endif
     MPI_Finalize();
     return 0;
 }

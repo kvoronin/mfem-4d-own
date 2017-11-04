@@ -88,8 +88,8 @@ public:
     virtual void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl) = 0;
 
     // general functions for setting righthand side at the given level
-    virtual void ComputeRhsLevel(int level, Vector& res_lvl);
-    virtual void ComputeRhsLevel(int level, BlockVector& res_lvl);
+    virtual void ComputeRhsLevel(int level, const Vector& res_lvl);
+    virtual void ComputeRhsLevel(int level, const BlockVector& res_lvl);
 
     // main function which applies the smoother at the given level
     virtual void MultLevel(int level, Vector& in, Vector& out) = 0;
@@ -118,13 +118,13 @@ void MultilevelSmoother::MultLevel(int level, Vector& in, Vector& out)
     MFEM_ABORT("MultLevel is called from the abstract base class but must have been redefined \n");
 }
 
-void MultilevelSmoother::ComputeRhsLevel(int level, Vector& res_lvl)
+void MultilevelSmoother::ComputeRhsLevel(int level, const Vector& res_lvl)
 {
     std::cout << "ComputeRhsLevel for a Vector argument is called from the abstract base"
                  " class but must have been redefined \n";
 }
 
-void MultilevelSmoother::ComputeRhsLevel(int level, BlockVector& res_lvl)
+void MultilevelSmoother::ComputeRhsLevel(int level, const BlockVector& res_lvl)
 {
     std::cout << "ComputeRhsLevel for a BlockVector argument is called from the abstract base"
                  " class but must have been redefined \n";
@@ -191,7 +191,7 @@ public:
     // Computes the righthand side for the local minimization problem
     // solved in MultLevel() from the given residual at level l of the
     // original problem
-    void ComputeRhsLevel(int level, Vector& res_lvl);
+    void ComputeRhsLevel(int level, const Vector& res_lvl);
 
     // Updates the given iterate at level l by solving a minimization
     // problem in H(curl) at level l (using the precomputed righthand side)
@@ -257,6 +257,8 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         SparseMatrix *CurlhT = Transpose( *(Curlh_lvls[level]));
         SparseMatrix *SysMat_Curlh = mfem::Mult(*SysMat_lvl, *(Curlh_lvls[level]));
         CTMC_lvls[level] = mfem::Mult(*CurlhT, *SysMat_Curlh);
+        // FIXME: Is sorting necessary?
+        CTMC_lvls[level]->SortColumnIndices();
 
         delete SysMat_Curlh;
         delete CurlhT;
@@ -265,7 +267,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         Array<int> * temp = essbdrdofs_lvls[level];
         for ( int dof = 0; dof < temp->Size(); ++dof)
         {
-            if ((*temp)[dof] != 0)
+            if ( (*temp)[dof] != 0)
             {
                 CTMC_lvls[level]->EliminateRowCol(dof);
             }
@@ -285,7 +287,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         delete d_td_T;
 
         prec_global_lvls[level] = new HypreSmoother(*(CTMC_global_lvls[level]));
-        prec_global_lvls[level]->iterative_mode = false;
+        //prec_global_lvls[level]->iterative_mode = false;
 
         // resizing local-to-level vector arrays
         rhs_lvls[level] = new Vector(Curlh_lvls[level]->Width());
@@ -298,7 +300,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
     }
 }
 
-void HCurlSmoother::ComputeRhsLevel(int level, Vector& res_lvl)
+void HCurlSmoother::ComputeRhsLevel(int level, const Vector& res_lvl)
 {
     // rhs_l = CT_l * res_lvl
     Curlh_lvls[level]->MultTranspose(res_lvl, *(rhs_lvls[level]));
@@ -319,6 +321,10 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
                 "MultLevel() must not be called for the non-finalized level");
 
 #ifdef DEBUG_INFO
+    //std::cout << "Checking that rhs = - C";
+#endif
+
+#ifdef DEBUG_INFO
     std::cout << "Solving the minimization problem in Hcurl at level " << level << "\n";
 #endif
 
@@ -326,11 +332,13 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
     Array<int> * temp = essbdrdofs_lvls[level];
     for ( int dof = 0; dof < temp->Size(); ++dof)
     {
-        if ((*temp)[dof] != 0)
+        if ( (*temp)[dof] != 0)
         {
             (*(rhs_lvls[level]))[dof] = 0.0;
         }
     }
+
+    *(truex_lvls[level]) = 0.0;
 
     // 2. assemble righthand side on the true dofs
     d_td_lvls[level]->MultTranspose(*(rhs_lvls[level]), *(truerhs_lvls[level]));
@@ -343,15 +351,18 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
     double rtol(1.e-16);
     double atol(1.e-16);
 
+    //std::cout << "Calling the PCG solver \n";
+    //PCG(*matrix_shortcut, *prec_shortcut, *(truerhs_lvls[level]), *(truex_lvls[level]), 0, maxIter, rtol, atol );
+
     CGSolver solver(MPI_COMM_WORLD);
-    solver.SetAbsTol(atol);
-    solver.SetRelTol(rtol);
+    //solver.SetAbsTol(atol);
+    //solver.SetRelTol(rtol);
+    solver.SetAbsTol(sqrt(atol));
+    solver.SetRelTol(sqrt(rtol));
     solver.SetMaxIter(maxIter);
     solver.SetOperator(*matrix_shortcut);
     solver.SetPreconditioner(*prec_shortcut);
     solver.SetPrintLevel(0);
-
-    *((*truex_lvls)[level]) = 0.0;
 
     // 4. solving the linear system with preconditioned MINRES
     // on true dofs:
@@ -471,7 +482,7 @@ protected:
 
     // temporary storage for blockvectors related to the considered functional at all levels
     // initialized in the constructor (partly) and in SetUpFinerLvl()
-    // Used at least in Solve(), ComputeNextLvlRhsFunc() and InterpolateBack()
+    // Used at least in Solve(), ComputeNextLvlRhsFunc() and InterpolateBack() // FIXME: update the list of functions mentioned
     mutable Array<BlockVector*> tempvec_lvls;
     mutable Array<BlockVector*> rhsfunc_lvls;
 
@@ -504,9 +515,15 @@ protected:
     // Assembles the coarsest level righthand side for the functional
     void SetUpCoarsestRhsFunc() const;
 
-    // Updates the rhs in the functional for the next level:
+    // Computes the rhs in the functional for the next level:
     // coarser rhs_func(at level l+1) = P_l^T ( rhs_func_l - Funct_l sol_l)
     void ComputeNextLvlRhsFunc(int level) const;
+
+    // Computes out_l as updated rhs in the functional for the current level
+    //      out_l := rhs_l - M_l * solupd_l
+    // Routine is used to update righthand side before and after the smoother call
+    void ComputeUpdatedLvlRhsFunc(int level, const BlockVector& rhs_l,
+                                  const BlockVector& solupd_l, BlockVector& out_l) const;
 
     // General routine which goes over all AEs at finer level and calls formulation-specific
     // routine SolveLocalProblem at each finer level
@@ -674,20 +691,32 @@ void BaseGeneralMinConstrSolver::ProjectFinerFuncToCoarser(int level,
 }
 
 
+
+// Computes out_l as an updated rhs in the functional part for the given level
+//      out_l :=  rhs_l - M_l sol_l
+void BaseGeneralMinConstrSolver::ComputeUpdatedLvlRhsFunc(int level, const BlockVector& rhs_l,
+                                                          const BlockVector& solupd_l, BlockVector& out_l) const
+{
+    // out_l = M_l * solupd_l
+    if (level == 0)
+        Funct.Mult(solupd_l, out_l );
+    else
+        Funct_lvls[level - 1]->Mult(solupd_l, out_l);
+
+    // out_l = - M_l * solupd_l
+    out_l *= -1;
+
+    // out_l = rhs_l - M_l * solupd_l
+    out_l += rhs_l;
+}
+
 // Computes rhs in the functional part for the next level
-// rhs_{l+1} = P_l^T ( rhs_l - M_l sol_l )
-// (*) Uses tempvec_lvls as intermediate buffers
+// rhs_{l+1} = P_l^T ( rhs_l )
+// ComputeUpdatedLvlRhsFunc should be called before calling this routine
+// FIXME: one-liner?
 void BaseGeneralMinConstrSolver::ComputeNextLvlRhsFunc(int level) const
 {
     ProjectFinerFuncToCoarser(level, *(rhsfunc_lvls[level]), *(rhsfunc_lvls[level + 1]));
-
-    if (level == 0)
-        Funct.Mult(*(solupdate_lvls[level]),*(tempvec_lvls[level]) );
-    else
-        Funct_lvls[level - 1]->Mult(*(solupdate_lvls[level]),*(tempvec_lvls[level]) );
-    ProjectFinerFuncToCoarser(level, *(tempvec_lvls[level]), *(tempvec_lvls[level + 1]));
-
-    *(rhsfunc_lvls[level + 1]) -= *(tempvec_lvls[level + 1]);
 }
 
 // Computes one iteration of the new solver
@@ -765,12 +794,13 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         }
 
 #ifdef TODAYDEBUG
-        SolveFinerLevelProblem(l, *((*rhsfunc_lvls)[l]), *rhs_constr, *((*solupdate_lvls)[l]));
+        SolveFinerLevelProblem(l, *(rhsfunc_lvls[l]), *rhs_constr, *(solupdate_lvls[l]));
 #else
         // solve local problems at level l
         // FIXME: all factors of local matrices can be stored after the first solver iteration
         SolveLocalProblems(l, *(rhsfunc_lvls[l]), *rhs_constr, *(solupdate_lvls[l]));
 #endif
+        ComputeUpdatedLvlRhsFunc(l, *(rhsfunc_lvls[l]), *(solupdate_lvls[l]), *(tempvec_lvls[l]) );
 
         if (Smoo)
         {
@@ -780,7 +810,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
                     Smoo->SetUpSmoother(l, &(Funct.GetBlock(0,0)));
                 else
                     Smoo->SetUpSmoother(l, &(Funct_lvls[l - 1]->GetBlock(0,0)) );
-                Smoo->ComputeRhsLevel(l, rhsfunc_lvls[l]->GetBlock(0));
+                Smoo->ComputeRhsLevel(l, tempvec_lvls[l]->GetBlock(0));
             }
             else
             {
@@ -789,18 +819,30 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
                     Smoo->SetUpSmoother(l, &Funct);
                 else
                     Smoo->SetUpSmoother(l, Funct_lvls[l - 1]);
-                Smoo->ComputeRhsLevel(l, *(rhsfunc_lvls[l]));
+                Smoo->ComputeRhsLevel(l, *(tempvec_lvls[l]));
             }
             Smoo->MultLevel(l, *(solupdate_lvls[l]), *(tempvec_lvls[l]));
             *(solupdate_lvls[l]) = *(tempvec_lvls[l]);
 
+            /*
+            cannot simply call ComputeUpdatedLvlRhsFunc(l) again since solupdate now
+            contains both update from local problems and update from minimization
+            problem so if I call ComputeUpdatedLvlRhsFunc(l) again, update from local
+            problem will contribute twice
+            */
+
+            ComputeUpdatedLvlRhsFunc(l, *(rhsfunc_lvls[l]), *(solupdate_lvls[l]), *(tempvec_lvls[l]) );
+        }
+        else
+        {
+            *(rhsfunc_lvls[l]) = *(tempvec_lvls[l]);
         }
 
         // setting up rhs from the functional for the next (coarser) level
         ComputeNextLvlRhsFunc(l);
 
         //if (l == 0)
-        //*((*rhsfunc_lvls)[l+1]) = 0.0;
+        //*(rhsfunc_lvls[l+1]) = 0.0;
 
     } // end of loop over finer levels
 
@@ -836,15 +878,15 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         std::cout << "level " << level << " update: \n";
         if (level == 0)
         {
-            next_sol += *((*solupdate_lvls)[0]);
+            next_sol += *(solupdate_lvls[0]);
             if (*current_iterate == 0)
-                MFEM_ASSERT(CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr,
+                MFEM_ASSERT(CheckConstrRes(solupdate_lvls[0]->GetBlock(0), Constr,
                             ConstrRhs, "only for the level solution"), "");
             else
             {
                 Vector zeros(ConstrRhs.Size());
                 zeros = 0.0;
-                MFEM_ASSERT(CheckConstrRes((*solupdate_lvls)[0]->GetBlock(0), Constr,
+                MFEM_ASSERT(CheckConstrRes(solupdate_lvls[0]->GetBlock(0), Constr,
                             zeros, "only for the level solution"), "");
             }
             ofstream ofs("newsolver_out_sol_level_0.txt");
@@ -852,33 +894,33 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         }
         else
         {
-            InterpolateBack(level, *((*solupdate_lvls)[level]), 0, *((*tempvec_lvls)[0]));
+            InterpolateBack(level, *(solupdate_lvls[level]), 0, *(tempvec_lvls[0]));
             if (*current_iterate == 0)
-                MFEM_ASSERT(CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr,
+                MFEM_ASSERT(CheckConstrRes(tempvec_lvls[0]->GetBlock(0), Constr,
                             ConstrRhs, "only for the level solution"),"");
             else
             {
                 Vector zeros(ConstrRhs.Size());
                 zeros = 0.0;
-                MFEM_ASSERT(CheckConstrRes((*tempvec_lvls)[0]->GetBlock(0), Constr,
+                MFEM_ASSERT(CheckConstrRes(tempvec_lvls[0]->GetBlock(0), Constr,
                             zeros, "only for the level solution"),"");
             }
-            next_sol += *((*tempvec_lvls)[0]);
+            next_sol += *(tempvec_lvls[0]);
             if (level == 1)
             {
                 ofstream ofs("newsolver_out_sol_level_1.txt");
                 (*tempvec_lvls)[0]->GetBlock(0).Print(ofs,1);
-                Vector res_constr((*Constr_lvls)[level - 1]->Height());
-                (*Constr_lvls)[level - 1]->Mult((*solupdate_lvls)[level]->GetBlock(0), res_constr);
+                Vector res_constr(Constr_lvls[level - 1]->Height());
+                Constr_lvls[level - 1]->Mult(solupdate_lvls[level]->GetBlock(0), res_constr);
                 ofstream ofs2("newsolver_out_right_at_level1.txt");
                 res_constr.Print(ofs2,1);
             }
             if (level == num_levels - 1)
             {
                 ofstream ofs("newsolver_out_sol_level_coarse.txt");
-                (*tempvec_lvls)[0]->GetBlock(0).Print(ofs,1);
+                tempvec_lvls[0]->GetBlock(0).Print(ofs,1);
                 ofstream ofs2("newsolver_out_sol_level_coarse_at_coarse.txt");
-                (*solupdate_lvls)[level]->GetBlock(0).Print(ofs2,1);
+                solupdate_lvls[level]->GetBlock(0).Print(ofs2,1);
             }
         }
 
@@ -1117,7 +1159,7 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level, BlockMatrix&
                 bool inside_finegrid_el = (higher_order &&
                                            (*(dof_is_bdr[blk][level]))[dof] == 0 && dofs_AE_data[j] == 1);
                 //bool on_noness_bdr = false;
-                bool on_noness_bdr = ((*(dof_is_essbdr[blk][level]))[dof] == 0 &&
+                bool on_noness_bdr = ( (*(dof_is_essbdr[blk][level]))[dof] == 0 &&
                                       (*(dof_is_bdr[blk][level]))[dof]!= 0);
                 MFEM_ASSERT( ( !inside_finegrid_el || (dofs_AE_i[dof+1] - dofs_AE_i[dof] == 1) ),
                         "A fine-grid dof inside a fine-grid element cannot belong to more than one AE");
@@ -1148,7 +1190,7 @@ BlockMatrix* BaseGeneralMinConstrSolver::Get_AE_eintdofs(int level, BlockMatrix&
                 bool inside_finegrid_el = (higher_order &&
                                            (*(dof_is_bdr[blk][level]))[dof] == 0 && dofs_AE_data[j] == 1);
                 //bool on_noness_bdr = false;
-                bool on_noness_bdr = ((*(dof_is_essbdr[blk][level]))[dof] == 0 &&
+                bool on_noness_bdr = ( (*(dof_is_essbdr[blk][level]))[dof] == 0 &&
                                       (*(dof_is_bdr[blk][level]))[dof]!= 0);
                 if (dofs_AE_data[j] == 2 || inside_finegrid_el || on_noness_bdr )
                 {
