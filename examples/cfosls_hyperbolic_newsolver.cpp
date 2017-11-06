@@ -17,7 +17,7 @@
 #define COMPARE_WITH_OLD
 // additional options used for debugging
 //#define EXACTSOLH_INIT
-#define COMPUTING_LAMBDA
+//#define COMPUTING_LAMBDA
 #define WITH_SMOOTHER
 
 #include "divfree_solver_tools.hpp"
@@ -39,6 +39,9 @@ using namespace mfem;
 using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
+
+
+//#ifdef LABUDA
 
 class VectorcurlDomainLFIntegrator : public LinearFormIntegrator
 {
@@ -744,6 +747,7 @@ Transport_test_divfree::Transport_test_divfree (int Dim, int NumSol, int NumCurl
         }
     } // end of setting test coefficients in correct case
 }
+//#endif
 
 int main(int argc, char *argv[])
 {
@@ -756,6 +760,14 @@ int main(int argc, char *argv[])
     MPI_Comm_size(comm, &num_procs);
     MPI_Comm_rank(comm, &myid);
 
+    //Array< SparseMatrix* > Proj_Hcurl1(1);
+    //Array< SparseMatrix* > Proj_Hcurl;
+    //Proj_Hcurl.SetSize(1);
+//#ifndef LABUDA
+    //MPI_Finalize();
+    //return 0;
+//}
+//#else // LABUDA
     bool verbose = (myid == 0);
 
     int nDimensions     = 3;
@@ -763,7 +775,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -917,10 +929,9 @@ int main(int argc, char *argv[])
 
     */
 
-    int ref_levels = par_ref_levels;
-    int num_levels = ref_levels + 1;
-    Array< SparseMatrix* > Proj_Hcurl(num_levels - 1);
-#if 0
+    //int ref_levels = par_ref_levels;
+    //int num_levels = ref_levels + 1;
+    //Array< SparseMatrix* > Proj_Hcurl(num_levels - 1);
 
     MFEM_ASSERT(strcmp(space_for_S,"H1") == 0 || strcmp(space_for_S,"L2") == 0, "Space for S must be H1 or L2!\n");
     MFEM_ASSERT(!(strcmp(space_for_S,"L2") == 0 && !eliminateS), "Case: L2 space for S and S is not eliminated is working incorrectly, non pos.def. matrix. \n");
@@ -1192,7 +1203,8 @@ int main(int argc, char *argv[])
     std::cout << "num_levels - 1 = " << num_levels << "\n";
     std::vector<Array<int>* > EssBdrDofs_Hcurl(num_levels - 1);
 
-    ProjH_Curl looks wrong, thus failure for num_levels > 2
+    //ProjH_Curl looks wrong, thus failure for num_levels > 2
+    Array< SparseMatrix* > Proj_Hcurl(num_levels - 1);
     Array<HypreParMatrix *> Dof_TrueDof_Hcurl(num_levels - 1);
 
 
@@ -3247,10 +3259,12 @@ int main(int argc, char *argv[])
         delete W_space;
         delete l2_coll;
     }
-#endif
     MPI_Finalize();
     return 0;
 }
+//#endif
+
+//#ifdef LABUDA
 
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda)
@@ -4118,3 +4132,4 @@ void uFun1_ex_gradx(const Vector& xt, Vector& gradx )
     gradx.SetSize(xt.Size() - 1);
     gradx = 0.0;
 }
+//#endif

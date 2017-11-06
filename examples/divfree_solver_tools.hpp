@@ -9,6 +9,36 @@ using std::unique_ptr;
 
 //#define TODAYDEBUG
 
+// FIXME: fix const-correctness, there is a non-clarified mess of const and mutable
+
+/*
+class BugCatch : public Operator
+{
+protected:
+    mutable SparseMatrix Curlh;
+public:
+
+    // constructor
+    BugCatch (const SparseMatrix &DiscreteCurl);
+
+
+    // legacy of the Operator class
+    virtual void Mult (const Vector& x, Vector& y) const
+    {
+        MFEM_ABORT("Mult() should never be called from BugCatch and its descendants \n");
+    }
+};
+
+BugCatch::BugCatch(const SparseMatrix &DiscreteCurl)
+    : Curlh(DiscreteCurl)
+{
+    std::cout << "Calling constructor of the BugCatch \n";
+}
+*/
+
+//#ifdef LABUDA
+
+
 // Checking routines used for debugging
 // Computes and prints the norm of || Funct * y ||_2,h
 void CheckFunctValue(const BlockMatrix& Funct, const BlockVector& yblock, const char * string)
@@ -84,8 +114,8 @@ public:
     }
 
     // general setup functions
-    virtual void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl) = 0;
-    virtual void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl) = 0;
+    virtual void SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl) = 0;
+    virtual void SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl) = 0;
 
     // general functions for setting righthand side at the given level
     virtual void ComputeRhsLevel(int level, const Vector& res_lvl);
@@ -101,13 +131,15 @@ public:
     }
 };
 
-void MultilevelSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
+void MultilevelSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl,
+                                       const SparseMatrix& Proj_lvl)
 {
     std::cout << "SetUpSmoother for a SparseMatrix argument is called from the abstract base"
                  " class but must have been redefined \n";
 }
 
-void MultilevelSmoother::SetUpSmoother(int level, const BlockMatrix* SysMat_lvl)
+void MultilevelSmoother::SetUpSmoother(int level, const BlockMatrix& SysMat_lvl,
+                                       const BlockMatrix& Proj_lvl)
 {
     MFEM_ABORT("SetUpSmoother for a BlockMatrix argument is called from the abstract base"
                  " class but must have been redefined \n");
@@ -152,8 +184,8 @@ protected:
     // Discrete curl operators at all levels;
     mutable Array<SparseMatrix*> Curlh_lvls;
 
-    // System matrix A_l at all levels
-    mutable Array<const SparseMatrix*> Sysmat_lvls;
+    //// System matrix A_l at all levels
+    //mutable Array<const SparseMatrix*> Sysmat_lvls;
 
     // Curl_hT * A_l * Curlh matrices at all levels
     mutable Array<SparseMatrix*> CTMC_lvls;
@@ -183,10 +215,10 @@ public:
                    const std::vector<Array<int>* > & EssBdrdofs_lvls);
 
     // SparseMatrix version of SetUpSmoother()
-    void SetUpSmoother(int level, const SparseMatrix* SysMat_lvl);
+    void SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl);
 
     // BlockMatrix version of SetUpSmoother()
-    void SetUpSmoother(int level, const BlockMatrix* SysMat_lvl);
+    void SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl);
 
     // Computes the righthand side for the local minimization problem
     // solved in MultLevel() from the given residual at level l of the
@@ -206,9 +238,9 @@ HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix& DiscreteCurl,
     std::cout << "Calling constructor of the HCurlSmoother \n";
     Curlh_lvls.SetSize(num_levels);
     Curlh_lvls[0] = &Curlh;
-    Sysmat_lvls.SetSize(num_levels);
-    for ( int l = 0; l < num_levels; ++l)
-        Sysmat_lvls[l] = NULL;
+    //Sysmat_lvls.SetSize(num_levels);
+    //for ( int l = 0; l < num_levels; ++l)
+        //Sysmat_lvls[l] = NULL;
     CTMC_lvls.SetSize(num_levels);
     for ( int l = 0; l < num_levels; ++l)
         CTMC_lvls[l] = NULL;
@@ -225,13 +257,14 @@ HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix& DiscreteCurl,
     truex_lvls.SetSize(num_levels);
 }
 
-void HCurlSmoother::SetUpSmoother(int level, const BlockMatrix* SysMat_lvl)
+void HCurlSmoother::SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl)
 {
     MFEM_ABORT("HcurlSmoother: BlockMatrix arguments are not supported\n");
 }
 
-void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
+void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl)
 {
+    /*
     if ( !finalized_lvls[level] ) // if level was not set up before
     {
         // for level 0 the sparsematrix is already known after the constructor has been called
@@ -241,9 +274,9 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
             // computing Curlh as SparseMatrix for the current level using the previous one
             // Curlh[level] = PT * Curlh[level] P
             // FIXME: Can one avoid allocation of projector transpose and intermediate matrix product?
-            SparseMatrix *P_T = Transpose( *P_lvls[level]);
+            SparseMatrix *P_T = Transpose(Proj_lvl);
             SparseMatrix *Curlh_P;
-            Curlh_P = mfem::Mult(*(Curlh_lvls[level - 1]), *P_lvls[level]);
+            Curlh_P = mfem::Mult(*(Curlh_lvls[level - 1]), *P_lvls[level - 1]);
             Curlh_lvls[level] = mfem::Mult(*P_T, *Curlh_P);
 
             delete P_T;
@@ -251,11 +284,11 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         }
 
         // setting the internal SysMat_lvls
-        Sysmat_lvls[level] = SysMat_lvl;
+        //Sysmat_lvls[level] = SysMat_lvl;
 
         // form CT*M*C as SparseMatrices
         SparseMatrix *CurlhT = Transpose( *(Curlh_lvls[level]));
-        SparseMatrix *SysMat_Curlh = mfem::Mult(*SysMat_lvl, *(Curlh_lvls[level]));
+        SparseMatrix *SysMat_Curlh = mfem::Mult(SysMat_lvl, *(Curlh_lvls[level]));
         CTMC_lvls[level] = mfem::Mult(*CurlhT, *SysMat_Curlh);
         // FIXME: Is sorting necessary?
         CTMC_lvls[level]->SortColumnIndices();
@@ -295,9 +328,11 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix* SysMat_lvl)
         tempvec2_lvls[level] = new Vector(Curlh_lvls[level]->Height());
         truerhs_lvls[level] = new Vector(CTMC_global_lvls[level]->Height());
         truex_lvls[level] = new Vector(CTMC_global_lvls[level]->Height());
-
         finalized_lvls[level] = true;
     }
+        */
+    int k = 0;
+    k++;
 }
 
 void HCurlSmoother::ComputeRhsLevel(int level, const Vector& res_lvl)
@@ -384,6 +419,9 @@ void HCurlSmoother::MultLevel(int level, Vector& in_lvl, Vector& out_lvl)
     // out_lvl = in_lvl + Curlh_l * x_l
     out_lvl += in_lvl;
 }
+//#endif
+
+//#ifdef LABUDA
 
 // TODO: Add blas and lapack versions for solving local problems
 // TODO: Test after all againt the case with nonzero boundary conditions for sigma
@@ -807,18 +845,23 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
             if (numblocks == 1)
             {
                 if (l == 0)
-                    Smoo->SetUpSmoother(l, &(Funct.GetBlock(0,0)));
+                {
+                    SparseMatrix test1(Funct.GetBlock(0,0));
+                    SparseMatrix test2(P_Func[l]->GetBlock(0,0));
+                    Smoo->SetUpSmoother(l, test1, test2);
+                    //Smoo->SetUpSmoother(l, Funct.GetBlock(0,0), P_Func[l]->GetBlock(0,0));
+                }
                 else
-                    Smoo->SetUpSmoother(l, &(Funct_lvls[l - 1]->GetBlock(0,0)) );
+                    Smoo->SetUpSmoother(l, Funct_lvls[l - 1]->GetBlock(0,0), P_Func[l]->GetBlock(0,0) );
                 Smoo->ComputeRhsLevel(l, tempvec_lvls[l]->GetBlock(0));
             }
             else
             {
 
                 if (l == 0)
-                    Smoo->SetUpSmoother(l, &Funct);
+                    Smoo->SetUpSmoother(l, Funct, *(P_Func[l]));
                 else
-                    Smoo->SetUpSmoother(l, Funct_lvls[l - 1]);
+                    Smoo->SetUpSmoother(l, *(Funct_lvls[l - 1]), *(P_Func[l]) );
                 Smoo->ComputeRhsLevel(l, *(tempvec_lvls[l]));
             }
             Smoo->MultLevel(l, *(solupdate_lvls[l]), *(tempvec_lvls[l]));
@@ -3207,3 +3250,4 @@ SparseMatrix * RemoveZeroEntries(const SparseMatrix& in)
 
     return new SparseMatrix(outI, outJ, outData, in.Height(), in.Width());
 }
+//#endif
