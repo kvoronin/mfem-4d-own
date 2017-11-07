@@ -1097,6 +1097,48 @@ int main(int argc, char *argv[])
         delete mesh;
     }
 
+    /*
+    // testing a bug
+    FiniteElementCollection * hdivfree_coll = new ND_FECollection(feorder + 1, nDimensions);
+
+    ParFiniteElementSpace * C_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
+    //ParFiniteElementSpace * coarseC_space = new ParFiniteElementSpace(pmesh.get(), hdivfree_coll);
+
+    //coarseC_space->Update();
+
+    pmesh->UniformRefinement();
+
+    C_space->Update();
+
+    //C_space->Dof_TrueDof_Matrix();
+    //coarseC_space->Dof_TrueDof_Matrix();
+    //coarseC_space->Lose_Dof_TrueDof_Matrix();
+    //HypreParMatrix * mat11 = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
+    HypreParMatrix * mat1 = C_space->Dof_TrueDof_Matrix();
+    //mat1->SetOwnerFlags(1,1,1);
+    //C_space->Dof_TrueDof_Matrix()->SetOwnerFlags(1,1,1);
+    //C_space->Lose_Dof_TrueDof_Matrix();
+    //mat1 = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
+    //HypreParMatrix * mat1 = C_space->Dof_TrueDof_Matrix();
+    //HypreParMatrix * mat12 = new HypreParMatrix(coarseC_space->Dof_TrueDof_Matrix()->StealData());
+
+    //coarseC_space->Update();
+
+    pmesh->UniformRefinement();
+
+    C_space->Update();
+
+    HypreParMatrix * mat2 = C_space->Dof_TrueDof_Matrix();
+    C_space->Lose_Dof_TrueDof_Matrix();
+    //HypreParMatrix * mat22 = coarseC_space->Dof_TrueDof_Matrix();
+
+
+    MPI_Finalize();
+    return 0;
+    }
+    */
+//#ifdef LABUDA
+
     MFEM_ASSERT(!(aniso_refine && (with_multilevel || nDimensions == 4)),"Anisotropic refinement works only in 3D and without multilevel algorithm \n");
 
     int dim = nDimensions;
@@ -1343,8 +1385,10 @@ int main(int argc, char *argv[])
                 }
 
 #ifdef NEW_STUFF
+                C_space->Update();
                 Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
                 Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
                 //C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[ref_levels - l]));
                 Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
 #else
@@ -2732,7 +2776,7 @@ int main(int argc, char *argv[])
     delete CTMC_d_td;
     */
 
-    HCurlSmoother NewSmoother(num_levels - 1, Divfree_op_sp,
+    HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
                    Proj_Hcurl, Dof_TrueDof_Hcurl,
                    EssBdrDofs_Hcurl);
 
@@ -3262,6 +3306,7 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 0;
 }
+//#endif
 //#endif
 
 //#ifdef LABUDA

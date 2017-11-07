@@ -174,9 +174,10 @@ void MultilevelSmoother::ComputeRhsLevel(int level, const BlockVector& res_lvl)
 // where M_l is a matrix provided as an external argument during the call to SetUpSmoother()
 class HCurlSmoother : public MultilevelSmoother
 {
+    using MultilevelSmoother::SetUpSmoother;
 protected:
     // Discrete curl operator at the finest level
-    mutable SparseMatrix Curlh;
+    //mutable SparseMatrix* Curlh;
 
     // Projection matrices for Hcurl at all levels
     const Array< SparseMatrix*>& P_lvls;
@@ -210,15 +211,15 @@ protected:
 
 public:
     // constructor
-    HCurlSmoother (int Num_Levels, SparseMatrix &DiscreteCurl,
+    HCurlSmoother (int Num_Levels, SparseMatrix *DiscreteCurl,
                    const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix *>& Dof_TrueDof_lvls,
                    const std::vector<Array<int>* > & EssBdrdofs_lvls);
 
     // SparseMatrix version of SetUpSmoother()
-    void SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl);
+    void SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl) override;
 
     // BlockMatrix version of SetUpSmoother()
-    void SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl);
+    void SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl) override;
 
     // Computes the righthand side for the local minimization problem
     // solved in MultLevel() from the given residual at level l of the
@@ -230,14 +231,15 @@ public:
     void MultLevel(int level, Vector& in_lvl, Vector& out_lvl);
 };
 
-HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix& DiscreteCurl,
+HCurlSmoother::HCurlSmoother (int Num_Levels, SparseMatrix* DiscreteCurl,
                               const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix*>& Dof_TrueDof_lvls,
                               const std::vector<Array<int>* > & EssBdrdofs_lvls) :
-    MultilevelSmoother(Num_Levels), Curlh(DiscreteCurl), P_lvls(Proj_lvls), d_td_lvls(Dof_TrueDof_lvls), essbdrdofs_lvls(EssBdrdofs_lvls)
+    MultilevelSmoother(Num_Levels), /*Curlh(&DiscreteCurl),*/ P_lvls(Proj_lvls), d_td_lvls(Dof_TrueDof_lvls), essbdrdofs_lvls(EssBdrdofs_lvls)
 {
     std::cout << "Calling constructor of the HCurlSmoother \n";
     Curlh_lvls.SetSize(num_levels);
-    Curlh_lvls[0] = &Curlh;
+    Curlh_lvls[0] = DiscreteCurl;
+    //Curlh_lvls[0] = Curlh;
     //Sysmat_lvls.SetSize(num_levels);
     //for ( int l = 0; l < num_levels; ++l)
         //Sysmat_lvls[l] = NULL;
@@ -264,7 +266,7 @@ void HCurlSmoother::SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, cons
 
 void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl)
 {
-    /*
+    //std::cout << "Using sparsematrix version\n";
     if ( !finalized_lvls[level] ) // if level was not set up before
     {
         // for level 0 the sparsematrix is already known after the constructor has been called
@@ -330,9 +332,9 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, con
         truex_lvls[level] = new Vector(CTMC_global_lvls[level]->Height());
         finalized_lvls[level] = true;
     }
-        */
-    int k = 0;
-    k++;
+    //int k = 0;
+    //k++;
+    //std::cout << "Exiting SetUpSmoother\n";
 }
 
 void HCurlSmoother::ComputeRhsLevel(int level, const Vector& res_lvl)
@@ -846,13 +848,13 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
             {
                 if (l == 0)
                 {
-                    SparseMatrix test1(Funct.GetBlock(0,0));
-                    SparseMatrix test2(P_Func[l]->GetBlock(0,0));
-                    Smoo->SetUpSmoother(l, test1, test2);
-                    //Smoo->SetUpSmoother(l, Funct.GetBlock(0,0), P_Func[l]->GetBlock(0,0));
+                    //const SparseMatrix test1(Funct.GetBlock(0,0));
+                    //const SparseMatrix test2(test1);
+                    //Smoo->SetUpSmoother(l, test1, test2);
+                    Smoo->SetUpSmoother(l, (Funct.GetBlock(0,0)), (P_Func[l]->GetBlock(0,0)));
                 }
                 else
-                    Smoo->SetUpSmoother(l, Funct_lvls[l - 1]->GetBlock(0,0), P_Func[l]->GetBlock(0,0) );
+                    Smoo->SetUpSmoother(l, Funct_lvls[l - 1]->GetBlock(0,0), P_Func[l - 1]->GetBlock(0,0) );
                 Smoo->ComputeRhsLevel(l, tempvec_lvls[l]->GetBlock(0));
             }
             else
