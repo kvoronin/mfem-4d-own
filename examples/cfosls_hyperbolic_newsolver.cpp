@@ -9,9 +9,17 @@
 #include <iomanip>
 #include <list>
 
+
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
+
+#define WITH_PETSC
+
+#ifdef WITH_PETSC
+#   include<petsc.h>
+#   include<petscmathypre.h>
+#endif
 
 // additional printing option
 #define COMPARE_WITH_OLD
@@ -760,14 +768,28 @@ int main(int argc, char *argv[])
     MPI_Comm_size(comm, &num_procs);
     MPI_Comm_rank(comm, &myid);
 
-    //Array< SparseMatrix* > Proj_Hcurl1(1);
+#ifdef WITH_PETSC
+    const char *petscrc_file = "";
+    PetscInitialize(NULL,NULL,petscrc_file,NULL);
+#endif
+    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl(1);
+    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl2(3);
+    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl3(4);
+    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl1(4);
+
+    //Array< SparseMatrix* > Proj_Hcurl1;
     //Array< SparseMatrix* > Proj_Hcurl;
-    //Proj_Hcurl.SetSize(1);
+    //Proj_Hcurl1.SetSize(2);
 //#ifndef LABUDA
     //MPI_Finalize();
     //return 0;
-//}
 //#else // LABUDA
+
+    //MPI_Finalize();
+    //return 0;
+    //}
+//#ifdef LABUDA
+
     bool verbose = (myid == 0);
 
     int nDimensions     = 3;
@@ -775,7 +797,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 2;
+    int par_ref_levels  = 1;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -1247,13 +1269,13 @@ int main(int argc, char *argv[])
 
     //ProjH_Curl looks wrong, thus failure for num_levels > 2
     Array< SparseMatrix* > Proj_Hcurl(num_levels - 1);
-    Array<HypreParMatrix *> Dof_TrueDof_Hcurl(num_levels - 1);
-
+    Array<HypreParMatrix* > Dof_TrueDof_Hcurl(num_levels - 1);
 
     //MPI_Finalize();
     //return 0;
 
     //std::vector<std::vector<Array<int> > > EssBdrDofs_R(1);
+
 
 
    for (int l = 0; l < num_levels; ++l)
@@ -1387,6 +1409,22 @@ int main(int argc, char *argv[])
 #ifdef NEW_STUFF
                 C_space->Update();
                 Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+#ifdef WITH_PETSC
+                //PetscParMatrix * mat1 = new PetscParMatrix(MPI_COMM_WORLD, C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
+                PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
+                //PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(),Operator::PETSC_MATAIJ);
+                //Mat matt1 = mat1->ReleaseMat(false);
+                //PetscParMatrix * mat2 = new PetscParMatrix(matt1);
+                //hypre_ParCSRMatrix *pcsr1;
+                //MatHYPREGetParCSR(*mat2,&pcsr1);
+                //if (pcsr1 == NULL)
+                    //std::cout << "NULL pointer \n";
+                //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(pcsr1);
+                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
+                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
+                //Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
+#endif
+                // or
                 Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
                 //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
                 //C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[ref_levels - l]));
@@ -3303,6 +3341,10 @@ int main(int argc, char *argv[])
         delete W_space;
         delete l2_coll;
     }
+#ifdef WITH_PETSC
+    // We finalize PETSc
+    PetscFinalize();
+#endif
     MPI_Finalize();
     return 0;
 }

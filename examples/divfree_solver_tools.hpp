@@ -314,7 +314,13 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, con
         CTMC_d_td = d_td_lvls[level]->LeftDiagMult( *(CTMC_lvls[level]) );
         HypreParMatrix * d_td_T = d_td_lvls[level]->Transpose();
 
+        // this is wrong in global sens but this works
+        //CTMC_global_lvls[level] = ParMult(d_td_T, d_td_lvls[level]);
+
+        // and this line segfaults!
+        //d_td_T->SetOwnerFlags(3,3,1); // - even this doesn't help
         CTMC_global_lvls[level] = ParMult(d_td_T, CTMC_d_td);
+
         CTMC_global_lvls[level]->CopyRowStarts();
         CTMC_global_lvls[level]->CopyColStarts();
 
