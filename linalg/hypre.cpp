@@ -1046,21 +1046,15 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
    // multiplication function, mfem::Mult(), called below.
 
    int part_size;
-   HYPRE_Int global_num_rows;
    if (assumed_partition)
-   {
       part_size = 2;
-      global_num_rows = row_starts[2];
-      // Here, we use row_starts[2], so row_starts must come from the methods
-      // GetDofOffsets/GetTrueDofOffsets of ParFiniteElementSpace (HYPRE's
-      // partitions have only 2 entries).
-   }
    else
    {
       MPI_Comm_size(GetComm(), &part_size);
-      global_num_rows = row_starts[part_size];
       part_size++;
    }
+
+   HYPRE_Int global_num_rows = D.Height() * (part_size - 1);
 
    HYPRE_Int *col_starts = hypre_ParCSRMatrixColStarts(A);
    HYPRE_Int *col_map_offd;
@@ -1068,33 +1062,51 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
    // get the diag and offd blocks as SparseMatrix wrappers
    SparseMatrix A_diag, A_offd;
    GetDiag(A_diag);
-   GetOffd(A_offd, col_map_offd);
+
+   if (part_size > 2) // more than one proc
+       GetOffd(A_offd, col_map_offd);
+
+   HypreParMatrix* DA;
 
    // multiply the blocks with D and create a new HypreParMatrix
    SparseMatrix* DA_diag = mfem::Mult(D, A_diag);
-   SparseMatrix* DA_offd = mfem::Mult(D, A_offd);
+   SparseMatrix* DA_offd;
+   if (part_size > 2) // more than one proc
+   {
+       DA_offd = mfem::Mult(D, A_offd);
+       DA = new HypreParMatrix(GetComm(),
+                               global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
+                               DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
+                               DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
+                               DA_diag, DA_offd,
+                               DuplicateAs<HYPRE_Int>(col_map_offd, A_offd.Width()));
+   }
+   else
+   {
+       DA = new HypreParMatrix(GetComm(),
+                               global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
+                               DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
+                               DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
+                               DA_diag);
+   }
 
-   HypreParMatrix* DA =
-      new HypreParMatrix(GetComm(),
-                         global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
-                         DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
-                         DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
-                         DA_diag, DA_offd,
-                         DuplicateAs<HYPRE_Int>(col_map_offd, A_offd.Width()));
 
    // When HYPRE_BIGINT is defined, we want DA_{diag,offd} to delete their I and
    // J arrays but not their data arrays; when HYPRE_BIGINT is not defined, we
    // don't want DA_{diag,offd} to delete anything.
 #ifndef HYPRE_BIGINT
    DA_diag->LoseData();
-   DA_offd->LoseData();
+   if (part_size > 2) // more than one proc
+       DA_offd->LoseData();
 #else
    DA_diag->SetDataOwner(false);
-   DA_offd->SetDataOwner(false);
+   if (part_size > 2) // more than one proc
+       DA_offd->SetDataOwner(false);
 #endif
 
    delete DA_diag;
-   delete DA_offd;
+   if (part_size > 2) // more than one proc
+       delete DA_offd;
 
    hypre_ParCSRMatrixSetRowStartsOwner(DA->A, 1);
    hypre_ParCSRMatrixSetColStartsOwner(DA->A, 1);
