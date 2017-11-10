@@ -1052,7 +1052,6 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
    // multiplication function, mfem::Mult(), called below.
 
    int part_size;
-   int global_num_rows = 0;
    if (assumed_partition)
    {
       part_size = 2;
@@ -1062,9 +1061,9 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
       // partitions have only 2 entries).
    }
    else
-   {
       part_size = nprocs + 1;
-   }
+
+   int global_num_rows = 0;
    MPI_Allreduce(&local_num_rows,&global_num_rows, 1, MPI_INT, MPI_SUM, GetComm());
 
    //std::cout << "assumed_partition = " << assumed_partition << "\n";

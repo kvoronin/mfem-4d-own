@@ -1,4 +1,5 @@
 #include "mfem.hpp"
+#include "linalg/linalg.hpp"
 
 using namespace mfem;
 using namespace std;
@@ -269,7 +270,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, con
     //std::cout << "Using sparsematrix version\n";
     if ( !finalized_lvls[level] ) // if level was not set up before
     {
-        // for level 0 the sparsematrix is already known after the constructor has been called
+        // for level 0 the curl SparseMatrix is already known after the constructor has been called
         // otherwise one needs to compute it from the previous level
         if (level != 0)
         {
@@ -293,7 +294,7 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, con
         SparseMatrix *SysMat_Curlh = mfem::Mult(SysMat_lvl, *(Curlh_lvls[level]));
         CTMC_lvls[level] = mfem::Mult(*CurlhT, *SysMat_Curlh);
         // FIXME: Is sorting necessary?
-        CTMC_lvls[level]->SortColumnIndices();
+        //CTMC_lvls[level]->SortColumnIndices();
 
         delete SysMat_Curlh;
         delete CurlhT;
@@ -313,8 +314,12 @@ void HCurlSmoother::SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, con
         HypreParMatrix* CTMC_d_td;
         CTMC_d_td = d_td_lvls[level]->LeftDiagMult( *(CTMC_lvls[level]) );
         HypreParMatrix * d_td_T = d_td_lvls[level]->Transpose();
+        //d_td_T->CopyRowStarts();
+        //d_td_T->CopyColStarts();
+        //d_td_T->SetOwnerFlags(3,3,1);
 
-        // this is wrong in global sens but this works
+        // this is wrong in global sens but lives as a debugging check here
+        // so something wrong is with CTMC_d_td
         //CTMC_global_lvls[level] = ParMult(d_td_T, d_td_lvls[level]);
 
         // and this line segfaults!
@@ -848,15 +853,22 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 #endif
         ComputeUpdatedLvlRhsFunc(l, *(rhsfunc_lvls[l]), *(solupdate_lvls[l]), *(tempvec_lvls[l]) );
 
+#ifdef DEBUG_INFO
+        if ( current_iterate == 0)
+        {
+            if (l == 0)
+                CheckConstrRes(*(solupdate_lvls[l]), Constr, *rhs_constr, "before hcurl update");
+            else
+                CheckConstrRes(*(solupdate_lvls[l]), *(Constr_lvls[l-1]), *rhs_constr, "before hcurl update");
+        }
+#endif
+
         if (Smoo)
         {
             if (numblocks == 1)
             {
                 if (l == 0)
                 {
-                    //const SparseMatrix test1(Funct.GetBlock(0,0));
-                    //const SparseMatrix test2(test1);
-                    //Smoo->SetUpSmoother(l, test1, test2);
                     Smoo->SetUpSmoother(l, (Funct.GetBlock(0,0)), (P_Func[l]->GetBlock(0,0)));
                 }
                 else
@@ -873,8 +885,33 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
                 Smoo->ComputeRhsLevel(l, *(tempvec_lvls[l]));
             }
             Smoo->MultLevel(l, *(solupdate_lvls[l]), *(tempvec_lvls[l]));
+
+            Vector tempdelta;
+            tempdelta.SetSize(tempvec_lvls[l]->Size());
+            tempdelta = *(tempvec_lvls[l]);
+            tempdelta -= *(solupdate_lvls[l]);
+            Vector zeros;
+            if (l == 0)
+                zeros.SetSize(Constr.Height());
+            else
+                zeros.SetSize(Constr_lvls[l-1]->Height());
+            zeros = 0.0;
+            if (l == 0)
+                CheckConstrRes(tempdelta, Constr, zeros, "for hcurl update delta");
+            else
+                CheckConstrRes(tempdelta, *(Constr_lvls[l-1]), zeros, "for hcurl update delta");
+
             *(solupdate_lvls[l]) = *(tempvec_lvls[l]);
 
+#ifdef DEBUG_INFO
+            if ( current_iterate == 0)
+            {
+                if (l == 0)
+                    CheckConstrRes(*(solupdate_lvls[l]), Constr, *rhs_constr, "after hcurl update");
+                else
+                    CheckConstrRes(*(solupdate_lvls[l]), *(Constr_lvls[l-1]), *rhs_constr, "after hcurl update");
+            }
+#endif
             /*
             cannot simply call ComputeUpdatedLvlRhsFunc(l) again since solupdate now
             contains both update from local problems and update from minimization
@@ -3259,3 +3296,114 @@ SparseMatrix * RemoveZeroEntries(const SparseMatrix& in)
     return new SparseMatrix(outI, outJ, outData, in.Height(), in.Width());
 }
 //#endif
+
+namespace mfem
+{
+
+HypreParMatrix * CopyHypreParMatrix (HypreParMatrix& inputmat)
+{
+    MPI_Comm comm = inputmat.GetComm();
+    int num_procs;
+    MPI_Comm_size(comm, &num_procs);
+
+    HYPRE_Int global_num_rows = inputmat.M();
+    HYPRE_Int global_num_cols = inputmat.N();
+
+    int size_starts = num_procs;
+    if (num_procs > 1) // in thi case offd exists
+    {
+        //int myid;
+        //MPI_Comm_rank(comm,&myid);
+
+        HYPRE_Int * row_starts_in = inputmat.GetRowStarts();
+        HYPRE_Int * col_starts_in = inputmat.GetColStarts();
+
+        HYPRE_Int * row_starts = new HYPRE_Int[num_procs];
+        memcpy(row_starts, row_starts_in, size_starts * sizeof(HYPRE_Int));
+        HYPRE_Int * col_starts = new HYPRE_Int[num_procs];
+        memcpy(col_starts, col_starts_in, size_starts * sizeof(HYPRE_Int));
+
+        //std::cout << "memcpy calls finished \n";
+
+        SparseMatrix diag_in;
+        inputmat.GetDiag(diag_in);
+        SparseMatrix * diag_out = new SparseMatrix(diag_in);
+
+        //std::cout << "diag copied \n";
+
+        SparseMatrix offdiag_in;
+        HYPRE_Int * offdiag_cmap_in;
+        inputmat.GetOffd(offdiag_in, offdiag_cmap_in);
+
+        /*
+        if (myid == 1)
+        {
+            std::cout << "in \n";
+            for ( int i = 0; i < offdiag_in.Width(); ++i)
+                std::cout << offdiag_cmap_in[i] << "\n";
+        }
+        */
+
+        int size_offdiag_cmap = offdiag_in.Width();
+
+        SparseMatrix * offdiag_out = new SparseMatrix(offdiag_in);
+        HYPRE_Int * offdiag_cmap_out = new HYPRE_Int[size_offdiag_cmap];
+
+        /*
+        std::cout << "myid = " << myid << "\n";
+        std::cout << "size_offdiag_cmap = " << size_offdiag_cmap << "\n";
+        MPI_Barrier(comm);
+        if (myid == 0)
+        {
+            //offdiag_in.Print();
+            for ( int i = 0; i < size_offdiag_cmap; ++i)
+                std::cout << offdiag_cmap_in[i] << "\n";
+        }
+        std::cout << flush;
+        MPI_Barrier(comm);
+        */
+
+        memcpy(offdiag_cmap_out, offdiag_cmap_in, size_offdiag_cmap * sizeof(int));
+
+        /*
+        if (myid == 1)
+        {
+            std::cout << "in \n";
+            for ( int i = 0; i < size_offdiag_cmap; ++i)
+                std::cout << offdiag_cmap_in[i] << "\n";
+            std::cout << "out \n";
+            for ( int i = 0; i < size_offdiag_cmap; ++i)
+                std::cout << offdiag_cmap_out[i] << "\n";
+        }
+
+        MPI_Barrier(comm);
+        std::cout << "offdiag copied \n";
+        MPI_Barrier(comm);
+        */
+
+        return new HypreParMatrix(comm, global_num_rows, global_num_cols,
+                                  row_starts, col_starts,
+                                  diag_out, offdiag_out, offdiag_cmap_out);
+
+        //std::cout << "constructor called \n";
+    }
+    else // in this case offd doesn't exist and we have to use a different constructor
+    {
+        HYPRE_Int * row_starts = new HYPRE_Int[2];
+        row_starts[0] = 0;
+        row_starts[1] = global_num_rows;
+        HYPRE_Int * col_starts = new HYPRE_Int[2];
+        col_starts[0] = 0;
+        col_starts[1] = global_num_cols;
+
+        SparseMatrix diag_in;
+        inputmat.GetDiag(diag_in);
+        SparseMatrix * diag_out = new SparseMatrix(diag_in);
+
+        return new HypreParMatrix(comm, global_num_rows, global_num_cols,
+                                  row_starts, col_starts, diag_out);
+    }
+
+}
+
+} // end of namespace mfem

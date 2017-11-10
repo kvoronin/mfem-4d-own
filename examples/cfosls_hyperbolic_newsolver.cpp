@@ -14,7 +14,7 @@
 
 #define NEW_STUFF // for new multilevel solver
 
-#define WITH_PETSC
+//#define WITH_PETSC
 
 #ifdef WITH_PETSC
 #   include<petsc.h>
@@ -797,7 +797,7 @@ int main(int argc, char *argv[])
     int numcurl         = 0;
 
     int ser_ref_levels  = 1;
-    int par_ref_levels  = 1;
+    int par_ref_levels  = 2;
 
     const char *space_for_S = "L2";    // "H1" or "L2"
     bool eliminateS = true;            // in case space_for_S = "L2" defines whether we eliminate S from the system
@@ -1264,7 +1264,7 @@ int main(int argc, char *argv[])
     std::vector<std::vector<Array<int>* > > BdrDofs_R(1, std::vector<Array<int>* >(num_levels));
     std::vector<std::vector<Array<int>* > > EssBdrDofs_R(1, std::vector<Array<int>* >(num_levels));
 
-    std::cout << "num_levels - 1 = " << num_levels << "\n";
+    //std::cout << "num_levels - 1 = " << num_levels << "\n";
     std::vector<Array<int>* > EssBdrDofs_Hcurl(num_levels - 1);
 
     //ProjH_Curl looks wrong, thus failure for num_levels > 2
@@ -1280,7 +1280,7 @@ int main(int argc, char *argv[])
 
    for (int l = 0; l < num_levels; ++l)
     {
-        std::cout << "l = " << l << "\n";
+        //std::cout << "l = " << l << "\n";
         BdrDofs_R[0][l] = new Array<int>;
         EssBdrDofs_R[0][l] = new Array<int>;
         if (l < num_levels - 1)
@@ -1328,6 +1328,26 @@ int main(int argc, char *argv[])
     */
 
 //#endif
+
+    // creating a bug reproducer for LeftDiagMult and ParMult
+    HypreParMatrix * d_td = C_space->Dof_TrueDof_Matrix();
+    HypreParMatrix * d_td_T = d_td->Transpose();
+
+    ParDiscreteLinearOperator Curl_op(C_space, R_space); // from Hcurl(C_space) to Hdiv(R_space)
+    Curl_op.AddDomainInterpolator(new CurlInterpolator());
+    Curl_op.Assemble();
+    Curl_op.Finalize();
+    SparseMatrix Curl_op_sp = Curl_op.SpMat();
+
+    SparseMatrix * Curl_T = Transpose(Curl_op_sp);
+    SparseMatrix * product1 = Mult(*Curl_T, Curl_op_sp);
+    HypreParMatrix * product2 = d_td->LeftDiagMult(*product1);
+    HypreParMatrix * product3 = ParMult(d_td_T, product2);
+
+    if (verbose)
+        std::cout << "Test has not failed \n";
+    //MPI_Finalize();
+    //return 0;
 
     chrono.Clear();
     chrono.Start();
@@ -1411,21 +1431,48 @@ int main(int argc, char *argv[])
                 Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
 #ifdef WITH_PETSC
                 //PetscParMatrix * mat1 = new PetscParMatrix(MPI_COMM_WORLD, C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
-                PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
-                //PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(),Operator::PETSC_MATAIJ);
+                //PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
+                PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(),Operator::PETSC_MATAIJ);
                 //Mat matt1 = mat1->ReleaseMat(false);
                 //PetscParMatrix * mat2 = new PetscParMatrix(matt1);
-                //hypre_ParCSRMatrix *pcsr1;
-                //MatHYPREGetParCSR(*mat2,&pcsr1);
-                //if (pcsr1 == NULL)
-                    //std::cout << "NULL pointer \n";
-                //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(pcsr1);
+                hypre_ParCSRMatrix *pcsr1;
+                MatHYPREGetParCSR(*mat1,&pcsr1);
+                if (pcsr1 == NULL)
+                    std::cout << "NULL pointer \n";
+                Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(pcsr1);
                 //Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
                 //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
                 //Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
 #endif
                 // or
-                Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                //Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
+                HypreParMatrix * temp = C_space->Dof_TrueDof_Matrix();
+
+                /*
+                SparseMatrix offdiag_in;
+                HYPRE_Int * offdiag_cmap_in;
+                temp->GetOffd(offdiag_in, offdiag_cmap_in);
+                if (myid == 1)
+                {
+                    //offdiag_in.Print();
+                    std::cout << "before copying, offdiag_in.Width = " << offdiag_in.Width() << "\n";
+                    std::cout << "before copying, cmap: \n";
+                    for ( int i = 0; i < offdiag_in.Width(); ++i)
+                        std::cout << offdiag_cmap_in[i] << "\n";
+                }
+                */
+
+                //std::cout << "Copying the HyprParMatrix \n";
+                Dof_TrueDof_Hcurl[ref_levels - l] = CopyHypreParMatrix (*temp);
+                //std::cout << "Finished \n";
+                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
+                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
+                //Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
+
+                // looking for a bug
+                //HypreParMatrix * d_td_T = Dof_TrueDof_Hcurl[ref_levels - l]->Transpose();
+                //HypreParMatrix * product = ParMult(d_td_T, Dof_TrueDof_Hcurl[ref_levels - l]);
+
                 //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
                 //C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[ref_levels - l]));
                 Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
@@ -1439,6 +1486,11 @@ int main(int argc, char *argv[])
                     auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
                     unique_ptr<SparseMatrix>RP_C_local(
                                 Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
+                    std::cout << "Falling here? \n";
+                    int * row_startss = C_space->GetTrueDofOffsets();
+                    std::cout << "row_startss[0] = " << row_startss[0] << "\n";
+                    std::cout << "row_startss[1] = " << row_startss[1] << "\n";
+                    std::cout << "row_startss[2] = " << row_startss[2] << "\n";
                     P_C[l-1] = d_td_coarse_C->LeftDiagMult(
                                 *RP_C_local, C_space->GetTrueDofOffsets());
                     P_C[l-1]->CopyColStarts();
@@ -1454,6 +1506,7 @@ int main(int argc, char *argv[])
                     auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                     unique_ptr<SparseMatrix>RP_H_local(
                                 Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
+                    std::cout << "Or here? \n";
                     P_H[l-1] = d_td_coarse_H->LeftDiagMult(
                                 *RP_H_local, H_space->GetTrueDofOffsets());
                     P_H[l-1]->CopyColStarts();
@@ -2991,6 +3044,25 @@ int main(int argc, char *argv[])
     //MPI_Finalize();
     //return 0;
 
+    // testing some matrix properties
+    // 1. looking at (P_RT)^T * P_RT - it is not diagonal!
+    SparseMatrix * temppp = Transpose(P_Func[0]->GetBlock(0,0));
+    SparseMatrix * testtt = Mult(*temppp, P_Func[0]->GetBlock(0,0));
+
+    //testtt->Print();
+
+    // 2. looking at B_0 * C_0
+    SparseMatrix * testtt2 = Mult(Bloc,Divfree_op_sp);
+    //testtt2->Print();
+
+    // 3. looking at B_0 * (P_RT)^T * P_RT * C_0
+    SparseMatrix * temppp2 = Mult(Bloc,P_Func[0]->GetBlock(0,0));
+    SparseMatrix * temppp3 = Mult(*temppp,Divfree_op_sp);
+
+    SparseMatrix * testtt3 = Mult(*temppp2,*temppp3);
+    testtt3->Print();
+
+
     if (verbose)
         std::cout << "Calling constructor of the new solver \n";
 
@@ -3049,7 +3121,7 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 20;
+    int ntestiter = 2;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
