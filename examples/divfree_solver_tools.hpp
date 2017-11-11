@@ -139,6 +139,55 @@ void MultilevelSmoother::ComputeRhsLevel(int level, const BlockVector& res_lvl)
                  " class but must have been redefined \n";
 }
 
+/*
+class HCurlGSSmoother : public MultilevelSmoother
+{
+    using MultilevelSmoother::SetUpSmoother;
+protected:
+    // Projection matrices for Hcurl at all levels
+    const Array< SparseMatrix*>& P_lvls;
+
+    // Discrete curl operators at all levels;
+    mutable Array<SparseMatrix*> Curlh_lvls;
+
+    // Curl_hT * A_l * Curlh matrices at all levels
+    mutable Array<SparseMatrix*> CTMC_lvls;
+
+    // dof_Truedof tables at all levels;
+    const Array<HypreParMatrix*> & d_td_lvls;
+
+    const std::vector<Array<int>* >  & essbdrdofs_lvls;
+
+    // temporary storage variables
+    mutable Array<Vector*> rhs_lvls;      // rhs for the problems in H(curl)
+    mutable Array<Vector*> tempvec_lvls;  // lives in H(curl)_h
+    mutable Array<Vector*> tempvec2_lvls; // lives in H(div)_h
+    mutable Array<Vector*> truerhs_lvls;  // rhs for H(curl) problems on true dofs
+    mutable Array<Vector*> truex_lvls;    // sol for H(curl) problems on true dofs
+
+public:
+    // constructor
+    HCurlGSSmoother (int Num_Levels, SparseMatrix *DiscreteCurl,
+                   const Array< SparseMatrix*>& Proj_lvls, const Array<HypreParMatrix *>& Dof_TrueDof_lvls,
+                   const std::vector<Array<int>* > & EssBdrdofs_lvls);
+
+    // SparseMatrix version of SetUpSmoother()
+    void SetUpSmoother(int level, const SparseMatrix& SysMat_lvl, const SparseMatrix& Proj_lvl) override;
+
+    // BlockMatrix version of SetUpSmoother()
+    void SetUpSmoother(int level, const BlockMatrix& SysMat_lvl, const BlockMatrix& Proj_lvl) override;
+
+    // Computes the righthand side for the local minimization problem
+    // solved in MultLevel() from the given residual at level l of the
+    // original problem
+    void ComputeRhsLevel(int level, const Vector& res_lvl);
+
+    // Updates the given iterate at level l by solving a minimization
+    // problem in H(curl) at level l (using the precomputed righthand side)
+    void MultLevel(int level, Vector& in_lvl, Vector& out_lvl);
+};
+*/
+
 
 // Implements a multilevelel smoother which can update the solution x = (x_l)
 // at each level l by solving a minimization problem
