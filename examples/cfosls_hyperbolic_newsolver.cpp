@@ -9,7 +9,6 @@
 #include <iomanip>
 #include <list>
 
-
 #include "cfosls_testsuite.hpp"
 
 #define NEW_STUFF // for new multilevel solver
@@ -21,20 +20,29 @@
 #   include<petscmathypre.h>
 #endif
 
+// TODO: Add divergence matrices at all levels (assembled from bilinear forms)
+// TODO: as an input to the new solver and check that it won't change anything
+// TODO: so that coarsened divergence matrices constructed inside new solver now
+// TODO are the same as the former
+
 // additional printing option
-#define COMPARE_WITH_OLD
+//#define COMPARE_WITH_OLD
+
 // additional options used for debugging
 //#define EXACTSOLH_INIT
 //#define COMPUTING_LAMBDA
+
 #define WITH_SMOOTHER
+
+// used for extracting Dof_TrueDof relations for all tables
+// will be redundant when no global H(curl) solve is
+// involved into the smoother
+#define POINTER_SWAP_AS_COPY
 
 #include "divfree_solver_tools.hpp"
 
+// must be on
 #define USE_CURLMATRIX
-
-//#define DEBUGGING // should be switched off in general
-
-//#define TESTING // active only for debugging case when S is from L2 and S is not eliminated
 
 //#define BAD_TEST
 //#define ONLY_DIVFREEPART
@@ -1419,9 +1427,10 @@ int main(int argc, char *argv[])
                     pmesh->UniformRefinement();
                 }
 
-#ifdef NEW_STUFF
                 C_space->Update();
+#ifdef NEW_STUFF
                 Proj_Hcurl_local = (SparseMatrix *)C_space->GetUpdateOperator();
+                // PETSc work around (doesn't work)
 #ifdef WITH_PETSC
                 //PetscParMatrix * mat1 = new PetscParMatrix(MPI_COMM_WORLD, C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
                 //PetscParMatrix * mat1 = new PetscParMatrix(C_space->Dof_TrueDof_Matrix(), Operator::PETSC_MATHYPRE);
@@ -1437,42 +1446,24 @@ int main(int argc, char *argv[])
                 //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
                 //Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
 #endif
-                // or
+                // or standard
                 //Dof_TrueDof_Hcurl[ref_levels - l] = C_space->Dof_TrueDof_Matrix();
                 HypreParMatrix * temp = C_space->Dof_TrueDof_Matrix();
 
-                /*
-                SparseMatrix offdiag_in;
-                HYPRE_Int * offdiag_cmap_in;
-                temp->GetOffd(offdiag_in, offdiag_cmap_in);
-                if (myid == 1)
-                {
-                    //offdiag_in.Print();
-                    std::cout << "before copying, offdiag_in.Width = " << offdiag_in.Width() << "\n";
-                    std::cout << "before copying, cmap: \n";
-                    for ( int i = 0; i < offdiag_in.Width(); ++i)
-                        std::cout << offdiag_cmap_in[i] << "\n";
-                }
-                */
-
+#ifdef POINTER_SWAP_AS_COPY
+                Dof_TrueDof_Hcurl[ref_levels - l] = temp;
+                temp = NULL;
+#else
                 //std::cout << "Copying the HyprParMatrix \n";
                 Dof_TrueDof_Hcurl[ref_levels - l] = CopyHypreParMatrix (*temp);
                 //std::cout << "Finished \n";
-                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
-                //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
+                Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
+                Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
                 Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
-
+#endif
                 //Dof_TrueDof_Hcurl[ref_levels - l] = d_td;
 
-                // looking for a bug
-                //HypreParMatrix * d_td_T = Dof_TrueDof_Hcurl[ref_levels - l]->Transpose();
-                //HypreParMatrix * product = ParMult(d_td_T, Dof_TrueDof_Hcurl[ref_levels - l]);
-
-                //Dof_TrueDof_Hcurl[ref_levels - l] = new HypreParMatrix(C_space->Dof_TrueDof_Matrix()->StealData());
-                //C_space->GetEssentialVDofs(ess_bdrSigma, *(EssBdrDofs_Hcurl[ref_levels - l]));
                 Proj_Hcurl[ref_levels - l] = RemoveZeroEntries(*Proj_Hcurl_local);
-#else
-                C_space->Update();
 #endif
                 if (prec_is_MG)
                 {
@@ -1680,22 +1671,14 @@ int main(int argc, char *argv[])
 
     Array<int> block_offsets(numblocks + 1); // number of variables + 1
     block_offsets[0] = 0;
-#ifndef DEBUGGING
     block_offsets[1] = C_space->GetVSize();
-#else
-    block_offsets[1] = R_space->GetVSize();
-#endif
     if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
         block_offsets[2] = S_space->GetVSize();
     block_offsets.PartialSum();
 
     Array<int> block_trueOffsets(numblocks + 1); // number of variables + 1
     block_trueOffsets[0] = 0;
-#ifndef DEBUGGING
     block_trueOffsets[1] = C_space->TrueVSize();
-#else
-    block_trueOffsets[1] = R_space->TrueVSize();
-#endif
     if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
         block_trueOffsets[2] = S_space->TrueVSize();
     block_trueOffsets.PartialSum();
@@ -1945,7 +1928,6 @@ int main(int argc, char *argv[])
 
     BlockOperator *MainOp = new BlockOperator(block_trueOffsets);
 
-#ifndef DEBUGGING
     // curl or divskew operator from C_space into R_space
     ParDiscreteLinearOperator Divfree_op(C_space, R_space); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     if (dim == 3)
@@ -1963,7 +1945,6 @@ int main(int argc, char *argv[])
 #endif
     HypreParMatrix * Divfree_dop = Divfree_op.ParallelAssemble(); // from Hcurl or HDivSkew(C_space) to Hdiv(R_space)
     HypreParMatrix * DivfreeT_dop = Divfree_dop->Transpose();
-#endif
 
     // mass matrix for H(div)
     ParBilinearForm *Mblock(new ParBilinearForm(R_space));
@@ -1982,12 +1963,8 @@ int main(int argc, char *argv[])
 
     // curl-curl matrix for H(curl) in 3D
     // either as DivfreeT_dop * M * Divfree_dop
-#ifndef DEBUGGING
     auto temp = ParMult(DivfreeT_dop,M);
     auto A = ParMult(temp, Divfree_dop);
-#else
-    HypreParMatrix * A = M;
-#endif
 
     HypreParMatrix *C, *CH, *CHT, *B, *BT;
     if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
@@ -2019,70 +1996,9 @@ int main(int argc, char *argv[])
         BT = BTblock->ParallelAssemble();
         B = BT->Transpose();
 
-#ifndef DEBUGGING
         CHT = ParMult(DivfreeT_dop, B);
-#else
-        CHT = B;
-#endif
         CH = CHT->Transpose();
     }
-
-#ifdef TESTING // used for studying the case when S is from L2 and S is not eliminated
-    Array<int> block_truetestOffsets(3); // number of variables + 1
-    block_truetestOffsets[0] = 0;
-    block_truetestOffsets[1] = C_space->TrueVSize();
-    //block_truetestOffsets[1] = R_space->TrueVSize();
-    if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
-        block_truetestOffsets[2] = S_space->TrueVSize();
-    block_truetestOffsets.PartialSum();
-
-    BlockOperator *TestOp = new BlockOperator(block_truetestOffsets);
-
-    TestOp->SetBlock(0,0, A);
-    TestOp->SetBlock(0,1, CHT);
-    TestOp->SetBlock(1,0, CH);
-    //TestOp->SetBlock(0,0, M);
-    //TestOp->SetBlock(0,1, B);
-    //TestOp->SetBlock(1,0, BT);
-    TestOp->SetBlock(1,1, C);
-
-    IterativeSolver * testsolver;
-    testsolver = new CGSolver(comm);
-    if (verbose)
-        cout << "Linear test solver: CG \n";
-
-    testsolver->SetAbsTol(atol);
-    testsolver->SetRelTol(rtol);
-    testsolver->SetMaxIter(max_num_iter);
-    testsolver->SetOperator(*TestOp);
-
-    testsolver->SetPrintLevel(0);
-
-    BlockVector truetestX(block_truetestOffsets), truetestRhs(block_truetestOffsets);
-    truetestX = 0.0;
-    truetestRhs = 1.0;
-
-    truetestX = 0.0;
-    testsolver->Mult(truetestRhs, truetestX);
-
-    chrono.Stop();
-
-    if (verbose)
-    {
-        if (testsolver->GetConverged())
-            std::cout << "Linear solver converged in " << testsolver->GetNumIterations()
-                      << " iterations with a residual norm of " << testsolver->GetFinalNorm() << ".\n";
-        else
-            std::cout << "Linear solver did not converge in " << testsolver->GetNumIterations()
-                      << " iterations. Residual norm is " << testsolver->GetFinalNorm() << ".\n";
-        std::cout << "Linear solver took " << chrono.RealTime() << "s. \n";
-    }
-
-    MPI_Finalize();
-    return 0;
-#endif
-
-    //eliminateS = false gives non pos.def. matrix without preconditioner!
 
     // additional temporary vectors on true dofs required for various matvec
     Vector tempHdiv_true(R_space->TrueVSize());
@@ -2092,20 +2008,15 @@ int main(int argc, char *argv[])
     if (strcmp(space_for_S,"H1") == 0 || !eliminateS) // S is present
         qform->ParallelAssemble(trueRhs.GetBlock(1));
     rhside_Hdiv->ParallelAssemble(tempHdiv_true);
-#ifndef DEBUGGING
     DivfreeT_dop->Mult(tempHdiv_true, trueRhs.GetBlock(0));
-#endif
 
     // subtracting from rhs a part from Sigmahat
     Sigmahat->ParallelProject(tempHdiv_true);
     M->Mult(tempHdiv_true, temp2Hdiv_true);
     //DivfreeT_dop->Mult(temp2Hdiv_true, tempHcurl_true);
     //trueRhs.GetBlock(0) -= tempHcurl_true;
-#ifndef DEBUGGING
     DivfreeT_dop->Mult(-1.0, temp2Hdiv_true, 1.0, trueRhs.GetBlock(0));
-#else
-    trueRhs.GetBlock(0) -= temp2Hdiv_true;
-#endif
+
     // subtracting from rhs for S a part from Sigmahat
     //BT->Mult(tempHdiv_true, tempH1_true);
     //trueRhs.GetBlock(1) -= tempH1_true;
@@ -2837,14 +2748,20 @@ int main(int argc, char *argv[])
     BlockMatrix Ablockmat(offsets);
     Ablockmat.SetBlock(0,0,&Aloc);
 
-    double new_abstol = 1.0e-11;
-    double new_reltol = 1.0e-11;
+    double smooth_abstol = 1.0e-12;
+    double smooth_reltol = 1.0e-12;
+
+    if (verbose)
+    {
+        std::cout << "smooth_abstol = " << smooth_abstol << "\n";
+        std::cout << "smooth_reltol = " << smooth_reltol << "\n";
+    }
 
     HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
                    Proj_Hcurl, Dof_TrueDof_Hcurl,
                    EssBdrDofs_Hcurl);
-    NewSmoother.SetAbsTol(new_abstol);
-    NewSmoother.SetRelTol(new_reltol);
+    NewSmoother.SetAbsTol(smooth_abstol);//(1.0e-10);//(new_abstol);
+    NewSmoother.SetRelTol(smooth_reltol);//(1.0e-10);//(new_reltol);
     NewSmoother.SetMaxIterInt(20000);
 
     if (verbose)
@@ -3064,8 +2981,17 @@ int main(int argc, char *argv[])
                      false);
 #endif
 
-    NewSolver.SetAbsTol(new_abstol);
-    NewSolver.SetRelTol(new_reltol);
+    double newsolver_abstol = 1.0e-12;
+    double newsolver_reltol = 1.0e-12;
+
+    if (verbose)
+    {
+        std::cout << "newsolver_abstol = " << newsolver_abstol << "\n";
+        std::cout << "newsolver_reltol = " << newsolver_reltol << "\n";
+    }
+
+    NewSolver.SetAbsTol(newsolver_abstol);
+    NewSolver.SetRelTol(newsolver_reltol);
     NewSolver.SetMaxIter(300);
     NewSolver.SetPrintLevel(1);
 
@@ -3314,14 +3240,6 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 0;
 
-#ifdef COMPARE_WITH_OLD
-    //if (verbose)
-        //std::cout << "sigmahat from new solver (size " << NewSigmahat->Size() << "): \n";
-    //NewSigmahat->Print();
-#endif
-
-    //MPI_Finalize();
-    //return 0;
 #endif
 
     if (visualization && nDimensions < 4)

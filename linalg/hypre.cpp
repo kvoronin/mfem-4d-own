@@ -1020,18 +1020,12 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
                                              HYPRE_Int* row_starts) const
 {
    const bool assumed_partition = HYPRE_AssumedPartitionCheck();
-
-   int nprocs;
-   MPI_Comm_size(GetComm(), &nprocs);
-
-   int local_num_rows;
    if (row_starts == NULL)
    {
       row_starts = hypre_ParCSRMatrixRowStarts(A);
       MFEM_VERIFY(D.Height() == hypre_CSRMatrixNumRows(A->diag),
                   "the matrix D is NOT compatible with the row starts of"
                   " this HypreParMatrix, row_starts must be given.");
-      local_num_rows = D.Height();
    }
    else
    {
@@ -1044,7 +1038,7 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
       {
          MPI_Comm_rank(GetComm(), &offset);
       }
-      local_num_rows = row_starts[offset+1]-row_starts[offset];
+      int local_num_rows = row_starts[offset+1]-row_starts[offset];
       MFEM_VERIFY(local_num_rows == D.Height(), "the number of rows in D is "
                   " not compatible with the given row_starts");
    }
@@ -1052,23 +1046,21 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
    // multiplication function, mfem::Mult(), called below.
 
    int part_size;
+   HYPRE_Int global_num_rows;
    if (assumed_partition)
    {
       part_size = 2;
-      //global_num_rows = row_starts[2];
+      global_num_rows = row_starts[2];
       // Here, we use row_starts[2], so row_starts must come from the methods
       // GetDofOffsets/GetTrueDofOffsets of ParFiniteElementSpace (HYPRE's
       // partitions have only 2 entries).
    }
    else
-      part_size = nprocs + 1;
-
-   int global_num_rows = 0;
-   MPI_Allreduce(&local_num_rows,&global_num_rows, 1, MPI_INT, MPI_SUM, GetComm());
-
-   //std::cout << "assumed_partition = " << assumed_partition << "\n";
-   //std::cout << "part_size = " << part_size << "\n";
-   //std::cout << "global_num_rows = " << global_num_rows << "\n";
+   {
+      MPI_Comm_size(GetComm(), &part_size);
+      global_num_rows = row_starts[part_size];
+      part_size++;
+   }
 
    HYPRE_Int *col_starts = hypre_ParCSRMatrixColStarts(A);
    HYPRE_Int *col_map_offd;
@@ -1076,56 +1068,38 @@ HypreParMatrix* HypreParMatrix::LeftDiagMult(const SparseMatrix &D,
    // get the diag and offd blocks as SparseMatrix wrappers
    SparseMatrix A_diag, A_offd;
    GetDiag(A_diag);
-   if (nprocs > 1)
-      GetOffd(A_offd, col_map_offd);
-
-   HypreParMatrix* DA;
+   GetOffd(A_offd, col_map_offd);
 
    // multiply the blocks with D and create a new HypreParMatrix
    SparseMatrix* DA_diag = mfem::Mult(D, A_diag);
-   SparseMatrix* DA_offd;
-   if (nprocs > 1)
-   {
-      DA_offd = mfem::Mult(D, A_offd);
-      DA = new HypreParMatrix(GetComm(),
-                              global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
-                              DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
-                              DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
-                              DA_diag, DA_offd,
-                              DuplicateAs<HYPRE_Int>(col_map_offd, A_offd.Width()));
-   }
-   else
-   {
-      DA = new HypreParMatrix(GetComm(),
-                              global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
-                              DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
-                              DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
-                              DA_diag);
-   }
+   SparseMatrix* DA_offd = mfem::Mult(D, A_offd);
 
+   HypreParMatrix* DA =
+      new HypreParMatrix(GetComm(),
+                         global_num_rows, hypre_ParCSRMatrixGlobalNumCols(A),
+                         DuplicateAs<HYPRE_Int>(row_starts, part_size, false),
+                         DuplicateAs<HYPRE_Int>(col_starts, part_size, false),
+                         DA_diag, DA_offd,
+                         DuplicateAs<HYPRE_Int>(col_map_offd, A_offd.Width()));
 
    // When HYPRE_BIGINT is defined, we want DA_{diag,offd} to delete their I and
    // J arrays but not their data arrays; when HYPRE_BIGINT is not defined, we
    // don't want DA_{diag,offd} to delete anything.
 #ifndef HYPRE_BIGINT
    DA_diag->LoseData();
-   if (nprocs > 1)
-      DA_offd->LoseData();
+   DA_offd->LoseData();
 #else
    DA_diag->SetDataOwner(false);
-   if (nprocs > 1)
-      DA_offd->SetDataOwner(false);
+   DA_offd->SetDataOwner(false);
 #endif
 
    delete DA_diag;
-   if (nprocs > 1)
-      delete DA_offd;
+   delete DA_offd;
 
    hypre_ParCSRMatrixSetRowStartsOwner(DA->A, 1);
    hypre_ParCSRMatrixSetColStartsOwner(DA->A, 1);
 
-   DA->diagOwner = 3;
-   DA->offdOwner = 3;
+   DA->diagOwner = DA->offdOwner = 3;
    DA->colMapOwner = 1;
 
    return DA;

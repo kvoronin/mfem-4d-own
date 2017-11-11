@@ -12,41 +12,18 @@ using std::unique_ptr;
 
 // FIXME: fix const-correctness, there is a non-clarified mess of const and mutable
 
-/*
-class BugCatch : public Operator
-{
-protected:
-    mutable SparseMatrix Curlh;
-public:
-
-    // constructor
-    BugCatch (const SparseMatrix &DiscreteCurl);
-
-
-    // legacy of the Operator class
-    virtual void Mult (const Vector& x, Vector& y) const
-    {
-        MFEM_ABORT("Mult() should never be called from BugCatch and its descendants \n");
-    }
-};
-
-BugCatch::BugCatch(const SparseMatrix &DiscreteCurl)
-    : Curlh(DiscreteCurl)
-{
-    std::cout << "Calling constructor of the BugCatch \n";
-}
-*/
-
 // Checking routines used for debugging
-// Computes and prints the norm of || Funct * y ||_2,h
-double CheckFunctValue(const BlockMatrix& Funct, const BlockVector& yblock, const char * string, bool print)
+// Computes and prints the norm of || Funct * y ||_2,h, or sum of those over all processes
+double CheckFunctValue(MPI_Comm comm, const BlockMatrix& Funct, const BlockVector& yblock, const char * string, bool print)
 {
     BlockVector res(Funct.ColOffsets());
     Funct.Mult(yblock, res);
-    double func_norm = res.Norml2() / sqrt (res.Size());
+    double local_func_norm = res.Norml2() / sqrt (res.Size());
+    double global_func_norm = 0;
+    MPI_Allreduce(&local_func_norm, &global_func_norm, 1, MPI_DOUBLE, MPI_SUM, comm);
     if (print)
-        std::cout << "Functional norm " << string << func_norm << " ... \n";
-    return func_norm;
+        std::cout << "Functional norm " << string << global_func_norm << " ... \n";
+    return global_func_norm;
 }
 
 // Computes and prints the norm of || Constr * sigma - ConstrRhs ||_2,h
@@ -480,6 +457,8 @@ protected:
     const std::vector<HypreParMatrix*>& dof_trueDof_Func;
     const HypreParMatrix& dof_trueDof_L2;
 
+    const MPI_Comm comm;
+
     // Projectors for the variables related to the functional and constraint
     const Array< BlockMatrix*>& P_Func;
     const Array< SparseMatrix*>& P_L2;
@@ -716,6 +695,7 @@ BaseGeneralMinConstrSolver::BaseGeneralMinConstrSolver(int NumLevels,
        AE_e(AE_to_e),
        el_to_dofs_Func(El_to_dofs_Func), el_to_dofs_L2(El_to_dofs_L2),
        dof_trueDof_Func(Dof_TrueDof_Func), dof_trueDof_L2(Dof_TrueDof_L2),
+       comm(Dof_TrueDof_L2.GetComm()),
        P_Func(Proj_Func), P_L2(Proj_L2),
        bdrdofs_Func(BdrDofs_Func),
        essbdrdofs_Func(EssBdrDofs_Func),
@@ -778,10 +758,10 @@ void BaseGeneralMinConstrSolver::Mult(const Vector & x, Vector & y) const
 
         if (print_level >= 1)
         {
-            funct_currnorm = CheckFunctValue(Funct, *yblock, "at the end of iteration: ", true);
+            funct_currnorm = CheckFunctValue(comm, Funct, *yblock, "at the end of iteration: ", true);
         }
         else
-            funct_currnorm = CheckFunctValue(Funct, *yblock, "at the end of iteration: ", false);
+            funct_currnorm = CheckFunctValue(comm, Funct, *yblock, "at the end of iteration: ", false);
 
         if (i > 0 && StoppingCriteria(funct_currnorm, funct_prevnorm, funct_firstnorm))
         {
@@ -878,7 +858,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
         // ensure that the initial iterate satisfies essential boundary conditions
         previous_sol = bdrdata_finest;
 #ifdef DEBUG_INFO
-        CheckFunctValue(Funct, previous_sol, "for prev_sol at the beginning of iteration 0: ", true);
+        CheckFunctValue(comm, Funct, previous_sol, "for prev_sol at the beginning of iteration 0: ", true);
 #endif
     }
 
@@ -894,7 +874,7 @@ void BaseGeneralMinConstrSolver::Solve(BlockVector& previous_sol, BlockVector& n
 
 #ifdef DEBUG_INFO
     if (current_iteration > 0)
-        CheckFunctValue(Funct, next_sol, "for next_sol at the beginning of iteration 0: ", true);
+        CheckFunctValue(comm, Funct, next_sol, "for next_sol at the beginning of iteration 0: ", true);
 #endif
 
     /*
@@ -1256,15 +1236,6 @@ void BaseGeneralMinConstrSolver::SetUpFinerLvl(int lvl) const
 {
     AE_edofs_L2[lvl] = mfem::Mult(*(AE_e[lvl]), *(el_to_dofs_L2[lvl]));
     AE_eintdofs_Func[lvl] = Get_AE_eintdofs(lvl, *el_to_dofs_Func[lvl], essbdrdofs_Func, bdrdofs_Func);
-
-    /*
-#ifdef COMPARE_WITH_OLD
-    {
-        ofstream ofs("newsolver_out_M_fine.txt");
-        Funct.GetBlock(0,0).Print(ofs,1);
-    }
-#endif
-    */
 
     // Funct_lvls[lvl] stores the Functional matrix on level lvl + 1
     BlockMatrix * Funct_PR;
@@ -1810,15 +1781,6 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
 
     Constr_lvls[num_levels-1-1]->EliminateCols(*temp);
 
-    /*
-#ifdef COMPARE_WITH_OLD
-    {
-        ofstream ofs("newsolver_out_M_coarse_beforebnd.txt");
-        Funct_lvls[num_levels-1-1]->GetBlock(0,0).Print(ofs,1);
-    }
-#endif
-    */
-
     for ( int blk = 0; blk < numblocks; ++blk)
     {
         const Array<int> * temp = essbdrdofs_Func[blk][num_levels-1];
@@ -1837,18 +1799,6 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
     (*Constr_lvls)[num_levels-1-1]->GetData()[0] = 1.0;
     (*rhs_constr)[0] = 0.0;
     */
-
-
-#ifdef COMPARE_WITH_OLD
-    {
-        ofstream ofs("newsolver_out_M_coarse.txt");
-        Funct_lvls[num_levels-1-1]->GetBlock(0,0).Print(ofs,1);
-    }
-    {
-        ofstream ofs("newsolver_out_B_coarse.txt");
-        Constr_lvls[num_levels-1-1]->Print(ofs,1);
-    }
-#endif
 
     // 2. Creating the block matrix from the local parts using dof_truedof relation
 
@@ -1891,19 +1841,6 @@ void BaseGeneralMinConstrSolver::SetUpCoarsestLvl() const
         coarse_matrix->SetBlock(blk, blk, Funct_global[blk]);
     coarse_matrix->SetBlock(0, numblocks, ConstrT_global);
     coarse_matrix->SetBlock(numblocks, 0, Constr_global);
-
-    /*
-#ifdef COMPARE_WITH_OLD
-    SparseMatrix M_global_sp;
-    Funct_global[0]->GetDiag(M_global_sp);
-    std::cout << "M_global \n";
-    M_global_sp.Print();
-    //SparseMatrix B_global_sp;
-    //Constr_global->GetDiag(B_global_sp);
-    //std::cout << "B_global \n";
-    //B_global_sp.Print();
-#endif
-    */
 
     // preconditioner for the coarse problem
 
@@ -2088,29 +2025,6 @@ void MinConstrSolver::SolveLocalProblem(std::vector<DenseMatrix> &FunctBlks, Den
     // sig = invA * temp2 = invA * (G - BT * lambda)
     inv_A.Mult(temp2, sol.GetBlock(0));
 
-    /*
-    std::cout << "Check for the first equation: \n";
-    Vector check1(FunctBlks[0].Height());
-    FunctBlks[0].Mult(sol.GetBlock(0), check1);
-    Vector check2(FunctBlks[0].Height());
-    B.MultTranspose(lambda, check2);
-    Vector check3(FunctBlks[0].Height());
-    check3 = G.GetBlock(0);
-    check3 -= check2;
-    check3 -= check1;
-
-    if (check3.Norml2() > 1.0e-14)
-        std::cout << "Wrong \n";
-    //else
-        //std::cout << "Wrong \n";
-
-    std::cout << "Check for the second equation: \n";
-    Vector Ax(B.Height());
-    B.Mult(sol.GetBlock(0), Ax);
-    Ax -= F;
-    Ax.Print();
-    */
-
     return;
 }
 
@@ -2119,14 +2033,14 @@ void MinConstrSolver::SolveCoarseProblem(BlockVector& coarserhs_func, Vector& co
 {
     // 1. set up the solver parameters
 
-    //int maxIter(50000);
-    //double rtol(1.e-12);
-    //double atol(1.e-12);
+    int maxIter(20000);
+    double rtol(1.e-14);
+    double atol(1.e-14);
 
     MINRESSolver solver(MPI_COMM_WORLD);
-    solver.SetAbsTol(abs_tol);
-    solver.SetRelTol(rel_tol);
-    solver.SetMaxIter(max_iter_internal);
+    solver.SetAbsTol(atol);
+    solver.SetRelTol(rtol);
+    solver.SetMaxIter(maxIter);
     solver.SetOperator(*coarse_matrix);
     solver.SetPreconditioner(*coarse_prec);
     solver.SetPrintLevel(0);
@@ -2436,13 +2350,6 @@ public:
             u_loc_vec =0.0;
             p_loc_vec =0.0;
 
-            /*
-#ifdef COMPARE_WITH_OLD
-            std::cout << "rhs at fine level (size " << rhs_l.Size() << ") \n";
-            rhs_l.Print(std::cout,1);
-#endif
-            */
-
             for( int e = 0; e < AE_R->Height(); e++){
 
                 Array<int> Rtmp_j(AE_R->GetRowColumns(e), AE_R->RowSize(e));
@@ -2528,18 +2435,6 @@ public:
                         "checking global solution at each level " << fcheck2.Norml2());
 #endif
 
-            /*
-#ifdef COMPARE_WITH_OLD
-            if (l == 1)
-            {
-                std::cout << "p_loc_vec before projection (from finer levels), size " << p_loc_vec.Size() << ": \n";
-                //total_sig.Print(std::cout,1);
-                ofstream ofs("div_part_out.txt");
-                p_loc_vec.Print(ofs,1);
-            }
-#endif
-            */
-
             // Final Solution ==
             if (l>0){
                 for (int k = l-1; k>=0; k--){
@@ -2550,18 +2445,6 @@ public:
 
                 }
             }
-
-            /*
-#ifdef COMPARE_WITH_OLD
-            if (l == 1)
-            {
-                std::cout << "p_loc_vec after projection (from finer levels), size " << p_loc_vec.Size() << ": \n";
-                //total_sig.Print(std::cout,1);
-                ofstream ofs("div_part_out.txt");
-                p_loc_vec.Print(ofs,1);
-            }
-#endif
-            */
 
 #ifdef DEBUG_INFO
             CheckConstrRes(p_loc_vec, *B_input, F_fine, "for the fine level");
@@ -2583,31 +2466,10 @@ public:
             MFEM_ASSERT(total_sig.Norml2()<= 9e+9,
                         "checking global solution added" << total_sig.Norml2());
 
-            /*
-#ifdef COMPARE_WITH_OLD
-            if (l == 0)
-            {
-                std::cout << "solution total_sig(from finer levels), size " << total_sig.Size() << ": \n";
-                //total_sig.Print(std::cout,1);
-                ofstream ofs("div_part_out.txt");
-                total_sig.Print(ofs,1);
-            }
-#endif
-            */
-
 #ifdef DEBUG_INFO
             CheckConstrRes(total_sig, *B_input, F_fine, "after finer level");
 #endif
         } // end of loop over levels
-
-        /*
-#ifdef COMPARE_WITH_OLD
-        std::cout << "solution total_sig(from finer levels), size " << total_sig.Size() << ": \n";
-        //total_sig.Print(std::cout,1);
-        //ofstream ofs("div_part_out.txt");
-        //total_sig.Print(ofs,1);
-#endif
-        */
 
         // The coarse problem::
 
@@ -2626,59 +2488,18 @@ public:
         SparseMatrix *B_PR = Mult(*B_fine, *P_R[ref_levels-1]);
         B_coarse = Mult(*P_WT2, *B_PR);
 
-        /*
-#ifdef COMPARE_WITH_OLD
-        std::cout << "Looking at B_coarse in div part before eliminating boundary conds \n";
-        B_coarse->Print();
-        //std::cout << "Looking at ess_dof_coarsestlvl_list \n";
-        //ess_dof_coarsestlvl_list.Print(std::cout,1);
-#endif
-        */
-
         B_coarse->EliminateCols(ess_dof_coarsestlvl_list);
 
-#ifdef COMPARE_WITH_OLD
-        {
-            ofstream ofs("divpart_out_B_coarse.txt");
-            B_coarse->Print(ofs,1);
-        }
-#endif
-
-        /*
-#ifdef COMPARE_WITH_OLD
-        std::cout << "Looking at B_coarse in div part before using d_td \n";
-        B_coarse->Print();
-#endif
-        */
         if (M_fine)
         {
-#ifdef COMPARE_WITH_OLD
-            {
-                ofstream ofs("divpart_out_M_fine.txt");
-                M_fine->Print(ofs,1);
-            }
-#endif
             SparseMatrix *M_PR = Mult(*M_fine, *P_R[ref_levels-1]);
 
             M_coarse =  Mult(*P_RT2, *M_PR);
 
-#ifdef COMPARE_WITH_OLD
-            {
-                ofstream ofs("divpart_out_M_coarse_beforebnd.txt");
-                M_coarse->Print(ofs,1);
-            }
-#endif
             for ( int k = 0; k < ess_dof_coarsestlvl_list.Size(); ++k)
                 if (ess_dof_coarsestlvl_list[k] !=0)
                     M_coarse->EliminateRowCol(k);
         }
-
-#ifdef COMPARE_WITH_OLD
-        {
-            ofstream ofs("divpart_out_M_coarse.txt");
-            M_coarse->Print(ofs,1);
-        }
-#endif
 
         Vector sig_c(B_coarse->Width());
 
@@ -2692,19 +2513,6 @@ public:
 
             HypreParMatrix *M_Global = ParMult(d_td_T, d_td_M);
             HypreParMatrix *BT = B_Global->Transpose();
-
-            /*
-#ifdef COMPARE_WITH_OLD
-            SparseMatrix M_global_sp;
-            M_Global->GetDiag(M_global_sp);
-            std::cout << "M_global in div-part \n";
-            M_global_sp.Print();
-            //SparseMatrix B_global_sp;
-            //B_Global->GetDiag(B_global_sp);
-            //std::cout << "B_global in div-part \n";
-            //B_global_sp.Print();
-#endif
-            */
 
             Array<int> block_offsets(3); // number of variables + 1
             block_offsets[0] = 0;
@@ -2769,26 +2577,11 @@ public:
             solver.SetRelTol(rtol);
             solver.SetMaxIter(maxIter);
             solver.SetOperator(coarseMatrix);
-//#ifdef COMPARE_WITH_OLD
-//            solver.SetPrintLevel(1);
-//#else
             solver.SetPreconditioner(*darcyPr);
             solver.SetPrintLevel(0);
-//#endif
             trueX = 0.0;
             solver.Mult(trueRhs, trueX);
 //            chrono.Stop();
-
-            /*
-#ifdef COMPARE_WITH_OLD
-            std::cout << "Looking at coarse rhs in divpart of size " << trueRhs.Size() << "\n";
-            //std::cout << "trueRhs block 0 of size " << trueRhs.GetBlock(0).Size() << "\n";
-            //trueRhs.GetBlock(0).Print();
-            std::cout << "trueRhs block 1 of size " << trueRhs.GetBlock(1).Size() << "\n";
-            trueRhs.GetBlock(1).Print(std::cout,1);
-#endif
-            */
-
 
 //            cout << "MINRES converged in " << solver.GetNumIterations() << " iterations" <<endl;
 //            cout << "MINRES solver took " << chrono.RealTime() << "s. \n";
