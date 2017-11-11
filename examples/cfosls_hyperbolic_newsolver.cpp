@@ -48,9 +48,6 @@ using std::unique_ptr;
 using std::shared_ptr;
 using std::make_shared;
 
-
-//#ifdef LABUDA
-
 class VectorcurlDomainLFIntegrator : public LinearFormIntegrator
 {
     DenseMatrix curlshape;
@@ -772,23 +769,6 @@ int main(int argc, char *argv[])
     const char *petscrc_file = "";
     PetscInitialize(NULL,NULL,petscrc_file,NULL);
 #endif
-    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl(1);
-    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl2(3);
-    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl3(4);
-    //Array<HypreParMatrix* > Dof_TrueDof_Hcurl1(4);
-
-    //Array< SparseMatrix* > Proj_Hcurl1;
-    //Array< SparseMatrix* > Proj_Hcurl;
-    //Proj_Hcurl1.SetSize(2);
-//#ifndef LABUDA
-    //MPI_Finalize();
-    //return 0;
-//#else // LABUDA
-
-    //MPI_Finalize();
-    //return 0;
-    //}
-//#ifdef LABUDA
 
     bool verbose = (myid == 0);
 
@@ -1159,7 +1139,6 @@ int main(int argc, char *argv[])
     return 0;
     }
     */
-//#ifdef LABUDA
 
     MFEM_ASSERT(!(aniso_refine && (with_multilevel || nDimensions == 4)),"Anisotropic refinement works only in 3D and without multilevel algorithm \n");
 
@@ -1329,25 +1308,39 @@ int main(int argc, char *argv[])
 
 //#endif
 
+    /*
     // creating a bug reproducer for LeftDiagMult and ParMult
-    HypreParMatrix * d_td = C_space->Dof_TrueDof_Matrix();
+    ParMesh * pmesh_copy = new ParMesh(*pmesh);
+    for ( int i = 0; i < par_ref_levels; ++i)
+        pmesh_copy->UniformRefinement();
+
+    ParFiniteElementSpace * testC_space = new ParFiniteElementSpace(pmesh_copy, hdivfree_coll);
+    ParFiniteElementSpace * testR_space = new ParFiniteElementSpace(pmesh_copy, hdiv_coll);
+
+    //HypreParMatrix * d_td = testC_space->Dof_TrueDof_Matrix();
+
+    HypreParMatrix * tempr = testC_space->Dof_TrueDof_Matrix();
+    //std::cout << "Copying the HyprParMatrix \n";
+    //HypreParMatrix * d_td = CopyHypreParMatrix (*tempr);
+    HypreParMatrix * d_td = CopyRAPHypreParMatrix (*tempr);
+    d_td->SetOwnerFlags(3,3,1);
+
     HypreParMatrix * d_td_T = d_td->Transpose();
 
-    ParDiscreteLinearOperator Curl_op(C_space, R_space); // from Hcurl(C_space) to Hdiv(R_space)
-    Curl_op.AddDomainInterpolator(new CurlInterpolator());
-    Curl_op.Assemble();
-    Curl_op.Finalize();
-    SparseMatrix Curl_op_sp = Curl_op.SpMat();
+    ParBilinearForm *testblock(new ParBilinearForm(testC_space));
+    testblock->AddDomainIntegrator(new VectorFEMassIntegrator);
+    testblock->Assemble();
+    testblock->Finalize();
+    SparseMatrix product1 = testblock->SpMat();
 
-    SparseMatrix * Curl_T = Transpose(Curl_op_sp);
-    SparseMatrix * product1 = Mult(*Curl_T, Curl_op_sp);
-    HypreParMatrix * product2 = d_td->LeftDiagMult(*product1);
+    HypreParMatrix * product2 = d_td->LeftDiagMult(product1);
     HypreParMatrix * product3 = ParMult(d_td_T, product2);
 
     if (verbose)
         std::cout << "Test has not failed \n";
-    //MPI_Finalize();
-    //return 0;
+    MPI_Finalize();
+    return 0;
+    */
 
     chrono.Clear();
     chrono.Start();
@@ -1467,7 +1460,9 @@ int main(int argc, char *argv[])
                 //std::cout << "Finished \n";
                 //Dof_TrueDof_Hcurl[ref_levels - l]->CopyRowStarts();
                 //Dof_TrueDof_Hcurl[ref_levels - l]->CopyColStarts();
-                //Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
+                Dof_TrueDof_Hcurl[ref_levels - l]->SetOwnerFlags(3,3,1);
+
+                //Dof_TrueDof_Hcurl[ref_levels - l] = d_td;
 
                 // looking for a bug
                 //HypreParMatrix * d_td_T = Dof_TrueDof_Hcurl[ref_levels - l]->Transpose();
@@ -1486,11 +1481,6 @@ int main(int argc, char *argv[])
                     auto P_C_local = RemoveZeroEntries(*P_C_loc_tmp);
                     unique_ptr<SparseMatrix>RP_C_local(
                                 Mult(*C_space->GetRestrictionMatrix(), *P_C_local));
-                    std::cout << "Falling here? \n";
-                    int * row_startss = C_space->GetTrueDofOffsets();
-                    std::cout << "row_startss[0] = " << row_startss[0] << "\n";
-                    std::cout << "row_startss[1] = " << row_startss[1] << "\n";
-                    std::cout << "row_startss[2] = " << row_startss[2] << "\n";
                     P_C[l-1] = d_td_coarse_C->LeftDiagMult(
                                 *RP_C_local, C_space->GetTrueDofOffsets());
                     P_C[l-1]->CopyColStarts();
@@ -1506,7 +1496,6 @@ int main(int argc, char *argv[])
                     auto P_H_local = RemoveZeroEntries(*P_H_loc_tmp);
                     unique_ptr<SparseMatrix>RP_H_local(
                                 Mult(*H_space->GetRestrictionMatrix(), *P_H_local));
-                    std::cout << "Or here? \n";
                     P_H[l-1] = d_td_coarse_H->LeftDiagMult(
                                 *RP_H_local, H_space->GetTrueDofOffsets());
                     P_H[l-1]->CopyColStarts();
@@ -2848,31 +2837,15 @@ int main(int argc, char *argv[])
     BlockMatrix Ablockmat(offsets);
     Ablockmat.SetBlock(0,0,&Aloc);
 
-    /*
-     * studying the hypre "bug" before realizing the thing about CopyRowStarts()
-    SparseMatrix *CurlhT = Transpose( Divfree_op_sp);
-    SparseMatrix *SysMat_Curlh = mfem::Mult(Aloc, Divfree_op_sp);
-    SparseMatrix *CTMC = mfem::Mult(*CurlhT, *SysMat_Curlh);
-
-    HypreParMatrix* CTMC_d_td;
-    CTMC_d_td = Dof_TrueDof_Hcurl[0]->LeftDiagMult( *CTMC );
-
-    HypreParMatrix * d_td_T = Dof_TrueDof_Hcurl[0]->Transpose();
-
-    HypreParMatrix * CTMC_global = ParMult(d_td_T, CTMC_d_td);
-    CTMC_global->CopyRowStarts();
-    CTMC_global->CopyColStarts();
-
-    delete d_td_T;
-    delete CTMC_d_td;
-    */
+    double new_abstol = 1.0e-11;
+    double new_reltol = 1.0e-11;
 
     HCurlSmoother NewSmoother(num_levels - 1, &Divfree_op_sp,
                    Proj_Hcurl, Dof_TrueDof_Hcurl,
                    EssBdrDofs_Hcurl);
-
-    //MPI_Finalize();
-    //return 0;
+    NewSmoother.SetAbsTol(new_abstol);
+    NewSmoother.SetRelTol(new_reltol);
+    NewSmoother.SetMaxIterInt(20000);
 
     if (verbose)
         std::cout << "\nCreating an instance of the new multilevel solver \n";
@@ -3044,7 +3017,10 @@ int main(int argc, char *argv[])
     //MPI_Finalize();
     //return 0;
 
-    // testing some matrix properties
+    // testing some matrix properties:
+    // realizing that we miss canonical projections to have
+    // coarsened curl orthogonal to coarsened divergence
+    /*
     // 1. looking at (P_RT)^T * P_RT - it is not diagonal!
     SparseMatrix * temppp = Transpose(P_Func[0]->GetBlock(0,0));
     SparseMatrix * testtt = Mult(*temppp, P_Func[0]->GetBlock(0,0));
@@ -3060,7 +3036,8 @@ int main(int argc, char *argv[])
     SparseMatrix * temppp3 = Mult(*temppp,Divfree_op_sp);
 
     SparseMatrix * testtt3 = Mult(*temppp2,*temppp3);
-    testtt3->Print();
+    //testtt3->Print();
+    */
 
 
     if (verbose)
@@ -3086,6 +3063,11 @@ int main(int argc, char *argv[])
 #endif
                      false);
 #endif
+
+    NewSolver.SetAbsTol(new_abstol);
+    NewSolver.SetRelTol(new_reltol);
+    NewSolver.SetMaxIter(300);
+    NewSolver.SetPrintLevel(1);
 
     Vector tempp(sigma_exact->Size());
     tempp = *sigma_exact;
@@ -3120,8 +3102,65 @@ int main(int argc, char *argv[])
     chrono.Clear();
     chrono.Start();
 
+    NewSolver.Mult(Tempx, Tempy);
+
+    *NewSigmahat = Tempy;
+
+    double max_bdr_error = 0;
+    for ( int dof = 0; dof < Xinit.Size(); ++dof)
+    {
+        if ( (*(EssBdrDofs_R[0][0]))[dof] != 0.0)
+        {
+            //std::cout << "ess dof index: " << dof << "\n";
+            double bdr_error_dof = fabs(Xinit[dof] - (*NewSigmahat)[dof]);
+            if ( bdr_error_dof > max_bdr_error )
+                max_bdr_error = bdr_error_dof;
+        }
+    }
+
+    if (max_bdr_error > 1.0e-14)
+        std::cout << "Error, boundary values for the solution are wrong:"
+                     " max_bdr_error = " << max_bdr_error << "\n";
+    //else
+        //std::cout << "After iter " << i << " of the new solver bdr values at ess bdr are correct \n";
+
+    {
+        int order_quad = max(2, 2*feorder+1);
+        const IntegrationRule *irs[Geometry::NumGeom];
+        for (int i = 0; i < Geometry::NumGeom; ++i)
+        {
+            irs[i] = &(IntRules.Get(i, order_quad));
+        }
+
+        double norm_sigma = ComputeGlobalLpNorm(2, *(Mytest.sigma), *pmesh, irs);
+        double err_newsigmahat = NewSigmahat->ComputeL2Error(*(Mytest.sigma), irs);
+        if (verbose)
+        {
+            if ( norm_sigma > MYZEROTOL )
+                cout << "|| new sigma_h - sigma_ex || / || sigma_ex || = " << err_newsigmahat / norm_sigma << endl;
+            else
+                cout << "|| new sigma_h || = " << err_newsigmahat << " (sigma_ex = 0)" << endl;
+        }
+
+        DiscreteLinearOperator Div(R_space, W_space);
+        Div.AddDomainInterpolator(new DivergenceInterpolator());
+        ParGridFunction DivSigma(W_space);
+        Div.Assemble();
+        Div.Mult(*NewSigmahat, DivSigma);
+
+        double err_div = DivSigma.ComputeL2Error(*(Mytest.scalardivsigma),irs);
+        double norm_div = ComputeGlobalLpNorm(2, *(Mytest.scalardivsigma), *pmesh, irs);
+
+        if (verbose)
+        {
+            cout << "|| div (new sigma_h - sigma_ex) || / ||div (sigma_ex)|| = "
+                      << err_div/norm_div  << "\n";
+        }
+    }
+
+    /*
     // doing a fixed number of iterations of the new solver
-    int ntestiter = 2;
+    int ntestiter = 10;
     for (int i = 0; i < ntestiter; ++i)
     {
         NewSolver.Mult(Tempx, Tempy);
@@ -3234,6 +3273,11 @@ int main(int argc, char *argv[])
 
     if (verbose)
         std::cout << ntestiter << " iteration(s) of the new solver was(were) done in " << chrono.RealTime() << " seconds.\n";
+
+    */
+
+    chrono.Stop();
+
 
     if (verbose)
         std::cout << "\n";
@@ -3420,10 +3464,6 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 0;
 }
-//#endif
-//#endif
-
-//#ifdef LABUDA
 
 template <void (*bvecfunc)(const Vector&, Vector& )> \
 void KtildaTemplate(const Vector& xt, DenseMatrix& Ktilda)
@@ -4291,4 +4331,3 @@ void uFun1_ex_gradx(const Vector& xt, Vector& gradx )
     gradx.SetSize(xt.Size() - 1);
     gradx = 0.0;
 }
-//#endif
